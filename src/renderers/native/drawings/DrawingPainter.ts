@@ -1795,6 +1795,14 @@ function labelLayout(d: Drawing, proj: Projector): {
     const pts = d.handlePoints(proj);
     const lines = text.value.split('\n').length;
     const lh = labelLineHeight(namedFontSize(text.size));
+    if (d instanceof ArrowMark) {
+        const b = d.bounds(proj);
+        if (!b) return null;
+        const x = b.x + b.w / 2;
+        return d.type === 'arrowmarkdown'
+            ? { x, top: b.y - 4 - lh * lines, align: 'center' }
+            : { x, top: b.y + b.h + 4, align: 'center' };
+    }
     switch (d.type) {
         case 'text':
             return pts[0] ? { x: pts[0][0] + 2, top: pts[0][1] + 2, align: 'left' } : null;

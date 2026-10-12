@@ -6,6 +6,9 @@ All notable changes to Vela, newest first.
 
 ### Fixed
 
+- **Arrow mark labels no longer cover the arrow.** Text on an Arrow Mark Up now sits
+  centered below the arrow, and text on an Arrow Mark Down sits centered above it, instead
+  of starting at the arrow's tip.
 - **The trend angle's degree readout no longer sits on its line.** On a rising line the
   readout moved above the baseline, where the line runs, so the line crossed the digits.
   It now sits on the side of the baseline the line leaves empty, with a halo that keeps it
