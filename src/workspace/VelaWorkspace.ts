@@ -1423,13 +1423,12 @@ export class VelaWorkspace {
         if (tools.stay !== undefined) this.globalStay = tools.stay;
     }
 
-    /** Mirror the shared remembered settings onto every cell but `from` (the cell they came from). */
-    private pushToolDefaults(from: ChartCell | null): void {
+    /** Mirror the shared remembered settings onto every cell but `from` (the cell they came from).
+     *  Receiving them is not an edit: the cells' `drawing:defaults` echoes are ignored. */
+    private pushToolDefaults(from: ChartCell | null, cells: Iterable<ChartCell> = this.cellsById.values()): void {
         this.toolDefsBusy = true;
         try {
-            for (const other of this.cellsById.values()) {
-                if (other !== from) other.chart.drawings.setToolDefaults(this.toolDefs);
-            }
+            for (const other of cells) if (other !== from) other.chart.drawings.setToolDefaults(this.toolDefs);
         } finally {
             this.toolDefsBusy = false;
         }
@@ -1698,14 +1697,7 @@ export class VelaWorkspace {
             if (this.favs.length > 0) cell.chart.drawings.setFavorites(this.favs as never[]);
             // Same for the tools' remembered settings: a new chart's first trend line looks
             // like the last one drawn anywhere in the workspace.
-            if (Object.keys(this.toolDefs).length > 0) {
-                this.toolDefsBusy = true; // inheriting is not an edit — no echo, no dirty mark
-                try {
-                    cell.chart.drawings.setToolDefaults(this.toolDefs);
-                } finally {
-                    this.toolDefsBusy = false;
-                }
-            }
+            if (Object.keys(this.toolDefs).length > 0) this.pushToolDefaults(null, [cell]);
             // The indicator ledger: a restored cell re-adds ITS recorded set (held until
             // the manifest resolves); a fresh cell seeds the manifest's enabled entries.
             cell.setManifest(this.manifest, pooled?.indicators == null);

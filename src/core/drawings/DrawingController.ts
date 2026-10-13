@@ -265,9 +265,8 @@ export class DrawingController {
         const cur = patch.style ? this.store.get(id) : undefined;
         const resolved =
             patch.style && cur ? { ...patch, style: { ...cur.style, ...patch.style } } : patch;
-        if (this.store.update(id, resolved)) {
+        if (this.updateDrawing(id, resolved)) {
             this.history.record(before);
-            this.captureDefaults(id);
             this.events.emit('drawing:edited', { id });
         }
     }
@@ -276,9 +275,8 @@ export class DrawingController {
     updateMany(patches: ReadonlyArray<{ id: string; patch: Partial<SerializedDrawing> }>): void {
         this.history.begin(this.store.serialize());
         for (const { id, patch } of patches) {
-            if (this.store.update(id, patch)) {
+            if (this.updateDrawing(id, patch)) {
                 this.history.markDirty();
-                this.captureDefaults(id);
                 this.events.emit('drawing:edited', { id });
             }
         }
@@ -488,8 +486,19 @@ export class DrawingController {
         return ids.map((id) => this.store.get(id)).filter((d): d is Drawing => d != null);
     }
 
+    /** `store.update` that remembers the drawing's settings only when the patch changed them:
+     *  moving an older drawing must not hand its look back to the tool. */
+    private updateDrawing(id: string, patch: Partial<SerializedDrawing>): boolean {
+        const cur = this.store.get(id);
+        const before = cur ? captureToolDefaults(cur) : undefined;
+        if (!this.store.update(id, patch)) return false;
+        const after = this.store.get(id);
+        if (after && !sameToolDefaults(before, captureToolDefaults(after))) this.captureDefaults(id);
+        return true;
+    }
+
     /** Remember a drawing's settings as its tool's defaults (they seed the next one), and
-     *  announce a real change so a host can save it. Moves and nudges leave them as they were. */
+     *  announce a real change so a host can save it. */
     private captureDefaults(id: string): void {
         const d = this.store.get(id);
         if (!d) return;
@@ -534,9 +543,8 @@ export class DrawingController {
             }
             case 'edit': {
                 const before = this.store.serialize();
-                if (this.store.update(i.doc.id, i.doc)) {
+                if (this.updateDrawing(i.doc.id, i.doc)) {
                     this.history.record(before);
-                    this.captureDefaults(i.doc.id);
                     this.events.emit('drawing:edited', { id: i.doc.id });
                 }
                 break;
@@ -544,9 +552,8 @@ export class DrawingController {
             case 'edit-many': {
                 this.history.begin(this.store.serialize());
                 for (const doc of i.docs) {
-                    if (this.store.update(doc.id, doc)) {
+                    if (this.updateDrawing(doc.id, doc)) {
                         this.history.markDirty();
-                        this.captureDefaults(doc.id);
                         this.events.emit('drawing:edited', { id: doc.id });
                     }
                 }
