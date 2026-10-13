@@ -276,18 +276,6 @@ export class DrawingsControl {
         return this;
     }
 
-    /** Save settings as a named look for a tool; a look with the same name is replaced. */
-    saveToolTemplate(type: DrawingTypeKey, name: string, settings: DrawingToolDefaults): this {
-        this.ctrl.saveToolTemplate(type, name, settings);
-        return this;
-    }
-
-    /** Delete one of a tool's saved looks. */
-    removeToolTemplate(type: DrawingTypeKey, name: string): this {
-        this.ctrl.removeToolTemplate(type, name);
-        return this;
-    }
-
     /** Aliases mirroring `renderer.getConfig()/applyConfig()` for symmetry. */
     getConfig(): DrawingsDocument {
         return this.ctrl.toJSON();

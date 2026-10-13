@@ -432,9 +432,8 @@ the next load.
   magnet and stay-in-drawing-mode, so a reload keeps them. `resetToolDefaults(type)` sends a tool
   back to its factory look.
 - **Saved styles.** `chart.drawings.toolTemplates()` returns every tool's saved styles and
-  `setToolTemplates()` restores them; `saveToolTemplate(type, name, settings)` and
-  `removeToolTemplate(type, name)` edit them, and `drawing:templates` follows changes. The
-  workspace and widget keep them with the other tool settings.
+  `setToolTemplates()` replaces them, and `drawing:templates` follows changes. The workspace and
+  widget keep them with the other tool settings.
 - **Timeframes.** A drawing's `showOn` lists the timeframe bands it shows on (`'s'`, `'1'`, `'5'`,
   `'15'`, `'60'`, `'240'`, `'D'`, `'W'`, `'M'`); a chart on any other timeframe — a custom one
   counts as the band below it — hides it. Leave it unset to show the drawing everywhere.

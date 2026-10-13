@@ -12,12 +12,11 @@ export {
     captureToolDefaults,
     applyToolDefaults,
     sanitizeToolDefaults,
-    sanitizeToolTemplates,
     builtinToolTemplates,
     type DrawingToolDefaults,
     type DrawingToolTemplate,
 } from './defaults';
-export { TIMEFRAME_BANDS, timeframeBandOf, shownOnTimeframe, sanitizeShowOn, type TimeframeBand } from './visibility';
+export { TIMEFRAME_BANDS, timeframeBandOf, shownOnTimeframe, sanitizeShowOn } from './visibility';
 export type { DrawingTypeKey, AnchorSlot, SerializedDrawing } from './Drawing';
 export { effectiveFillColor, VALID_FILL, INVALID_FILL, type EffectiveColorTheme } from './effectiveColor';
 export { TrendLine } from './types/TrendLine';
@@ -131,7 +130,7 @@ export { HeadShoulders } from './types/HeadShoulders';
 export { MeasureBox, formatDuration } from './types/MeasureBox';
 export { DatePriceRange } from './types/DatePriceRange';
 export { PositionTool, DIRECTION_OPTIONS, type PositionLevelMode } from './types/PositionTool';
-export { Magnifier, MAGNIFIER_TIMEFRAME_OPTIONS, magnifierTimeframeLabel, type MagnifierStyle } from './types/Magnifier';
+export { Magnifier, MAGNIFIER_TIMEFRAME_OPTIONS, magnifierTimeframeLabel, magnifierTimeframesBelow, type MagnifierStyle } from './types/Magnifier';
 export type { DrawingSeriesBar, DrawingSeriesState, DrawingSeriesGateway } from './series';
 export {
     registerDrawingType,

@@ -12,8 +12,8 @@ import {
     MachFigure,
     PositionTool,
     Magnifier,
-    MAGNIFIER_TIMEFRAME_OPTIONS,
     magnifierTimeframeLabel,
+    magnifierTimeframesBelow,
     effectiveFillColor,
 } from '../../../core/drawings';
 import { icon, svg24, svg24Solid } from '../../../core/icons';
@@ -159,15 +159,6 @@ export class DrawingSettingsPopup {
     /** One chart bar in ms — timeframe pickers drop the choices at/above it. */
     private readonly chartBarMs: () => number;
 
-    /** The magnifier timeframe choices strictly below the chart's own bar duration
-     *  (`auto` rides along while at least one concrete lower step exists). */
-    private lowerTimeframeOptions(): Array<{ value: string; label: string; ms: number }> {
-        const chartMs = this.chartBarMs();
-        if (!(chartMs > 0)) return [...MAGNIFIER_TIMEFRAME_OPTIONS];
-        const lower = MAGNIFIER_TIMEFRAME_OPTIONS.filter((o) => o.ms > 0 && o.ms < chartMs);
-        return lower.length > 0 ? [MAGNIFIER_TIMEFRAME_OPTIONS[0]!, ...lower] : [];
-    }
-
     setTheme(theme: VelaTheme): void {
         this.theme = theme;
         this.panel.setTheme(theme);
@@ -193,10 +184,6 @@ export class DrawingSettingsPopup {
         this.closeMenu();
         this.panel.open(cur.drawing, cur.actions, cur.anchor);
         return true;
-    }
-
-    isPanelOpen(): boolean {
-        return this.panel.isOpen();
     }
 
     /** The drawings changed under the panel (a drag, an undo) — let it re-read them. */
@@ -269,7 +256,7 @@ export class DrawingSettingsPopup {
         // series colors (the inset follows the chart series until the user recolors it).
         if (paths.has('magnifier.timeframe') && every((d) => d instanceof Magnifier)) {
             const mag = (d: Drawing): Magnifier => d as Magnifier;
-            const options = this.lowerTimeframeOptions();
+            const options = magnifierTimeframesBelow(this.chartBarMs());
             if (options.length > 0) {
                 bar.appendChild(
                     this.dropdown('Lower timeframe', options.map((o) => o.value), common((d) => mag(d).magnifier.timeframe), () => '', (v) => actions.patch({ 'magnifier.timeframe': v }), {
@@ -702,7 +689,7 @@ export class DrawingSettingsPopup {
     openMagnifierTimeframeMenu(rect: { x: number; y: number; w: number; h: number }, current: string, onPick: (value: string) => void): void {
         ensureStyles();
         closeOpenPopovers();
-        const options = this.lowerTimeframeOptions();
+        const options = magnifierTimeframesBelow(this.chartBarMs());
         const anchor = document.createElement('div');
         anchor.style.cssText = `position:absolute;left:${rect.x}px;top:${rect.y}px;width:${rect.w}px;height:${rect.h}px;pointer-events:none;`;
         this.host.appendChild(anchor);
