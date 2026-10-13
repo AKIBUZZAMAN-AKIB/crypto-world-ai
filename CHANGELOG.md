@@ -8,16 +8,28 @@ All notable changes to Vela, newest first.
 
 - **Drawing tools remember their settings.** Each tool now starts its next drawing from the
   last one you styled: colors, widths, text styling and the tool's own settings, such as a Fib's
-  levels or a position's account size. Styling several drawings at once counts too. Read and
-  restore the set with `chart.drawings.toolDefaults()` and `setToolDefaults()`, follow changes
-  on `drawing:defaults`, and send a tool back to its factory look with `resetToolDefaults()`.
+  levels or a position's account size. Styling several drawings at once counts too. A
+  workspace or widget saves these settings in its state document, along with the magnet and
+  stay-in-drawing-mode, and shares them across every chart in the grid, so they survive a
+  reload. Read and restore the set with `chart.drawings.toolDefaults()` and
+  `setToolDefaults()`, follow changes on `drawing:defaults`, and send a tool back to its
+  factory look with `resetToolDefaults()`.
 
 ### Fixed
 
-- **Drawing tool settings survive a reload.** A workspace or widget now saves each tool's
-  remembered settings in its state document, along with the magnet and stay-in-drawing-mode,
-  and shares them across every chart in the grid. Before, they lasted only until the page
-  closed, and only on the chart where you made them.
+- **Arrow mark labels no longer cover the arrow.** Text on an Arrow Mark Up now sits
+  centered below the arrow, and text on an Arrow Mark Down sits centered above it, instead
+  of starting at the arrow's tip.
+- **The trend angle's degree readout no longer sits on its line.** On a rising line the
+  readout moved above the baseline, where the line runs, so the line crossed the digits.
+  It now sits on the side of the baseline the line leaves empty, with a halo that keeps it
+  legible over candles.
+- **Per-bar candle colors stay on their candles as an indicator updates.** The colors a
+  `plotcandle()` or `plotbar()` series sets for each bar were applied only when the
+  indicator was added. Later recalculations, such as each live tick, replaced the candles but
+  kept the old colors: a color change on an existing bar never showed, colors could land on
+  the wrong candles, and new candles kept the default up/down colors. Every recalculation now
+  repaints the candles with the colors it sets, and one that sets none clears the old ones.
 
 ## [0.8.3]
 
