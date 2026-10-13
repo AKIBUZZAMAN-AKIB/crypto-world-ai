@@ -401,7 +401,12 @@ export class DrawingSettingsPanel {
                 continue;
             }
             const ctrl = this.fieldControl(b, f);
-            if (ctrl) rows.push(row(f.label, ctrl));
+            if (!ctrl) continue;
+            const r = row(f.label, ctrl);
+            // An option that matters only in some modes comes and goes with them.
+            const cond = f.when;
+            if (cond) b.watch(() => (r.hidden = !cond.in.includes(readPath(b.live(), cond.path))));
+            rows.push(r);
         }
         // Level numbers and their labels have their own sizes (fib-family tools).
         const props = d.serialize().props ?? {};
@@ -669,7 +674,9 @@ export class DrawingSettingsPanel {
         const fmt = (n: number): string => String(shownPrice(n));
         const summary = (): string => {
             const a = b.live().anchors;
-            return priced.length ? priced.map((i) => fmt(a[i]?.price ?? 0)).join(' → ') : `${shown.length} points`;
+            if (priced.length) return priced.map((i) => fmt(a[i]?.price ?? 0)).join(' → ');
+            const t = a[shown[0]!]?.time;
+            return shown.length === 1 && t != null ? formatTimeStamp(t, this.env.timeZone(), this.env.chartBarMs()) : `${shown.length} points`;
         };
         return this.fold(b, 'points', 'Points', summary, () =>
             shown.map((i, n) => {
