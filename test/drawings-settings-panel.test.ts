@@ -298,6 +298,23 @@ describe('the drawing settings panel', () => {
         s.popup.destroy();
     });
 
+    it('a level edited in the grid keeps its controls, so a color picker open on one stays put', async () => {
+        const s = setup(make('fibretracement'));
+        await s.openPanel();
+        const first = s.$('.vela-dsp-lv-c')!;
+        first.querySelector<HTMLButtonElement>('.vela-color-field')!.click();
+        const pick = document.querySelector<HTMLButtonElement>('.vela-color-field-pop button[data-c]')!;
+        pick.focus(); // the picker portals outside the grid
+        pick.click();
+        expect((s.live() as FibRetracement).levels[0]!.color.toLowerCase()).toBe(pick.dataset.c!.toLowerCase());
+        expect(s.$('.vela-dsp-lv-c')).toBe(first);
+        expect(first.isConnected).toBe(true);
+
+        s.segButton('Level set', 'OTE').click(); // a change from outside the grid rebuilds it
+        expect(s.$('.vela-dsp-lv-c')).not.toBe(first);
+        s.popup.destroy();
+    });
+
     it('a retracement level can be set beyond the swing, as a negative ratio', async () => {
         const s = setup(make('fibretracement'));
         await s.openPanel();

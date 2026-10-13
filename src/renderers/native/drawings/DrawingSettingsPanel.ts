@@ -46,7 +46,7 @@ const NO_POINTS = new Set(['freehand', 'highlighter', 'vline', 'position']);
 const MAX_POINTS = 8;
 /** Paths the rich sections own, kept out of the generic rows. */
 const POSITION_PATHS = new Set(['riskPercent', 'accountBalance', 'quantity', 'direction', 'entryPrice', 'stopPrice', 'targetPrice', 'showText', 'showHeader', 'showLossSize', 'showTargetLabel', 'showStopLabel', 'showPrices']);
-const LEVEL_PATHS = new Set(['showRatios', 'showPrices', 'labelSide', 'background', 'reverse']);
+const LEVEL_PATHS = new Set(['showRatios']);
 
 /** "Show on" shortcuts, as timeframe bands. */
 const INTRADAY = ['s', '1', '5', '15', '60', '240'];
@@ -451,9 +451,16 @@ export class DrawingSettingsPanel {
         const key = (): string => JSON.stringify(b.live().editableLevels() ?? []);
         let last = '';
         // A level edited here is already shown — only a change from elsewhere (a preset, an
-        // undo) rebuilds the grid, and never under the field being typed in.
+        // undo) rebuilds the grid, and never under the field being typed in. The edit refreshes
+        // the watchers synchronously, so it is flagged rather than recognized by its result.
+        let editing = false;
         const mine = (p: SettingsPatch): void => {
-            b.edit(p);
+            editing = true;
+            try {
+                b.edit(p);
+            } finally {
+                editing = false;
+            }
             last = key();
         };
         const fill = (): void => {
@@ -495,7 +502,7 @@ export class DrawingSettingsPanel {
                 const swatch = buildFieldControl({
                     kind: 'color',
                     theme: this.theme,
-                    title: `Level ${lv.ratio} color`,
+                    title: `Level ${i + 1} color`,
                     get: () => color,
                     onChange: (v) => {
                         color = v;
@@ -507,7 +514,7 @@ export class DrawingSettingsPanel {
             });
         };
         b.watch(() => {
-            if (key() !== last && !grid.contains(document.activeElement)) fill();
+            if (!editing && key() !== last && !grid.contains(document.activeElement)) fill();
         });
 
         if (d instanceof FibRetracement) {
@@ -532,7 +539,13 @@ export class DrawingSettingsPanel {
         rows.push(grid);
         if (d instanceof FibLevels) {
             const fib = (): FibLevels => b.live() as FibLevels;
-            rows.push(row('Labels', chips(this.chip(b, 'Ratios', () => fib().showRatios, (on) => b.edit({ showRatios: on })), this.chip(b, 'Prices', () => fib().showPrices, (on) => b.edit({ showPrices: on })))));
+            const flags = [
+                this.chip(b, 'Ratios', () => fib().showRatios, (on) => b.edit({ showRatios: on })),
+                this.chip(b, 'Prices', () => fib().showPrices, (on) => b.edit({ showPrices: on })),
+                this.chip(b, 'Background', () => fib().background, (on) => b.edit({ background: on })),
+            ];
+            if (d instanceof FibRetracement) flags.push(this.chip(b, 'Reverse', () => (b.live() as FibRetracement).reverse, (on) => b.edit({ reverse: on })));
+            rows.push(row('Show', chips(...flags)));
             rows.push(
                 row(
                     'Label side',
@@ -542,9 +555,6 @@ export class DrawingSettingsPanel {
                     ], () => fib().labelSide, (v) => b.edit({ labelSide: v })),
                 ),
             );
-            const flags = [this.chip(b, 'Background', () => fib().background, (on) => b.edit({ background: on }))];
-            if (d instanceof FibRetracement) flags.push(this.chip(b, 'Reverse', () => (b.live() as FibRetracement).reverse, (on) => b.edit({ reverse: on })));
-            rows.push(row('Show', chips(...flags)));
         }
         return block('Levels', ...rows);
     }

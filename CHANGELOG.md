@@ -32,9 +32,8 @@ All notable changes to Vela, newest first.
   shows the standard pullback ratios; Extension measures from the swing's start and projects
   targets past its end; OTE marks the 0.62–0.79 entry zone with equilibrium at 0.5 and targets
   beyond the swing. Every set keeps the whole ladder of levels, the unused ones switched off.
-- **More ways to show Fib levels.** Retracement and extension levels can run on to the chart's
-  edge, show their ratio, their price, both or neither, on the left or the right, and drop the
-  tinted background between them.
+  Retracement and extension levels can also run on to the chart's edge, show their ratio, their
+  price, both or neither, on the left or the right, and drop the tinted background between them.
 
 ### Changed
 
