@@ -13,6 +13,12 @@ All notable changes to Vela, newest first.
   readout moved above the baseline, where the line runs, so the line crossed the digits.
   It now sits on the side of the baseline the line leaves empty, with a halo that keeps it
   legible over candles.
+- **Per-bar candle colors stay on their candles as an indicator updates.** The colors a
+  `plotcandle()` or `plotbar()` series sets for each bar were applied only when the
+  indicator was added. Later recalculations, such as each live tick, replaced the candles but
+  kept the old colors: a color change on an existing bar never showed, colors could land on
+  the wrong candles, and new candles kept the default up/down colors. Every recalculation now
+  repaints the candles with the colors it sets, and one that sets none clears the old ones.
 
 ## [0.8.3]
 
