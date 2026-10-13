@@ -23,7 +23,8 @@ const LADDER = [0, 0.236, 0.382, 0.5, 0.618, 0.705, 0.786, 0.886, 1, 1.272, 1.41
  *  and targets measured beyond the swing's end. */
 const OTE_LADDER = [0, 0.236, 0.382, 0.5, 0.62, 0.705, 0.79, 0.886, 1, 1.272, 1.414, 1.618, 2, 2.618, 3, 3.618, 4.236, 4.618, -0.27, -0.62, -1, -1.5, -2, -2.5];
 
-function ladder(ratios: readonly number[], on: readonly number[], colors: Readonly<Record<string, string>> = {}): readonly FibLevel[] {
+/** A ladder of levels with only `on` enabled; `colors` overrides the palette by ratio. */
+export function ladder(ratios: readonly number[], on: readonly number[], colors: Readonly<Record<string, string>> = {}): readonly FibLevel[] {
     return fibLevels(ratios.map((ratio) => ({ ratio, enabled: on.includes(ratio), color: colors[String(ratio)] })));
 }
 
@@ -45,7 +46,7 @@ export const FIB_PRESETS: readonly FibPreset[] = [
         label: 'OTE',
         reverse: false,
         // The entry zone reads as one band.
-        levels: ladder(OTE_LADDER, [0, 0.5, 0.62, 0.705, 0.79, 1, -0.27, -0.62], { '0.62': LEVEL_AMBER, '0.705': LEVEL_AMBER, '0.79': LEVEL_AMBER }),
+        levels: ladder(OTE_LADDER, [0, 0.5, 0.62, 0.705, 0.79, 1, -0.27, -0.62], { '0.62': LEVEL_AMBER, '0.79': LEVEL_AMBER }),
     },
 ];
 

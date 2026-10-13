@@ -810,15 +810,10 @@ export class UserDrawingController implements IDrawingsRendererPort {
             this.editTextInline(hit.id); // double-click a callout / text label → edit its text in place
             return true;
         }
-        if (hit) this.openSettingsPanel(hit.id);
-        return hit != null;
-    }
-
-    /** Programmatic twin of double-clicking the drawing: select it and open its full settings panel. */
-    openSettingsPanel(id: string): void {
-        if (!this.drawings.some((d) => d.id === id)) return;
-        if (this.popupMulti || !this.selectedIds.has(id) || !this.popup.isOpen()) this.openSettingsById(id, 0, 0);
+        if (!hit) return false;
+        if (this.popupMulti || !this.selectedIds.has(hit.id) || !this.popup.isOpen()) this.openSettingsById(hit.id, 0, 0);
         this.popup.openPanel();
+        return true;
     }
 
     /** Keyboard pre-empt: Escape (popup/placing/selection), undo/redo, copy/paste/duplicate,

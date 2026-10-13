@@ -8,9 +8,12 @@ All notable changes to Vela, newest first.
 
 - **Drawing tools remember their settings.** Each tool now starts its next drawing from the
   last one you styled: colors, widths, text styling and the tool's own settings, such as a Fib's
-  levels or a position's account size. Styling several drawings at once counts too. Read and
-  restore the set with `chart.drawings.toolDefaults()` and `setToolDefaults()`, follow changes
-  on `drawing:defaults`, and send a tool back to its factory look with `resetToolDefaults()`.
+  levels or a position's account size. Styling several drawings at once counts too. A
+  workspace or widget saves these settings in its state document, along with the magnet and
+  stay-in-drawing-mode, and shares them across every chart in the grid, so they survive a
+  reload. Read and restore the set with `chart.drawings.toolDefaults()` and
+  `setToolDefaults()`, follow changes on `drawing:defaults`, and send a tool back to its
+  factory look with `resetToolDefaults()`.
 - **A full settings panel for every drawing.** The gear on a drawing's toolbar, or a
   double-click on the drawing, opens one panel with all of the tool's settings: its look, its own
   options, its label, the price and time of each point, and the timeframes it shows on. Options
@@ -29,15 +32,14 @@ All notable changes to Vela, newest first.
   shows the standard pullback ratios; Extension measures from the swing's start and projects
   targets past its end; OTE marks the 0.62–0.79 entry zone with equilibrium at 0.5 and targets
   beyond the swing. Every set keeps the whole ladder of levels, the unused ones switched off.
+  Retracement and extension levels can also run on to the chart's edge, show their ratio, their
+  price, both or neither, on the left or the right, and drop the tinted background between them.
 - **Price action tools.** A new Price Action section in the Fibonacci flyout holds three tools,
   each placed with one click on a candle: **Fair Value Gap**, **Order Block** and **Liquidity**.
   Each finds its zone or level on the candles and runs right until the event you choose (tested,
   half-filled, filled, broken or swept), then marks it. A filled gap can flip once price closes
   through it, and a broken order block can carry on as a breaker. In the settings panel, an option
   that only matters in some modes appears only in them.
-- **More ways to show Fib levels.** Retracement and extension levels can run on to the chart's
-  edge, show their ratio, their price, both or neither, on the left or the right, and drop the
-  tinted background between them.
 
 ### Changed
 
@@ -52,10 +54,19 @@ All notable changes to Vela, newest first.
 
 ### Fixed
 
-- **Drawing tool settings survive a reload.** A workspace or widget now saves each tool's
-  remembered settings in its state document, along with the magnet and stay-in-drawing-mode,
-  and shares them across every chart in the grid. Before, they lasted only until the page
-  closed, and only on the chart where you made them.
+- **Arrow mark labels no longer cover the arrow.** Text on an Arrow Mark Up now sits
+  centered below the arrow, and text on an Arrow Mark Down sits centered above it, instead
+  of starting at the arrow's tip.
+- **The trend angle's degree readout no longer sits on its line.** On a rising line the
+  readout moved above the baseline, where the line runs, so the line crossed the digits.
+  It now sits on the side of the baseline the line leaves empty, with a halo that keeps it
+  legible over candles.
+- **Per-bar candle colors stay on their candles as an indicator updates.** The colors a
+  `plotcandle()` or `plotbar()` series sets for each bar were applied only when the
+  indicator was added. Later recalculations, such as each live tick, replaced the candles but
+  kept the old colors: a color change on an existing bar never showed, colors could land on
+  the wrong candles, and new candles kept the default up/down colors. Every recalculation now
+  repaints the candles with the colors it sets, and one that sets none clears the old ones.
 
 ## [0.8.3]
 

@@ -1693,11 +1693,22 @@ export class DrawingPainter {
             ctx.arc(x1, y1, arcR, Math.min(0, end), Math.max(0, end));
             ctx.stroke();
         }
-        ctx.fillStyle = color;
+        // The readout sits on the side of the baseline the line leaves empty — under it for a
+        // rising line, over it for a falling one — so the line never runs through the digits.
+        const label = `${angleDeg.toFixed(1)}°`;
+        const lx = x1 + arcR + 6;
+        const ly = dy < 0 ? y1 + 14 : y1 - 6;
         ctx.font = `11px ${theme.fontFamily}`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'alphabetic';
-        ctx.fillText(`${angleDeg.toFixed(1)}°`, x1 + arcR + 6, y1 + (dy < 0 ? -14 : 2));
+        ctx.save();
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = theme.background;
+        ctx.strokeText(label, lx, ly); // a halo in the plot's color keeps the digits legible over candles
+        ctx.restore();
+        ctx.fillStyle = color;
+        ctx.fillText(label, lx, ly);
     }
 
     /** Paint a fixed-size arrow marker as a filled glyph at its anchor. */
@@ -1878,6 +1889,14 @@ function labelLayout(d: Drawing, proj: Projector): {
     const pts = d.handlePoints(proj);
     const lines = text.value.split('\n').length;
     const lh = labelLineHeight(namedFontSize(text.size));
+    if (d instanceof ArrowMark) {
+        const b = d.bounds(proj);
+        if (!b) return null;
+        const x = b.x + b.w / 2;
+        return d.type === 'arrowmarkdown'
+            ? { x, top: b.y - 4 - lh * lines, align: 'center' }
+            : { x, top: b.y + b.h + 4, align: 'center' };
+    }
     switch (d.type) {
         case 'text':
             return pts[0] ? { x: pts[0][0] + 2, top: pts[0][1] + 2, align: 'left' } : null;

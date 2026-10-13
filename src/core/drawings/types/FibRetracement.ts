@@ -1,6 +1,5 @@
 import { FibLevels } from './FibLevels';
 import type { FibLevel } from './FibRatios';
-import type { SettingsSchema } from '../schema';
 import { FIB_PRESETS } from '../fibPresets';
 
 /** The classic set: the standard pullback ratios on, the rest of the ladder off. */
@@ -28,11 +27,6 @@ export class FibRetracement extends FibLevels {
 
     protected override levelPrice(ratio: number, p1: number, p2: number): number {
         return this.reverse ? p1 + ratio * (p2 - p1) : p2 + ratio * (p1 - p2);
-    }
-
-    override schema(): SettingsSchema {
-        const base = super.schema();
-        return { ...base, fields: [...base.fields, { path: 'reverse', label: 'Reverse', kind: 'boolean' }] };
     }
 
     protected override writeProps(): Record<string, unknown> {

@@ -126,19 +126,6 @@ export abstract class FibLevels extends FibRatios {
                 ...base.fields,
                 { path: 'style.extendLeft', label: 'Extend left', kind: 'boolean', group: 'line' },
                 { path: 'style.extendRight', label: 'Extend right', kind: 'boolean', group: 'line' },
-                { path: 'showRatios', label: 'Ratios', kind: 'boolean', group: 'text' },
-                { path: 'showPrices', label: 'Prices', kind: 'boolean', group: 'text' },
-                {
-                    path: 'labelSide',
-                    label: 'Labels',
-                    kind: 'select',
-                    group: 'text',
-                    options: [
-                        { value: 'left', label: 'Left' },
-                        { value: 'right', label: 'Right' },
-                    ],
-                },
-                { path: 'background', label: 'Background', kind: 'boolean', group: 'fill' },
             ],
         };
     }

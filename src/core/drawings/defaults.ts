@@ -88,23 +88,19 @@ export function sanitizeToolTemplates(raw: unknown): DrawingToolTemplate[] {
 
 const LINE_TOOLS = new Set(['trendline', 'ray', 'extendedline', 'hline', 'hray', 'vline', 'crossline', 'infoline', 'trendangle']);
 const AREA_TOOLS = new Set(['box', 'rotatedrect', 'ellipse', 'circle', 'triangle', 'parallelchannel', 'disjointchannel', 'flattopbottom']);
-const BULL = BULLISH;
-const BEAR = BEARISH;
-const MUTED = NEUTRAL;
-
 /** The looks every chart offers for a tool before the user saves any of their own. */
 export function builtinToolTemplates(type: string): DrawingToolTemplate[] {
     if (LINE_TOOLS.has(type)) {
         return [
-            { name: 'Support', settings: { style: { lineColor: BULL, lineWidth: 2, lineStyle: 'solid' } } },
-            { name: 'Resistance', settings: { style: { lineColor: BEAR, lineWidth: 2, lineStyle: 'solid' } } },
-            { name: 'Projection', settings: { style: { lineColor: MUTED, lineWidth: 1, lineStyle: 'dashed' } } },
+            { name: 'Support', settings: { style: { lineColor: BULLISH, lineWidth: 2, lineStyle: 'solid' } } },
+            { name: 'Resistance', settings: { style: { lineColor: BEARISH, lineWidth: 2, lineStyle: 'solid' } } },
+            { name: 'Projection', settings: { style: { lineColor: NEUTRAL, lineWidth: 1, lineStyle: 'dashed' } } },
         ];
     }
     if (AREA_TOOLS.has(type)) {
         return [
-            { name: 'Demand', settings: { style: { lineColor: BULL, fillColor: `${BULL}26` } } },
-            { name: 'Supply', settings: { style: { lineColor: BEAR, fillColor: `${BEAR}26` } } },
+            { name: 'Demand', settings: { style: { lineColor: BULLISH, fillColor: `${BULLISH}26` } } },
+            { name: 'Supply', settings: { style: { lineColor: BEARISH, fillColor: `${BEARISH}26` } } },
         ];
     }
     return [];

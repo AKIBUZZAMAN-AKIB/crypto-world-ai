@@ -12,12 +12,11 @@ export {
     captureToolDefaults,
     applyToolDefaults,
     sanitizeToolDefaults,
-    sanitizeToolTemplates,
     builtinToolTemplates,
     type DrawingToolDefaults,
     type DrawingToolTemplate,
 } from './defaults';
-export { TIMEFRAME_BANDS, timeframeBandOf, shownOnTimeframe, sanitizeShowOn, type TimeframeBand } from './visibility';
+export { TIMEFRAME_BANDS, timeframeBandOf, shownOnTimeframe, sanitizeShowOn } from './visibility';
 export type { DrawingTypeKey, AnchorSlot, SerializedDrawing } from './Drawing';
 export { effectiveFillColor, VALID_FILL, INVALID_FILL, type EffectiveColorTheme } from './effectiveColor';
 export { TrendLine } from './types/TrendLine';
@@ -73,8 +72,8 @@ export { Curve } from './types/Curve';
 export { ArrowMark, ArrowMarkUp, ArrowMarkDown } from './types/ArrowMark';
 export { GlyphStamp, FlagMark, IconStamp, GLYPH_OPTIONS, STAMP_SIZE_OPTIONS } from './types/GlyphStamp';
 export { FibRatios, type FibLevel, type FibTextSize, type FibEntryLine } from './types/FibRatios';
-export { FibLevels, type FibLevelLine, type FibLabelSide } from './types/FibLevels';
-export { FIB_PRESETS, matchFibPreset, type FibPreset, type FibPresetKey } from './fibPresets';
+export { FibLevels, type FibLevelLine } from './types/FibLevels';
+export { FIB_PRESETS, matchFibPreset } from './fibPresets';
 export { FibRetracement } from './types/FibRetracement';
 export { FibExtension } from './types/FibExtension';
 export { FibExtensionTrend } from './types/FibExtensionTrend';
@@ -151,7 +150,7 @@ export {
     type BlockState,
     type LiquidityState,
 } from './priceAction';
-export { Magnifier, MAGNIFIER_TIMEFRAME_OPTIONS, magnifierTimeframeLabel, type MagnifierStyle } from './types/Magnifier';
+export { Magnifier, MAGNIFIER_TIMEFRAME_OPTIONS, magnifierTimeframeLabel, magnifierTimeframesBelow, type MagnifierStyle } from './types/Magnifier';
 export type { DrawingSeriesBar, DrawingSeriesState, DrawingSeriesGateway } from './series';
 export {
     registerDrawingType,
