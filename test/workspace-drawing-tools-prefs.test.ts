@@ -98,7 +98,7 @@ describe('drawing tool preferences in a workspace', () => {
     it('a style saved on one chart is offered on every chart and survives a restore', () => {
         const first = mountWorkspace({ layout: '2h' });
         const settings = { style: { lineColor: '#ff8800', lineWidth: 3 } };
-        first.cell('c1')!.chart.drawings.saveToolTemplate('trendline', 'Weekly', settings);
+        first.cell('c1')!.chart.drawings.setToolTemplates({ trendline: [{ name: 'Weekly', settings }] });
         expect(first.cell('c2')!.chart.drawings.toolTemplates().trendline).toEqual([{ name: 'Weekly', settings }]);
 
         const saved = JSON.parse(JSON.stringify(first.getState()));

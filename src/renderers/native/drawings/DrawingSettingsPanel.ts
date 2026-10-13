@@ -8,7 +8,6 @@ import {
     FixedRangeVolumeProfile,
     MachFigure,
     LINE_STYLE_OPTIONS,
-    MAGNIFIER_TIMEFRAME_OPTIONS,
     PositionTool,
     TEXT_SIZE_OPTIONS,
     TIMEFRAME_BANDS,
@@ -16,6 +15,7 @@ import {
     clonePlain,
     effectiveFillColor,
     getDrawingType,
+    magnifierTimeframesBelow,
     matchFibPreset,
     timeframeBandOf,
 } from '../../../core/drawings';
@@ -200,12 +200,7 @@ export class DrawingSettingsPanel {
     }
 
     contains(node: Node | null): boolean {
-        if (!node) return false;
-        if (this.ui?.contains(node) || this.menu?.el.contains(node)) return true;
-        // Kit popovers (color picker, select lists) opened from the panel portal into the host.
-        const el = node instanceof Element ? node : node.parentElement;
-        const pop = el?.closest('.vela-popover');
-        return pop != null && this.ui != null && this.host.contains(pop);
+        return node != null && this.ui?.contains(node) === true;
     }
 
     /** Re-read the drawing after a change made outside the panel (a drag, an undo). */
@@ -429,15 +424,10 @@ export class DrawingSettingsPanel {
             case 'opacity':
                 return this.number(b, f.label, () => Number(read() ?? 0), f.path, f);
             case 'select': {
-                let options = f.options ?? [];
-                if (f.path === 'magnifier.timeframe') {
-                    // Only timeframes below the chart's own make sense for a lower-timeframe inset.
-                    const chartMs = this.env.chartBarMs();
-                    const lower = MAGNIFIER_TIMEFRAME_OPTIONS.filter((o) => !(chartMs > 0) || o.ms === 0 || o.ms < chartMs);
-                    options = lower.map((o) => ({ value: o.value, label: o.label }));
-                }
+                // Only timeframes below the chart's own make sense for a lower-timeframe inset.
+                const options = f.path === 'magnifier.timeframe' ? magnifierTimeframesBelow(this.env.chartBarMs()) : (f.options ?? []);
                 if (options.length === 0) return null;
-                const sel = buildFieldControl({ kind: 'select', options, value: String(read() ?? options[0]!.value), fill: false, theme: this.theme, onChange: (v) => b.edit({ [f.path]: maybeNumber(v, read()) }) });
+                const sel = buildFieldControl({ kind: 'select', options, value: String(read() ?? options[0]!.value), fill: false, theme: this.theme, onChange: (v) => b.edit({ [f.path]: v }) });
                 b.watch(() => sel.setValue?.(String(read() ?? '')));
                 return sel.el;
             }
@@ -619,7 +609,6 @@ export class DrawingSettingsPanel {
             placeholder,
             onChange: (v) => b.edit({ 'text.value': v }),
         });
-        ta.input.addEventListener('input', () => b.edit({ 'text.value': ta.input.value }));
         ta.input.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') e.stopPropagation(); // typing never reaches chart shortcuts
         });
@@ -714,13 +703,16 @@ export class DrawingSettingsPanel {
      *  picker only once the user goes custom. */
     private showOnFold(b: Build): HTMLElement {
         const bands = (): readonly string[] | undefined => b.live().showOn;
-        let mode: ShowMode = modeOf(bands());
+        // Read from the drawing on every refresh, so an undo or a change elsewhere shows; "Custom"
+        // sticks only while it was picked here and the drawing is still limited.
+        let pickedCustom = false;
+        const mode = (): ShowMode => (pickedCustom && bands() ? 'custom' : modeOf(bands()));
         const here = timeframeBandOf(this.env.chartBarMs());
         const summary = (): string => {
             const s = bands();
             if (!s) return 'All timeframes';
-            if (mode === 'intraday') return 'Intraday';
-            if (mode === 'higher') return '1H and up';
+            if (mode() === 'intraday') return 'Intraday';
+            if (mode() === 'higher') return '1H and up';
             if (s.length === 0) return 'Nowhere';
             return s.map((k) => TIMEFRAME_BANDS.find((t) => t.key === k)?.label ?? k).join(', ');
         };
@@ -735,12 +727,12 @@ export class DrawingSettingsPanel {
                     { value: 'higher', html: '1H and up' },
                     { value: 'custom', html: 'Custom' },
                 ],
-                () => mode,
+                mode,
                 (v) => {
-                    mode = v as ShowMode;
-                    if (mode === 'all') set(undefined);
-                    else if (mode === 'intraday') set([...INTRADAY]);
-                    else if (mode === 'higher') set([...HIGHER]);
+                    pickedCustom = v === 'custom';
+                    if (v === 'all') set(undefined);
+                    else if (v === 'intraday') set([...INTRADAY]);
+                    else if (v === 'higher') set([...HIGHER]);
                     else set([...(bands() ?? TIMEFRAME_BANDS.map((t) => t.key))]); // start from what shows now
                 },
                 true,
@@ -767,7 +759,7 @@ export class DrawingSettingsPanel {
             const note = document.createElement('div');
             note.className = 'vela-dsp-note';
             b.watch(() => {
-                grid.hidden = mode !== 'custom';
+                grid.hidden = mode() !== 'custom';
                 const s = bands();
                 const hidden = s != null && here != null && !s.includes(here);
                 note.hidden = !hidden;
@@ -1163,11 +1155,6 @@ function upperLowerBase(upper: string, lower: string): string | null {
     return /fill$/i.test(word) ? word : `${word}s`;
 }
 
-/** A select hands back strings; keep a numeric setting numeric. */
-function maybeNumber(v: string, prev: unknown): string | number {
-    return typeof prev === 'number' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : v;
-}
-
 function modeOf(showOn: readonly string[] | undefined): ShowMode {
     if (!showOn) return 'all';
     const same = (a: readonly string[]): boolean => a.length === showOn.length && a.every((k) => showOn.includes(k));
@@ -1177,7 +1164,7 @@ function modeOf(showOn: readonly string[] | undefined): ShowMode {
 }
 
 /** Whether a drawing already wears a style: every setting the style names matches. */
-export function matchesTemplate(d: Drawing, s: DrawingToolDefaults): boolean {
+function matchesTemplate(d: Drawing, s: DrawingToolDefaults): boolean {
     const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
     const style = d.style as unknown as Record<string, unknown>;
     for (const [k, v] of Object.entries(s.style ?? {})) if (!same(style[k], v)) return false;

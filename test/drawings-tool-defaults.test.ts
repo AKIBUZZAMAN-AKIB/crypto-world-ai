@@ -140,6 +140,19 @@ describe('remembered settings are announced and can be saved and restored', () =
         expect(announced).toEqual(['trendline']);
     });
 
+    it('moving an older drawing keeps the settings the user picked last', () => {
+        const { port, ctrl, announced } = setup();
+        const red = ctrl.add('trendline', { anchors: ANCHORS, style: { lineColor: '#ff0000' } })!;
+        const plain = ctrl.add('trendline', { anchors: ANCHORS, style: { lineColor: '#38c0fd' } })!;
+        ctrl.add('trendline', { anchors: ANCHORS, style: { lineColor: '#0000ff' } });
+        announced.length = 0;
+        const moved = [ANCHORS[0]!, { time: 3000, price: 30 }];
+        port.fire({ kind: 'edit', doc: { ...red.serialize(), anchors: moved } });
+        port.fire({ kind: 'edit-many', docs: [{ ...red.serialize(), anchors: ANCHORS }, { ...plain.serialize(), anchors: moved }] });
+        expect(announced).toEqual([]);
+        expect(ctrl.add('trendline', { anchors: ANCHORS })!.style.lineColor).toBe('#0000ff');
+    });
+
     it('a drawing left on its factory look remembers nothing, so factory changes still reach the user', () => {
         const { ctrl, announced } = setup();
         const d = ctrl.add('fibretracement', { anchors: ANCHORS })!;

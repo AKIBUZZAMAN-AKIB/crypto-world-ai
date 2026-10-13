@@ -107,8 +107,11 @@ const make = (type: DrawingTypeKey, extra: Partial<Parameters<typeof createDrawi
     createDrawing(type, { id: 'd', paneId: 'price', anchors: ANCHORS.slice(0, 2), ...extra })!;
 
 function type(field: HTMLTextAreaElement, value: string): void {
-    field.value = value;
-    field.dispatchEvent(new Event('input'));
+    for (let i = 1; i <= value.length; i += 1) {
+        field.value = value.slice(0, i);
+        field.dispatchEvent(new Event('input'));
+    }
+    field.dispatchEvent(new Event('blur'));
 }
 
 describe('the drawing settings panel', () => {
@@ -131,8 +134,10 @@ describe('the drawing settings panel', () => {
         const place = (): HTMLElement => s.segButton('Position along the line', 'End').closest('.vela-dsp-row')!;
         expect(place().hidden).toBe(true);
 
+        const edits = s.edits.length;
         type(s.$<HTMLTextAreaElement>('.vela-dsp textarea')!, 'Weekly support');
         expect(s.live().text?.value).toBe('Weekly support');
+        expect(s.edits.length - edits).toBe(1); // one undo step for the label, not one per key
         expect(place().hidden).toBe(false);
 
         s.segButton('Position along the line', 'End').click();
@@ -165,6 +170,25 @@ describe('the drawing settings panel', () => {
         s.segButton('Show on', 'All').click();
         expect(s.live().showOn).toBeUndefined();
         expect(grid().hidden).toBe(true);
+        s.popup.destroy();
+    });
+
+    it('the timeframe choice follows a change made outside the panel, such as an undo', async () => {
+        const s = setup(make('hline', { anchors: ANCHORS.slice(0, 1) }));
+        await s.openPanel();
+        const show = s.openFold('Show on');
+        s.segButton('Show on', 'Intraday').click();
+        expect(s.segButton('Show on', 'Intraday').getAttribute('aria-pressed')).toBe('true');
+
+        s.actions.patch({ showOn: undefined });
+        s.popup.syncPanel();
+        expect(s.segButton('Show on', 'All').getAttribute('aria-pressed')).toBe('true');
+        expect(show.querySelector('.vela-dsp-fold-s')?.textContent).toBe('All timeframes');
+
+        s.actions.patch({ showOn: ['D', 'W'] });
+        s.popup.syncPanel();
+        expect(s.segButton('Show on', 'Custom').getAttribute('aria-pressed')).toBe('true');
+        expect(show.querySelector('.vela-dsp-fold-s')?.textContent).toBe('D, W');
         s.popup.destroy();
     });
 
