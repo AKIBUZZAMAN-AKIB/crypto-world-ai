@@ -8,7 +8,15 @@ export { defaultStyle, defaultText, DEFAULT_DRAWING_COLOR } from './style';
 export type { FieldKind, SettingsField, SettingsSchema } from './schema';
 export { LINE_FIELDS, FILL_FIELDS, LINE_STYLE_OPTIONS, TEXT_FIELDS, TEXT_SIZE_OPTIONS } from './schema';
 export { Drawing, setByPath } from './Drawing';
-export { captureToolDefaults, applyToolDefaults, sanitizeToolDefaults, type DrawingToolDefaults } from './defaults';
+export {
+    captureToolDefaults,
+    applyToolDefaults,
+    sanitizeToolDefaults,
+    builtinToolTemplates,
+    type DrawingToolDefaults,
+    type DrawingToolTemplate,
+} from './defaults';
+export { TIMEFRAME_BANDS, timeframeBandOf, shownOnTimeframe, sanitizeShowOn } from './visibility';
 export type { DrawingTypeKey, AnchorSlot, SerializedDrawing } from './Drawing';
 export { effectiveFillColor, VALID_FILL, INVALID_FILL, type EffectiveColorTheme } from './effectiveColor';
 export { TrendLine } from './types/TrendLine';
@@ -122,7 +130,7 @@ export { HeadShoulders } from './types/HeadShoulders';
 export { MeasureBox, formatDuration } from './types/MeasureBox';
 export { DatePriceRange } from './types/DatePriceRange';
 export { PositionTool, DIRECTION_OPTIONS, type PositionLevelMode } from './types/PositionTool';
-export { Magnifier, MAGNIFIER_TIMEFRAME_OPTIONS, magnifierTimeframeLabel, type MagnifierStyle } from './types/Magnifier';
+export { Magnifier, MAGNIFIER_TIMEFRAME_OPTIONS, magnifierTimeframeLabel, magnifierTimeframesBelow, type MagnifierStyle } from './types/Magnifier';
 export type { DrawingSeriesBar, DrawingSeriesState, DrawingSeriesGateway } from './series';
 export {
     registerDrawingType,

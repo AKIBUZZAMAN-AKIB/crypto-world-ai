@@ -330,6 +330,8 @@ export class VelaWorkspace {
     private favs: string[] = [];
     /** Every drawing tool's remembered settings — a SHARED pref, mirrored onto every cell. */
     private toolDefs: Record<string, unknown> = {};
+    /** Every drawing tool's saved looks — a SHARED pref like the remembered settings. */
+    private toolTemplates: Record<string, unknown> = {};
     /** Re-entrancy guard while one cell's remembered settings fan out to the others. */
     private toolDefsBusy = false;
     /** Favorite timeframes — the shared topbar's quick-switch chips, one set for the grid. */
@@ -1419,6 +1421,7 @@ export class VelaWorkspace {
      *  are built, or from {@link pushToolDefaults} / the active-cell projection). */
     private adoptDrawingTools(tools: DrawingToolsState): void {
         if (tools.defaults) this.toolDefs = { ...tools.defaults };
+        if (tools.templates) this.toolTemplates = { ...tools.templates };
         if (tools.magnet) this.globalSnap = tools.magnet;
         if (tools.stay !== undefined) this.globalStay = tools.stay;
     }
@@ -1428,7 +1431,11 @@ export class VelaWorkspace {
     private pushToolDefaults(from: ChartCell | null, cells: Iterable<ChartCell> = this.cellsById.values()): void {
         this.toolDefsBusy = true;
         try {
-            for (const other of cells) if (other !== from) other.chart.drawings.setToolDefaults(this.toolDefs);
+            for (const other of cells) {
+                if (other === from) continue;
+                other.chart.drawings.setToolDefaults(this.toolDefs);
+                other.chart.drawings.setToolTemplates(this.toolTemplates);
+            }
         } finally {
             this.toolDefsBusy = false;
         }
@@ -1438,6 +1445,7 @@ export class VelaWorkspace {
     private drawingToolsState(): DrawingToolsState | null {
         const out: DrawingToolsState = {};
         if (Object.keys(this.toolDefs).length > 0) out.defaults = { ...this.toolDefs };
+        if (Object.keys(this.toolTemplates).length > 0) out.templates = { ...this.toolTemplates } as Record<string, unknown[]>;
         if (this.globalSnap !== 'off') out.magnet = this.globalSnap;
         if (this.globalStay) out.stay = true;
         return Object.keys(out).length > 0 ? out : null;
@@ -1697,7 +1705,7 @@ export class VelaWorkspace {
             if (this.favs.length > 0) cell.chart.drawings.setFavorites(this.favs as never[]);
             // Same for the tools' remembered settings: a new chart's first trend line looks
             // like the last one drawn anywhere in the workspace.
-            if (Object.keys(this.toolDefs).length > 0) this.pushToolDefaults(null, [cell]);
+            if (Object.keys(this.toolDefs).length > 0 || Object.keys(this.toolTemplates).length > 0) this.pushToolDefaults(null, [cell]);
             // The indicator ledger: a restored cell re-adds ITS recorded set (held until
             // the manifest resolves); a fresh cell seeds the manifest's enabled entries.
             cell.setManifest(this.manifest, pooled?.indicators == null);
@@ -1752,6 +1760,12 @@ export class VelaWorkspace {
         chart.on('drawing:defaults', () => {
             if (this.toolDefsBusy) return;
             this.toolDefs = chart.drawings.toolDefaults() as Record<string, unknown>;
+            this.pushToolDefaults(cell);
+            this.markStateDirty();
+        });
+        chart.on('drawing:templates', () => {
+            if (this.toolDefsBusy) return;
+            this.toolTemplates = chart.drawings.toolTemplates() as Record<string, unknown>;
             this.pushToolDefaults(cell);
             this.markStateDirty();
         });

@@ -4,7 +4,7 @@ import type { DrawingsDocument } from './drawings/document';
 import type { SnapMode } from './drawings/geometry';
 import type { DrawingMode } from './drawings/port';
 import type { DrawingsOption } from './drawings/toolbar';
-import type { DrawingToolDefaults } from './drawings/defaults';
+import type { DrawingToolDefaults, DrawingToolTemplate } from './drawings/defaults';
 
 /**
  * The chart's drawing control surface (`chart.drawings`) — sibling of
@@ -260,6 +260,19 @@ export class DrawingsControl {
     /** Forget one tool's remembered settings (every tool's without an argument). */
     resetToolDefaults(type?: DrawingTypeKey): this {
         this.ctrl.resetToolDefaults(type);
+        return this;
+    }
+
+    /** Every tool's saved looks ("styles" in the settings panel), by type. Plain JSON —
+     *  persist it and hand it back to {@link setToolTemplates}. */
+    toolTemplates(): Partial<Record<DrawingTypeKey, DrawingToolTemplate[]>> {
+        return this.ctrl.toolTemplates();
+    }
+
+    /** Replace every tool's saved looks (e.g. restoring persisted prefs). Follow changes on
+     *  `drawing:templates`. */
+    setToolTemplates(map: Readonly<Record<string, unknown>>): this {
+        this.ctrl.setToolTemplates(map);
         return this;
     }
 
