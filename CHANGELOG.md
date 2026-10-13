@@ -67,6 +67,11 @@ All notable changes to Vela, newest first.
   kept the old colors: a color change on an existing bar never showed, colors could land on
   the wrong candles, and new candles kept the default up/down colors. Every recalculation now
   repaints the candles with the colors it sets, and one that sets none clears the old ones.
+- **Your own candles are never moved by `live: true`.** A chart given its bars through
+  `data` with `live: true` used to nudge the last candle by up to 0.15% every second and
+  append made-up candles, so real data showed price movement that never happened. Bars
+  passed as `data` are now shown exactly as given. To stream real updates onto your own
+  bars, register a data provider that implements `subscribe`.
 
 ## [0.8.3]
 
