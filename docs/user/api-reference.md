@@ -201,11 +201,13 @@ const history = await run.series('fast'); // one plot's full history
 
 ```js
 const result = await chart.runScript(source);
-if (!result.ok) return console.error(result.error);
-
-result.run.strategy.netPnl;
-const off = result.onUpdate((run) => console.log(run.strategy.openPnl));
-result.remove();                        // take it off the chart
+if (result.ok && result.run) {
+  console.log(result.run.strategy?.netPnl); // `strategy` is set only for strategy scripts
+  const off = result.onUpdate((run) => console.log(run.strategy?.openPnl));
+  // later: off() stops following; result.remove() takes the script off the chart
+} else {
+  console.error(result.error);
+}
 ```
 
 `runScript` resolves on the **first computed run**, injects the script only if it runs (a

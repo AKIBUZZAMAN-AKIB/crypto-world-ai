@@ -359,7 +359,8 @@ interface VelaStorage {
 Example — a REST-backed store (per-user server-side workspaces):
 
 ```ts
-import { VelaWorkspace, type VelaStorage } from '@luxalgo/vela/workspace';
+import { VelaWorkspace } from '@luxalgo/vela/workspace';
+import type { VelaStorage } from '@luxalgo/vela/widget'; // one storage contract for both shells
 
 const restStorage: VelaStorage = {
     async get(key) {

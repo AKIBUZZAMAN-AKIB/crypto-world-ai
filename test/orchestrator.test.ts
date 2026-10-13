@@ -452,6 +452,24 @@ describe('EngineOrchestrator', () => {
         expect(removedEvents).toEqual([ind.id]); // the public event fired (so a host UI can sync)
     });
 
+    it('offline data with live: true shows the given bars unchanged — no invented ticks or candles', async () => {
+        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+        try {
+            const data = makeBars(50);
+            const snapshot = structuredClone(data);
+            const chart = new Vela({} as unknown as HTMLElement, { data, timeframe: '60', live: true, volume: false }, { renderer: new FakeRenderer(), engines: [] });
+            await chart.ready();
+            const ticks: OHLCV[] = [];
+            chart.on('bar', (bar) => ticks.push(bar));
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(ticks).toEqual([]);
+            expect(data).toEqual(snapshot);
+            chart.destroy();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('hide suspends an indicator (drops visuals, keeps the record); show re-runs + re-mounts it', async () => {
         const renderer = new FakeRenderer();
         const engine = new MockEngine();
