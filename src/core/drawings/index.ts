@@ -73,6 +73,7 @@ export { ArrowMark, ArrowMarkUp, ArrowMarkDown } from './types/ArrowMark';
 export { GlyphStamp, FlagMark, IconStamp, GLYPH_OPTIONS, STAMP_SIZE_OPTIONS } from './types/GlyphStamp';
 export { FibRatios, type FibLevel, type FibTextSize, type FibEntryLine } from './types/FibRatios';
 export { FibLevels, type FibLevelLine } from './types/FibLevels';
+export { FIB_PRESETS, matchFibPreset } from './fibPresets';
 export { FibRetracement } from './types/FibRetracement';
 export { FibExtension } from './types/FibExtension';
 export { FibExtensionTrend } from './types/FibExtensionTrend';
