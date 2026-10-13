@@ -325,7 +325,7 @@ panel, marking where it happened.
 |---|---|---|
 | Fair Value Gap | `fairvaluegap` | Click the middle candle of three whose outer candles leave a gap (or a candle near it). The gap runs right until price tests it, reaches its halfway line or fills it, and a dot marks where. Set to flip, a filled gap that price then closes through carries on the other way. |
 | Order Block | `orderblock` | Click the candle: a down-close candle marks a bullish (demand) block, an up-close one a bearish (supply) block, over its body or its full range. It runs right until price tests it, reaches its halfway line or closes through it; a broken block can carry on as a breaker, the other way, until price returns to it. |
-| Liquidity | `liquidity` | Click near a candle's high for the liquidity resting above it, or near its low for the liquidity below. The level runs right until price sweeps it (a wick through) or breaks it (a close beyond), and a cross marks the sweep. |
+| Liquidity | `liquidity` | Click near a candle's high for the liquidity resting above it, or near its low for the liquidity below. The level runs right until price sweeps it (a wick through that closes back inside) or breaks it (a close beyond), and a cross marks the sweep. |
 
 ### Patterns
 

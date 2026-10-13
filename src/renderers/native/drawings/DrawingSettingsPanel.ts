@@ -91,9 +91,7 @@ function ensureStyles(): void {
 .vela-dsp-block + .vela-dsp-block, .vela-dsp-fold { border-top: 1px solid var(--vela-border); }
 .vela-dsp-h { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--vela-fg-muted); }
 .vela-dsp-row { display: flex; align-items: center; gap: 8px; min-height: 30px; }
-.vela-dsp-row[hidden], .vela-dsp-stack[hidden], .vela-dsp-chip[hidden] { display: none; }
-.vela-dsp-stack { display: flex; flex-direction: column; gap: 6px; }
-.vela-dsp-stack > .vela-dsp-lab { flex: none; }
+.vela-dsp-row[hidden] { display: none; }
 .vela-dsp-lab { flex: 0 0 96px; color: var(--vela-fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vela-dsp-row > .vela-dsp-lab + * { min-width: 0; }
 .vela-dsp-spacer { flex: 1; }
@@ -386,36 +384,14 @@ export class DrawingSettingsPanel {
             (d.editableLevels() != null && LEVEL_PATHS.has(f.path));
         const rows: HTMLElement[] = [];
         const own = fields.filter((f) => !skip(f));
-        // An option that matters only in some modes comes and goes with them.
-        const shownWhen = (el: HTMLElement, f: SettingsField): HTMLElement => {
-            const cond = f.when;
-            if (cond) b.watch(() => (el.hidden = !cond.in.includes(readPath(b.live(), cond.path))));
-            return el;
-        };
         for (let i = 0; i < own.length; i += 1) {
             const f = own[i]!;
             const next = own[i + 1];
-            // Several on/off options in a row read as one line of toggles.
-            if (f.kind === 'boolean' && next?.kind === 'boolean') {
-                const run: SettingsField[] = [];
-                while (own[i]?.kind === 'boolean') run.push(own[i++]!);
-                i -= 1;
-                rows.push(chips(...run.map((r) => shownWhen(this.chip(b, r.label, () => readPath(b.live(), r.path) === true, (on) => b.edit({ [r.path]: on })), r))));
-                continue;
-            }
-            // A short list of modes reads as buttons under its name, all choices in view.
-            if (f.kind === 'select' && f.path !== 'magnifier.timeframe' && (f.options?.length ?? 0) >= 2 && (f.options?.length ?? 0) <= 4) {
-                const opts = f.options!.map((o) => ({ value: o.value, html: o.label }));
-                const read = (): string => String(readPath(b.live(), f.path) ?? '');
-                const seg = this.seg(b, f.label, opts, read, (v) => b.edit({ [f.path]: v }), true);
-                rows.push(shownWhen(f.options!.length > 2 ? stacked(f.label, seg) : row(f.label, seg), f));
-                continue;
-            }
             // "Upper line color" + "Upper line style" read as one "Upper line" row, and an upper /
             // lower color pair ("Upper band color", "Lower band color") as one "Bands" row.
             const base =
                 f.kind === 'color' && next?.kind === 'lineStyle' ? pairBase(f.label, next.label)
-                : f.kind === 'color' && next?.kind === 'color' ? upperLowerBase(f.label, next.label) ?? (f.label === 'Bullish' && next.label === 'Bearish' ? 'Colors' : null)
+                : f.kind === 'color' && next?.kind === 'color' ? upperLowerBase(f.label, next.label)
                 : null;
             if (base) {
                 const color = this.fieldControl(b, f);
@@ -425,7 +401,12 @@ export class DrawingSettingsPanel {
                 continue;
             }
             const ctrl = this.fieldControl(b, f);
-            if (ctrl) rows.push(shownWhen(row(f.label, ctrl), f));
+            if (!ctrl) continue;
+            const r = row(f.label, ctrl);
+            // An option that matters only in some modes comes and goes with them.
+            const cond = f.when;
+            if (cond) b.watch(() => (r.hidden = !cond.in.includes(readPath(b.live(), cond.path))));
+            rows.push(r);
         }
         // Level numbers and their labels have their own sizes (fib-family tools).
         const props = d.serialize().props ?? {};
@@ -1126,17 +1107,6 @@ function row(label: string, ...controls: HTMLElement[]): HTMLElement {
     lab.textContent = label;
     lab.title = label;
     el.append(lab, ...controls);
-    return el;
-}
-
-/** A control under its name, spanning the panel (a row of modes too wide to sit beside it). */
-function stacked(label: string, control: HTMLElement): HTMLElement {
-    const el = document.createElement('div');
-    el.className = 'vela-dsp-stack';
-    const lab = document.createElement('span');
-    lab.className = 'vela-dsp-lab';
-    lab.textContent = label;
-    el.append(lab, control);
     return el;
 }
 

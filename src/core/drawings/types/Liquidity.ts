@@ -2,12 +2,14 @@ import type { AnchorSlot, SerializedDrawing } from '../Drawing';
 import type { Projector } from '../geometry';
 import type { SettingsSchema } from '../schema';
 import { LINE_FIELDS } from '../schema';
-import { liquidityState, type LiquidityExtend, type LiquidityState } from '../priceAction';
+import { liquidityState, type LiquidityState } from '../priceAction';
 import { PriceActionTool } from './PriceActionZone';
 
 /** A liquidity level's settings (round-trip through `props`). */
 export interface LiquiditySettings {
-    extend: LiquidityExtend;
+    /** How far right the level runs. A close beyond it takes it too, so "until swept" also
+     *  stops at a break. */
+    extend: 'swept' | 'broken' | 'always';
     /** Mark the candle that swept the level. */
     markSweep: boolean;
 }
@@ -57,8 +59,7 @@ export class Liquidity extends PriceActionTool {
         const a = this.anchors[0];
         if (!c || !a) return null;
         const bar = c.bars[c.at]!;
-        const side = a.price >= (bar.high + bar.low) / 2 ? 'high' : 'low';
-        return liquidityState(c.bars, c.at, side, this.liq.extend);
+        return liquidityState(c.bars, c.at, a.price >= (bar.high + bar.low) / 2 ? 'high' : 'low');
     }
 
     line(proj: Projector): LiquidityGeometry | null {
@@ -68,17 +69,16 @@ export class Liquidity extends PriceActionTool {
         const y = proj.yOf(s.price, this.paneId);
         if (y == null) return null;
         const { bars } = c;
+        const { extend, markSweep } = this.liq;
+        const end = extend === 'always' ? null : extend === 'broken' ? s.broken : (s.swept ?? s.broken);
         const x1 = proj.xOf(bars[s.index]!.time);
-        const x2 = this.rightEdge(proj, bars, s.end);
         let sweep: LiquidityGeometry['sweep'] = null;
-        if (this.liq.markSweep && s.swept !== null && (s.end === null || s.swept <= s.end)) {
+        if (markSweep && s.swept !== null && (end === null || s.swept <= end)) {
             const b = bars[s.swept]!;
             const wick = proj.yOf(s.high ? b.high : b.low, this.paneId);
             if (wick != null) sweep = { x: proj.xOf(b.time), y: wick + (s.high ? -9 : 9) };
         }
-        this.cachedRange = { min: s.price, max: s.price };
-        this.cachedExtent = { min: bars[s.index]!.time, max: bars[s.end ?? bars.length - 1]!.time };
-        return { x1, x2, y, sweep, handle: [x1, y] };
+        return { x1, x2: this.rightEdge(proj, bars, end), y, sweep, handle: [x1, y] };
     }
 
     hitTest(px: number, py: number, proj: Projector, tol: number): boolean {
@@ -88,10 +88,7 @@ export class Liquidity extends PriceActionTool {
 
     handlePoints(proj: Projector): Array<[number, number]> {
         const l = this.line(proj);
-        if (l) return [l.handle];
-        const a = this.anchors[0];
-        const y = a ? proj.yOf(a.price, this.paneId) : null;
-        return a && y != null ? [[proj.xOf(a.time), y]] : [];
+        return l ? [l.handle] : this.anchorHandle(proj);
     }
 
     bounds(proj: Projector): { x: number; y: number; w: number; h: number } | null {
@@ -105,7 +102,7 @@ export class Liquidity extends PriceActionTool {
             fields: [
                 ...LINE_FIELDS,
                 { path: 'liq.extend', label: 'Extend right', kind: 'select', options: EXTEND_OPTIONS, group: 'behavior' },
-                { path: 'liq.markSweep', label: 'Mark the sweep', kind: 'boolean', group: 'behavior' },
+                { path: 'liq.markSweep', label: 'Mark sweep', kind: 'boolean', group: 'behavior' },
             ],
         };
     }

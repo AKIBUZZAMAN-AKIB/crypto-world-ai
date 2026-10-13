@@ -1,21 +1,14 @@
 import type { SerializedDrawing } from '../Drawing';
-import type { Projector } from '../geometry';
 import type { SettingsSchema } from '../schema';
-import { blockState, type BlockExtend, type BlockState } from '../priceAction';
+import { blockState, type PriceActionBar } from '../priceAction';
 import { BEARISH, BULLISH } from '../../palette';
-import { PriceActionZone, strokeOf, type PriceZoneGeometry } from './PriceActionZone';
+import { PriceActionZone, type ZoneFormation, type ZoneSettings } from './PriceActionZone';
 
 /** An order block's settings (round-trip through `props`). */
-export interface BlockSettings {
+export interface BlockSettings extends ZoneSettings {
     /** The candle's body, or its whole range from high to low. */
     range: 'body' | 'wick';
-    extend: BlockExtend;
-    /** Fill of a bullish (demand) / bearish (supply) block; its alpha is the opacity. */
-    upColor: string;
-    downColor: string;
-    midline: boolean;
-    border: boolean;
-    fade: boolean;
+    extend: 'tested' | 'half' | 'broken' | 'always';
     /** Once broken, the block carries on the other way until price returns to it. */
     breaker: boolean;
 }
@@ -50,50 +43,16 @@ export class OrderBlock extends PriceActionZone {
         if (!this.block) this.block = defaults();
     }
 
-    state(proj: Projector): BlockState | null {
-        const c = this.candles(proj);
-        return c ? blockState(c.bars, c.at, this.block.range, this.block.extend) : null;
+    protected settings(): BlockSettings {
+        return this.block;
     }
 
-    zone(proj: Projector): PriceZoneGeometry | null {
-        const c = this.candles(proj);
-        if (!c) return null;
-        const s = blockState(c.bars, c.at, this.block.range, this.block.extend);
+    protected formation(bars: readonly PriceActionBar[], at: number): ZoneFormation | null {
+        const s = blockState(bars, at, this.block.range);
         if (!s) return null;
-        const box = this.box(proj, s.top, s.bottom);
-        if (!box) return null;
-        const { bars } = c;
-        const fill = s.bull ? this.block.upColor : this.block.downColor;
-        const x1 = proj.xOf(bars[s.index]!.time) - this.halfBar(proj, bars, s.index);
-        const x2 = this.rightEdge(proj, bars, s.end);
-        const midY = proj.yOf(s.mid, this.paneId);
-        const edge = this.block.extend === 'tested' ? (s.bull ? s.top : s.bottom) : this.block.extend === 'half' ? s.mid : s.bull ? s.bottom : s.top;
-        const edgeY = proj.yOf(edge, this.paneId);
-        let flip: PriceZoneGeometry['flip'] = null;
-        if (this.block.breaker && this.block.extend === 'broken' && s.broken !== null) {
-            const other = s.bull ? this.block.downColor : this.block.upColor;
-            flip = {
-                x1: proj.xOf(bars[s.broken]!.time) - this.halfBar(proj, bars, s.broken),
-                x2: this.rightEdge(proj, bars, s.retest),
-                fill: other,
-                stroke: strokeOf(other),
-            };
-        }
-        this.cachedRange = { min: s.bottom, max: s.top };
-        this.cachedExtent = { min: bars[s.index]!.time, max: bars[s.retest ?? s.end ?? bars.length - 1]!.time };
-        return {
-            x1,
-            x2,
-            ...box,
-            fill,
-            stroke: strokeOf(fill),
-            border: this.block.border,
-            midY: this.block.midline ? midY : null,
-            faded: s.end !== null && this.block.fade && !flip,
-            marker: s.end !== null && !flip && edgeY != null ? { x: proj.xOf(bars[s.end]!.time), y: edgeY } : null,
-            flip,
-            handle: [proj.xOf(bars[s.index]!.time), midY ?? (box.yTop + box.yBottom) / 2],
-        };
+        const { extend, breaker } = this.block;
+        const flip = breaker && extend === 'broken' && s.broken !== null ? { from: s.broken, to: s.retest } : null;
+        return { ...s, start: s.index, end: extend === 'always' ? null : s[extend], flip };
     }
 
     schema(): SettingsSchema {
@@ -105,8 +64,8 @@ export class OrderBlock extends PriceActionZone {
                 { path: 'block.downColor', label: 'Bearish', kind: 'color', group: 'fill' },
                 { path: 'block.midline', label: 'Midline', kind: 'boolean', group: 'line' },
                 { path: 'block.border', label: 'Border', kind: 'boolean', group: 'line' },
-                { path: 'block.fade', label: 'Fade when done', kind: 'boolean', group: 'behavior', when: { path: 'block.extend', in: ['tested', 'half', 'broken'] } },
-                { path: 'block.breaker', label: 'Breaker once broken', kind: 'boolean', group: 'behavior', when: { path: 'block.extend', in: ['broken'] } },
+                { path: 'block.fade', label: 'Fade at end', kind: 'boolean', group: 'behavior', when: { path: 'block.extend', in: ['tested', 'half', 'broken'] } },
+                { path: 'block.breaker', label: 'Breaker', kind: 'boolean', group: 'behavior', when: { path: 'block.extend', in: ['broken'] } },
             ],
         };
     }

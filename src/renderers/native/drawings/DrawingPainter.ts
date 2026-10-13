@@ -3,7 +3,7 @@ import { SegmentDrawing, TrendLine, FibRatios, RadialFib, FibSpiral, GannSquare,
 import type { VelaTheme } from '../../../core/options';
 import { contrastColor, dashPattern, extendEndpoints, namedFontSize, labelLineHeight, TEXT_FRAME_INSET, TEXT_FRAME_RISE, uprightLineAngle } from '../../shared/drawing-geometry';
 import { BEARISH, BULLISH, NEUTRAL, SLATE, SLATE_DEEP } from '../../../core/palette';
-import { withAlpha } from '../../../core/color';
+import { toHex6, withAlpha } from '../../../core/color';
 import { barTransformFor } from '../../../core/price-styles/BarTransform';
 import type { OHLCV } from '../../../core/model/ohlcv';
 import { valueDecimals } from '../chrome/ticks';
@@ -564,6 +564,7 @@ export class DrawingPainter {
             return;
         }
         const h = z.yBottom - z.yTop;
+        const stroke = toHex6(z.fill, z.fill); // the fill's hue, opaque
         ctx.save();
         ctx.globalAlpha *= z.faded ? 0.6 : 1;
         ctx.fillStyle = z.fill;
@@ -571,12 +572,12 @@ export class DrawingPainter {
         if (z.border) {
             ctx.lineWidth = 1;
             ctx.setLineDash([]);
-            ctx.strokeStyle = z.stroke;
+            ctx.strokeStyle = stroke;
             ctx.strokeRect(Math.round(z.x1) + 0.5, Math.round(z.yTop) + 0.5, Math.round(z.x2 - z.x1), Math.round(h));
         }
         if (z.midY != null) {
             const y = Math.round(z.midY) + 0.5;
-            this.stroke(ctx, { lineColor: z.stroke, lineWidth: 1, lineStyle: 'dashed' }, () => {
+            this.stroke(ctx, { lineColor: stroke, lineWidth: 1, lineStyle: 'dashed' }, () => {
                 ctx.moveTo(z.x1, y);
                 ctx.lineTo(z.x2, y);
             });
@@ -588,7 +589,7 @@ export class DrawingPainter {
             ctx.fillStyle = f.fill;
             ctx.fillRect(f.x1, z.yTop, f.x2 - f.x1, h);
             ctx.lineWidth = 1;
-            ctx.strokeStyle = f.stroke;
+            ctx.strokeStyle = toHex6(f.fill, f.fill);
             ctx.setLineDash([5, 4]);
             ctx.strokeRect(Math.round(f.x1) + 0.5, Math.round(z.yTop) + 0.5, Math.round(f.x2 - f.x1), Math.round(h));
             ctx.restore();
@@ -596,7 +597,7 @@ export class DrawingPainter {
         if (z.marker) {
             ctx.beginPath();
             ctx.arc(z.marker.x, z.marker.y, 3.5, 0, Math.PI * 2);
-            ctx.fillStyle = z.stroke;
+            ctx.fillStyle = stroke;
             ctx.fill();
         }
     }

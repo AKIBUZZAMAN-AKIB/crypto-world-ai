@@ -14,10 +14,8 @@ export interface PriceActionBar {
     close: number;
 }
 
-/** How far right a zone runs: to the bar of an event, or on to the latest candle. */
-export type GapExtend = 'tested' | 'half' | 'filled' | 'always';
-export type BlockExtend = 'tested' | 'half' | 'broken' | 'always';
-export type LiquidityExtend = 'swept' | 'broken' | 'always';
+/** How many candles either side of the clicked one are searched for a gap. */
+const GAP_REACH = 3;
 
 /** The bar whose open time is closest to `time` (bars ascending), or -1 with no bars. */
 export function nearestBarIndex(bars: readonly PriceActionBar[], time: number): number {
@@ -44,9 +42,9 @@ export function gapAt(bars: readonly PriceActionBar[], i: number): { bull: boole
     return null;
 }
 
-/** The gap at the candle at `i`, or at the nearest candle within `reach` bars that left one. */
-export function nearestGap(bars: readonly PriceActionBar[], i: number, reach = 3): { index: number; bull: boolean; top: number; bottom: number } | null {
-    for (let k = 0; k <= reach; k += 1) {
+/** The gap at the candle at `i`, or at the nearest candle a few bars away that left one. */
+export function nearestGap(bars: readonly PriceActionBar[], i: number): { index: number; bull: boolean; top: number; bottom: number } | null {
+    for (let k = 0; k <= GAP_REACH; k += 1) {
         for (const j of k === 0 ? [i] : [i - k, i + k]) {
             const g = gapAt(bars, j);
             if (g) return { index: j, ...g };
@@ -71,12 +69,10 @@ export interface GapState {
     filled: number | null;
     /** After filling, a candle closed beyond the gap's far side: it now works the other way. */
     inverted: number | null;
-    /** The bar the zone stops at for the chosen extension, or null to run on. */
-    end: number | null;
 }
 
 /** A fair value gap around the candle at (or near) `i`, and what price has done to it since. */
-export function gapState(bars: readonly PriceActionBar[], i: number, extend: GapExtend): GapState | null {
+export function gapState(bars: readonly PriceActionBar[], i: number): GapState | null {
     const g = nearestGap(bars, i);
     if (!g) return null;
     const { index, bull, top, bottom } = g;
@@ -85,18 +81,16 @@ export function gapState(bars: readonly PriceActionBar[], i: number, extend: Gap
     let half: number | null = null;
     let filled: number | null = null;
     let inverted: number | null = null;
-    for (let j = index + 2; j < bars.length; j += 1) {
+    for (let j = index + 2; j < bars.length && inverted === null; j += 1) {
         const b = bars[j]!;
         const reach = bull ? b.low : b.high;
         const into = (v: number): boolean => (bull ? reach <= v : reach >= v);
         if (tested === null && into(bull ? top : bottom)) tested = j;
         if (half === null && into(mid)) half = j;
         if (filled === null && into(bull ? bottom : top)) filled = j;
-        if (filled !== null && inverted === null && (bull ? b.close < bottom : b.close > top)) inverted = j;
-        if (inverted !== null) break;
+        if (filled !== null && (bull ? b.close < bottom : b.close > top)) inverted = j;
     }
-    const end = extend === 'tested' ? tested : extend === 'half' ? half : extend === 'filled' ? filled : null;
-    return { index, bull, top, bottom, mid, tested, half, filled, inverted, end };
+    return { index, bull, top, bottom, mid, tested, half, filled, inverted };
 }
 
 export interface BlockState {
@@ -114,12 +108,12 @@ export interface BlockState {
     broken: number | null;
     /** After the break, price returned to the block from the other side. */
     retest: number | null;
-    end: number | null;
 }
 
 /** An order block on the candle at `i` — its body, or its whole range — and what price has
- *  done to it since. Tests only count once price has first left the block. */
-export function blockState(bars: readonly PriceActionBar[], i: number, range: 'body' | 'wick', extend: BlockExtend): BlockState | null {
+ *  done to it since. Tests only count once price has first left the block; a close through
+ *  it breaks it either way. */
+export function blockState(bars: readonly PriceActionBar[], i: number, range: 'body' | 'wick'): BlockState | null {
     const c = bars[i];
     if (!c) return null;
     const bull = c.close < c.open;
@@ -132,29 +126,19 @@ export function blockState(bars: readonly PriceActionBar[], i: number, range: 'b
     let broken: number | null = null;
     let leftAfterBreak = false;
     let retest: number | null = null;
-    for (let j = i + 1; j < bars.length; j += 1) {
+    for (let j = i + 1; j < bars.length && retest === null; j += 1) {
         const b = bars[j]!;
-        if (!left) {
-            left = bull ? b.low > top : b.high < bottom;
-            continue;
-        }
         if (broken === null) {
-            if (tested === null && (bull ? b.low <= top : b.high >= bottom)) tested = j;
-            if (half === null && (bull ? b.low <= mid : b.high >= mid)) half = j;
+            if (!left) left = bull ? b.low > top : b.high < bottom;
+            else {
+                if (tested === null && (bull ? b.low <= top : b.high >= bottom)) tested = j;
+                if (half === null && (bull ? b.low <= mid : b.high >= mid)) half = j;
+            }
             if (bull ? b.close < bottom : b.close > top) broken = j;
-            continue;
-        }
-        if (!leftAfterBreak) {
-            leftAfterBreak = bull ? b.high < bottom : b.low > top;
-            continue;
-        }
-        if (bull ? b.high >= bottom : b.low <= top) {
-            retest = j;
-            break;
-        }
+        } else if (!leftAfterBreak) leftAfterBreak = bull ? b.high < bottom : b.low > top;
+        else if (bull ? b.high >= bottom : b.low <= top) retest = j;
     }
-    const end = extend === 'tested' ? tested : extend === 'half' ? half : extend === 'broken' ? broken : null;
-    return { index: i, bull, top, bottom, mid, tested, half, broken, retest, end };
+    return { index: i, bull, top, bottom, mid, tested, half, broken, retest };
 }
 
 export interface LiquidityState {
@@ -162,15 +146,14 @@ export interface LiquidityState {
     /** Resting above a high (true) or below a low. */
     high: boolean;
     price: number;
-    /** A candle traded through the level. */
+    /** A candle traded through the level and closed back inside it. */
     swept: number | null;
     /** A candle closed beyond the level. */
     broken: number | null;
-    end: number | null;
 }
 
 /** Liquidity resting beyond the high or low of the candle at `i`, and when price took it. */
-export function liquidityState(bars: readonly PriceActionBar[], i: number, side: 'high' | 'low', extend: LiquidityExtend): LiquidityState | null {
+export function liquidityState(bars: readonly PriceActionBar[], i: number, side: 'high' | 'low'): LiquidityState | null {
     const c = bars[i];
     if (!c) return null;
     const high = side === 'high';
@@ -179,9 +162,8 @@ export function liquidityState(bars: readonly PriceActionBar[], i: number, side:
     let broken: number | null = null;
     for (let j = i + 1; j < bars.length && broken === null; j += 1) {
         const b = bars[j]!;
-        if (swept === null && (high ? b.high > price : b.low < price)) swept = j;
         if (high ? b.close > price : b.close < price) broken = j;
+        else if (swept === null && (high ? b.high > price : b.low < price)) swept = j;
     }
-    const end = extend === 'swept' ? swept : extend === 'broken' ? broken : null;
-    return { index: i, high, price, swept, broken, end };
+    return { index: i, high, price, swept, broken };
 }

@@ -2,21 +2,8 @@
 // one candle, found on the candles around it, and followed as price comes back — each runs right
 // until the event the user picked (tested, half-filled, filled, broken, swept), then marks it.
 import { describe, it, expect } from 'vitest';
-import {
-    blockState,
-    buildToolbar,
-    createDrawing,
-    gapAt,
-    gapState,
-    liquidityState,
-    nearestBarIndex,
-    nearestGap,
-    type FairValueGap,
-    type Liquidity,
-    type OrderBlock,
-    type PriceActionBar,
-    type Projector,
-} from '../src/core/drawings';
+import { buildToolbar, createDrawing, type FairValueGap, type Liquidity, type OrderBlock, type Projector } from '../src/core/drawings';
+import { blockState, gapAt, gapState, liquidityState, nearestBarIndex, nearestGap, type PriceActionBar } from '../src/core/drawings/priceAction';
 
 const MIN5 = 300_000;
 /** Candles from [open, high, low, close] rows, five minutes apart. */
@@ -56,7 +43,7 @@ describe('finding the formation on the candles', () => {
 
     it('a click a candle or two off still finds the nearest gap', () => {
         expect(nearestGap(GAP_UP, 4)?.index).toBe(2);
-        expect(nearestGap(GAP_UP, 8, 1)).toBeNull();
+        expect(nearestGap(GAP_UP, 8)).toBeNull();
     });
 
     it('a click between candles lands on the nearest one', () => {
@@ -69,16 +56,19 @@ describe('finding the formation on the candles', () => {
 
 describe('a fair value gap follows price back into it', () => {
     it('it records when price tested it, reached its halfway line, filled it, and closed through it', () => {
-        const s = gapState(GAP_UP, 2, 'filled')!;
+        const s = gapState(GAP_UP, 2)!;
         expect([s.tested, s.half, s.filled, s.inverted]).toEqual([5, 6, 7, 7]);
         expect(s.mid).toBe(103);
     });
 
     it('each extension stops the gap at its own event, or runs on', () => {
-        expect(gapState(GAP_UP, 2, 'tested')!.end).toBe(5);
-        expect(gapState(GAP_UP, 2, 'half')!.end).toBe(6);
-        expect(gapState(GAP_UP, 2, 'filled')!.end).toBe(7);
-        expect(gapState(GAP_UP, 2, 'always')!.end).toBeNull();
+        const d = createDrawing('fairvaluegap', { paneId: 'price', anchors: [{ time: 2 * MIN5, price: 103 }] }) as FairValueGap;
+        const right = (extend: string): number => {
+            d.applySettings({ 'gap.extend': extend });
+            return d.zone(proj(GAP_UP))!.x2;
+        };
+        expect([right('tested'), right('half'), right('filled')]).toEqual([55, 65, 75]); // bars 5, 6, 7
+        expect(right('always')).toBe(400); // the chart's edge
     });
 
     it('on the chart it spans from the first candle to the fill, with its halfway line and a dot where it filled', () => {
@@ -103,9 +93,11 @@ describe('a fair value gap follows price back into it', () => {
         expect(z.faded).toBe(false);
     });
 
-    it('with no gap near the candle there is nothing to draw', () => {
+    it('with no gap near the candle there is nothing to draw, but the guide at the candle still selects it', () => {
         const d = createDrawing('fairvaluegap', { paneId: 'price', anchors: [{ time: 8 * MIN5, price: 101 }] }) as FairValueGap;
         expect(d.zone(proj(GAP_UP))).toBeNull();
+        expect(d.hitTest(80, 50, proj(GAP_UP), 2)).toBe(true);
+        expect(d.hitTest(60, 50, proj(GAP_UP), 2)).toBe(false);
     });
 });
 
@@ -124,13 +116,22 @@ const BLOCK = candles([
 
 describe('an order block', () => {
     it('a down-close candle marks demand; its body is the zone unless the full range is chosen', () => {
-        expect(blockState(BLOCK, 1, 'body', 'broken')).toMatchObject({ bull: true, top: 100, bottom: 98 });
-        expect(blockState(BLOCK, 1, 'wick', 'broken')).toMatchObject({ top: 100.5, bottom: 97.5 });
+        expect(blockState(BLOCK, 1, 'body')).toMatchObject({ bull: true, top: 100, bottom: 98 });
+        expect(blockState(BLOCK, 1, 'wick')).toMatchObject({ top: 100.5, bottom: 97.5 });
     });
 
     it('tests count only after price has left the block; then it is tested, half-filled, broken and retested', () => {
-        const s = blockState(BLOCK, 1, 'body', 'broken')!;
+        const s = blockState(BLOCK, 1, 'body')!;
         expect([s.tested, s.half, s.broken, s.retest]).toEqual([4, 5, 6, 8]);
+    });
+
+    it('a block closed through before price ever left it is broken all the same', () => {
+        const failed = candles([
+            [99, 100, 98.5, 99.5],
+            [100, 100.5, 97.5, 98], // 1 — the block (body 98–100)
+            [98, 99, 95, 95.5], // 2 — closes below 98 without ever trading above 100
+        ]);
+        expect(blockState(failed, 1, 'body')).toMatchObject({ tested: null, broken: 2 });
     });
 
     it('once broken it can carry on as a breaker, the other way, until price returns to it', () => {
@@ -157,10 +158,22 @@ const SWEEP = candles([
 ]);
 
 describe('a liquidity level', () => {
-    it('it rests above the high and is taken by the first wick through it, broken by the first close beyond', () => {
-        const s = liquidityState(SWEEP, 2, 'high', 'swept')!;
-        expect([s.price, s.swept, s.broken, s.end]).toEqual([105, 5, 7, 5]);
-        expect(liquidityState(SWEEP, 2, 'high', 'broken')!.end).toBe(7);
+    it('it rests above the high, is swept by a wick through it that closes back below, and broken by a close beyond', () => {
+        const s = liquidityState(SWEEP, 2, 'high')!;
+        expect([s.price, s.swept, s.broken]).toEqual([105, 5, 7]);
+    });
+
+    it('a candle that closes beyond the level breaks it without sweeping it, and "until swept" stops there too', () => {
+        const breakout = candles([
+            [100, 101, 99, 100.5],
+            [100.5, 105, 100, 104], // 1 — the high
+            [104, 108, 103.5, 107.5], // 2 — straight through, closing above
+        ]);
+        expect(liquidityState(breakout, 1, 'high')).toMatchObject({ swept: null, broken: 2 });
+        const d = createDrawing('liquidity', { paneId: 'price', anchors: [{ time: MIN5, price: 104.5 }] }) as Liquidity;
+        const l = d.line(proj(breakout))!;
+        expect(l.x2).toBe(25); // bar 2's right edge
+        expect(l.sweep).toBeNull();
     });
 
     it('a click nearer the candle’s high sets buy-side liquidity, nearer its low sell-side', () => {

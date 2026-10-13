@@ -1,22 +1,12 @@
 import type { SerializedDrawing } from '../Drawing';
-import type { Projector } from '../geometry';
 import type { SettingsSchema } from '../schema';
-import { gapState, type GapExtend, type GapState } from '../priceAction';
+import { gapState, type PriceActionBar } from '../priceAction';
 import { BEARISH, BULLISH } from '../../palette';
-import { PriceActionZone, strokeOf, type PriceZoneGeometry } from './PriceActionZone';
+import { PriceActionZone, type ZoneFormation, type ZoneSettings } from './PriceActionZone';
 
 /** A fair value gap's settings (round-trip through `props`). */
-export interface GapSettings {
-    /** How far right the gap runs. */
-    extend: GapExtend;
-    /** Fill of a bullish / bearish gap; its alpha is the opacity. */
-    upColor: string;
-    downColor: string;
-    /** The dashed line at the gap's halfway price. */
-    midline: boolean;
-    border: boolean;
-    /** Quieter once the gap has run its course. */
-    fade: boolean;
+export interface GapSettings extends ZoneSettings {
+    extend: 'tested' | 'half' | 'filled' | 'always';
     /** Once filled, a close through the far side carries the gap on the other way. */
     inverse: boolean;
 }
@@ -47,47 +37,16 @@ export class FairValueGap extends PriceActionZone {
         if (!this.gap) this.gap = defaults();
     }
 
-    /** The gap under the anchor and what price has done to it since, or null when there is none. */
-    state(proj: Projector): GapState | null {
-        const c = this.candles(proj);
-        return c ? gapState(c.bars, c.at, this.gap.extend) : null;
+    protected settings(): GapSettings {
+        return this.gap;
     }
 
-    zone(proj: Projector): PriceZoneGeometry | null {
-        const c = this.candles(proj);
-        if (!c) return null;
-        const s = gapState(c.bars, c.at, this.gap.extend);
+    protected formation(bars: readonly PriceActionBar[], at: number): ZoneFormation | null {
+        const s = gapState(bars, at);
         if (!s) return null;
-        const box = this.box(proj, s.top, s.bottom);
-        if (!box) return null;
-        const { bars } = c;
-        const fill = s.bull ? this.gap.upColor : this.gap.downColor;
-        const x1 = proj.xOf(bars[s.index - 1]!.time) - this.halfBar(proj, bars, s.index - 1);
-        const x2 = this.rightEdge(proj, bars, s.end);
-        const midY = proj.yOf(s.mid, this.paneId);
-        // The dot sits on the edge price reached: the near side, the halfway line or the far side.
-        const edge = this.gap.extend === 'tested' ? (s.bull ? s.top : s.bottom) : this.gap.extend === 'half' ? s.mid : s.bull ? s.bottom : s.top;
-        const edgeY = proj.yOf(edge, this.paneId);
-        let flip: PriceZoneGeometry['flip'] = null;
-        if (this.gap.inverse && this.gap.extend === 'filled' && s.inverted !== null) {
-            const other = s.bull ? this.gap.downColor : this.gap.upColor;
-            flip = { x1: proj.xOf(bars[s.inverted]!.time) - this.halfBar(proj, bars, s.inverted), x2: this.rightEdge(proj, bars, null), fill: other, stroke: strokeOf(other) };
-        }
-        this.cachedRange = { min: s.bottom, max: s.top };
-        this.cachedExtent = { min: bars[s.index - 1]!.time, max: bars[s.end ?? bars.length - 1]!.time };
-        return {
-            x1,
-            x2,
-            ...box,
-            fill,
-            stroke: strokeOf(fill),
-            border: this.gap.border,
-            midY: this.gap.midline ? midY : null,
-            faded: s.end !== null && this.gap.fade && !flip,
-            marker: s.end !== null && edgeY != null ? { x: proj.xOf(bars[s.end]!.time), y: edgeY } : null,
-            flip,
-            handle: [proj.xOf(bars[s.index]!.time), midY ?? (box.yTop + box.yBottom) / 2],
-        };
+        const { extend, inverse } = this.gap;
+        const flip = inverse && extend === 'filled' && s.inverted !== null ? { from: s.inverted, to: null } : null;
+        return { ...s, start: s.index - 1, end: extend === 'always' ? null : s[extend], flip };
     }
 
     schema(): SettingsSchema {
@@ -98,8 +57,8 @@ export class FairValueGap extends PriceActionZone {
                 { path: 'gap.downColor', label: 'Bearish', kind: 'color', group: 'fill' },
                 { path: 'gap.midline', label: 'Midline', kind: 'boolean', group: 'line' },
                 { path: 'gap.border', label: 'Border', kind: 'boolean', group: 'line' },
-                { path: 'gap.fade', label: 'Fade when done', kind: 'boolean', group: 'behavior', when: { path: 'gap.extend', in: ['tested', 'half', 'filled'] } },
-                { path: 'gap.inverse', label: 'Flip when closed through', kind: 'boolean', group: 'behavior', when: { path: 'gap.extend', in: ['filled'] } },
+                { path: 'gap.fade', label: 'Fade at end', kind: 'boolean', group: 'behavior', when: { path: 'gap.extend', in: ['tested', 'half', 'filled'] } },
+                { path: 'gap.inverse', label: 'Flip on close', kind: 'boolean', group: 'behavior', when: { path: 'gap.extend', in: ['filled'] } },
             ],
         };
     }

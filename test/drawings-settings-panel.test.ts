@@ -328,12 +328,14 @@ describe('the drawing settings panel', () => {
     it('an option that matters only in one mode appears only in that mode', async () => {
         const s = setup(make('fairvaluegap', { anchors: ANCHORS.slice(0, 1) }));
         await s.openPanel();
-        const flip = (): HTMLElement => s.$$('.vela-dsp-chip').find((c) => c.textContent === 'Flip when closed through')!;
+        const flip = (): HTMLElement => s.$$('.vela-dsp-row').find((r) => r.querySelector('.vela-dsp-lab')?.textContent === 'Flip on close')!;
         expect(flip().hidden).toBe(false);
-        s.segButton('Extend right', 'Until 50%').click();
+        s.actions.patch({ 'gap.extend': 'half' });
+        s.popup.syncPanel();
         expect((s.live() as FairValueGap).gap.extend).toBe('half');
         expect(flip().hidden).toBe(true);
-        s.segButton('Extend right', 'Until filled').click();
+        s.actions.patch({ 'gap.extend': 'filled' });
+        s.popup.syncPanel();
         expect(flip().hidden).toBe(false);
         s.popup.destroy();
     });
