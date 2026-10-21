@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { attributionMarkColor, createAttributionMark, createCustomMark } from '../src/renderers/native/chrome/AttributionMark';
-import { VELA_LETTERS_SVG, VELA_MARK_SVG } from '../src/renderers/native/chrome/vela-logos';
 
 /** The DOM subset the mark builders touch — tests run in a plain node environment. */
 function stubDocument(): Document {
@@ -51,45 +50,36 @@ describe('attributionMarkColor', () => {
     });
 });
 
-describe('attribution mark screenshot opt-in', () => {
-    // The PNG export rasterizes only overlays tagged `data-vela-screenshot`; a mark
-    // that loses the tag silently vanishes from every exported chart.
-    it('the built-in mark opts into the PNG export', () => {
-        const mark = createAttributionMark(stubDocument(), '#151619');
-        expect(mark.dataset.velaScreenshot).toBe('1');
+describe('the built-in attribution mark is neutralized', () => {
+    // This distribution renders no brand mark: the builder returns an inert,
+    // invisible placeholder so callers can keep appending/positioning it freely.
+    it('renders nothing: no anchor, no link, no SVG, hidden by default', () => {
+        const mark = createAttributionMark(stubDocument(), '#151619') as unknown as {
+            className: string;
+            style: { display?: string };
+            children: unknown[];
+        };
+        expect(mark.className).toBe('vela-attribution');
+        expect(mark.style.display).toBe('none');
+        expect(mark.children).toHaveLength(0);
+        expect(JSON.stringify(mark)).not.toContain('velacharts.dev');
     });
 
-    it('a host-supplied custom mark opts in the same way', () => {
-        const mark = createCustomMark(stubDocument(), 'ACME', '#151619');
-        expect(mark.dataset.velaScreenshot).toBe('1');
+    it('carries no screenshot payload (nothing visible to export)', () => {
+        const mark = createAttributionMark(stubDocument(), '#151619') as unknown as {
+            dataset: Record<string, string>;
+        };
+        expect(mark.dataset.velaScreenshot).toBeUndefined();
     });
 });
 
-describe('the built-in mark is Vela\'s', () => {
-    it('shows the Morning Star V and reveals the rest of the wordmark beside it, linking to the project', () => {
-        const mark = createAttributionMark(stubDocument(), '#151619') as unknown as {
-            href: string;
-            title: string;
-            children: Array<{ className: string; innerHTML: string }>;
+describe('host-supplied custom marks keep working', () => {
+    it('opts into the PNG export the same way', () => {
+        const mark = createCustomMark(stubDocument(), 'ACME', '#151619') as unknown as {
+            dataset: Record<string, string>;
+            innerHTML: string;
         };
-        const [symbol, letters] = mark.children;
-        expect(symbol?.className).toBe('vela-attr-symbol');
-        expect(symbol?.innerHTML).toBe(VELA_MARK_SVG);
-        expect(letters?.className).toBe('vela-attr-wordmark');
-        expect(letters?.innerHTML).toBe(VELA_LETTERS_SVG);
-        expect(mark.href).toContain('https://velacharts.dev/');
-        expect(mark.title).toBe('Charting by Vela');
-    });
-
-    it('both halves are inline SVGs that paint via currentColor, on one shared height and baseline', () => {
-        for (const svg of [VELA_MARK_SVG, VELA_LETTERS_SVG]) {
-            expect(svg).toContain('<svg');
-            expect(svg).toContain('currentColor');
-            expect(svg).not.toContain('data:image/png');
-        }
-        // Same viewBox y-range: drawn at one CSS height, the letters land on the V's baseline.
-        const yRange = (svg: string) => svg.match(/viewBox="[\d.]+ (-?[\d.]+) [\d.]+ ([\d.]+)"/)?.slice(1);
-        expect(yRange(VELA_MARK_SVG)).toEqual(['-142', '148']);
-        expect(yRange(VELA_LETTERS_SVG)).toEqual(yRange(VELA_MARK_SVG));
+        expect(mark.dataset.velaScreenshot).toBe('1');
+        expect(mark.innerHTML).toBe('ACME');
     });
 });

@@ -1,31 +1,13 @@
 <!-- markdownlint-disable no-inline-html first-line-h1 -->
 
-<div align="center">
+# Crypto World AI
 
-  <a href="https://velacharts.dev">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset=".github/banner.png">
-      <source media="(prefers-color-scheme: light)" srcset=".github/banner-light.png">
-      <img src=".github/banner.png" alt="Vela™ by LuxAlgo" width="100%">
-    </picture>
-  </a>
-
-# Vela™
-
-  <p><strong>Fast, extensible financial charts for the web: the open-source core of <a href="https://vela.luxalgo.com/chart">Vela</a> by LuxAlgo.</strong><br>
-  Headless core · native WebGL2 renderer · batteries-included workspace · plugin SDK</p>
-
-  [![npm version][npm-version-img]][npm-link]
-  [![Downloads][npm-downloads-img]][npm-link]
-  [![License][license-img]][license-link]
+<p><strong>Fast, extensible financial charts for the web, built on the open-source Vela core.</strong><br>
+Headless core · native WebGL2 renderer · batteries-included workspace · plugin SDK</p>
 
   <p>
-    <a href="https://velacharts.dev">Homepage</a> ·
     <a href="#quick-start">Quick start</a> ·
-    <a href="https://docs.luxalgo.com/vela">Documentation</a> ·
-    <a href="#extending-plugin-sdk">Plugin SDK</a> ·
-    <a href="CHANGELOG.md">Changelog</a> ·
-    <a href="#license-and-attribution">License</a>
+    <a href="CHANGELOG.md">Changelog</a>
   </p>
 
 </div>
@@ -39,10 +21,6 @@ scripting engines, renderers) plugs in behind a public port and can be swapped w
 touching the rest.
 
 ## What's in the box
-
-<p align="center">
-  <img src=".github/vela-layout.png" alt="Vela package layout" width="100%">
-</p>
 
 - **`@luxalgo/vela`**: the headless chart. Data model, engines, drawings, providers,
   native renderer.
@@ -209,11 +187,3 @@ grateful when the watermark stays in a visible spot.
 No scripting engine ships with this package; the Pine Script® addon
 (`@luxalgo/vela-pinets`) is AGPL-3.0 and licensed separately (see *Indicators*).
 
-[homepage]: https://velacharts.dev
-
-[npm-version-img]: https://img.shields.io/npm/v/%40luxalgo%2Fvela.svg
-[npm-downloads-img]: https://img.shields.io/npm/dm/%40luxalgo%2Fvela.svg
-[npm-link]: https://www.npmjs.com/package/@luxalgo/vela
-
-[license-img]: https://img.shields.io/badge/license-Apache--2.0-blue.svg
-[license-link]: LICENSE
