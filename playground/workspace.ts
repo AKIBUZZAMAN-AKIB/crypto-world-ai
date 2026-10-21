@@ -118,6 +118,18 @@ ws.on("cell:created", ({ id }) => {
 // Handy for poking around from the browser console (and for the automated probes).
 (window as unknown as { __ws: VelaWorkspace }).__ws = ws;
 
+// The saved document OUTRANKS the page config above: `persist: true` restores the
+// layout, the sync links and every cell's market from localStorage, so an edit made
+// once in a session (say, turning the Symbol link on, which the OLD build aligned at
+// the same time) keeps winning on every reload — the `cells` declaration never gets
+// another say. `__wsReset()` throws that document away and boots the page's own
+// defaults again. It is the whole workspace in ONE key, so drawings, indicators,
+// splitter sizes and the layout go with it.
+(window as unknown as { __wsReset: () => void }).__wsReset = () => {
+  playgroundStorage().remove("vela-workspace");
+  location.reload();
+};
+
 // ── State surface demo (uncomment to try) ─────────────────────────────────────
 // The workspace speaks the SAME state triplet and document format as the widget —
 // multi-cell here. `persist` above writes exactly this document; the calls below

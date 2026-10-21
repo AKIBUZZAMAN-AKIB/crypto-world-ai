@@ -153,6 +153,20 @@ sol: 'b' }`: only same-group cells follow each other). Cross-timeframe viewport 
 align on the **right edge** (a finer-timeframe cell clamps the window to its own
 minimum zoom).
 
+`symbol` and `timeframe` follow **independently** — each has its own link, so cells can
+share a market without sharing an interval. Changing one cell's market (topbar picker,
+the cell API, a restored document) pushes that cell's symbol/timeframe onto its group;
+the pair a layout shows is whatever each **cell identity** carries — a layout is only
+an arrangement, so `4` → `2h` → `1` keeps every cell's own market. `ws.sync.set('symbol',
+true)` also aligns the group to the active cell once (the "starts coherent" rule the
+whole surface follows), while the dropdown's switches only link what happens NEXT: with
+four different pairs on screen, flipping **Symbol** on leaves all four untouched until
+one of them changes. Cells a later layout change adds to an all-cells link (`true`)
+adopt a pre-existing group peer's market on arrival — the market twin of the style and
+drawings rules below — so growing the grid cannot leave a linked cell sitting on the
+workspace defaults. A group record leaves a newborn unlinked (it has no entry in the
+record yet).
+
 `crosshair` mirrors the pointer's TIME onto same-group cells as a **ghost crosshair**
 (a dimmed vertical line snapped to each follower's own bar, with its time chip);
 leaving the origin clears every ghost. The ghost needs the renderer's optional
@@ -199,7 +213,9 @@ display timezone and theme are already workspace-global, so neither rides this l
 in the topbar's layout dropdown (its SYNC section), and **Drawings** is a toggle on
 the shared drawing toolbar (the pen-with-panes icon under stay-in-drawing-mode). A
 switch reflects the simple all-cells form (`true`/off); flipping one overrides a
-host-set group record with plain on/off — group records stay an API-only shape.
+host-set group record with plain on/off — group records stay an API-only shape. A
+switch is a LINK, not an edit: turning one on never rewrites the market a cell shows
+right now (only an API `ws.sync.set(kind, true)` aligns once).
 
 ```ts
 ws.sync.set('viewport', true); // aligns followers to the active cell, then follows pans

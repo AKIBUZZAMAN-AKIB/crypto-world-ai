@@ -2,6 +2,22 @@
 
 All notable changes to Vela, newest first.
 
+## [Unreleased]
+
+### Changed
+
+- **The Symbol and Interval switches link cells; they no longer rewrite them.** Turning
+  one on in the layout dropdown leaves every chart on the market it is showing right
+  now — only changes made afterwards follow the link. Enabling a link from code keeps
+  its "starts coherent" behaviour and still aligns the group to the active chart once.
+
+### Fixed
+
+- **Charts a bigger layout adds join a linked market.** With the Symbol or Interval
+  link on for every cell, the charts minted by a layout switch now arrive on the
+  market the grid shares instead of the workspace defaults, so growing the grid can no
+  longer leave a linked chart on its own pair.
+
 ## [0.8.4]
 
 ### Added

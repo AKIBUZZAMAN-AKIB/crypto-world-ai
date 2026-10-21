@@ -570,7 +570,9 @@ export class VelaWorkspace {
                 ],
                 onToggleSync: (id) => {
                     const kind = id as SyncKind;
-                    this.sync.set(kind, this.syncOpts[kind] ? false : true);
+                    // `align = false`: the switch links what happens NEXT — it must not
+                    // collapse the group onto the active cell's market (see sync.set).
+                    this.sync.set(kind, this.syncOpts[kind] ? false : true, false);
                 },
                 glyph: () => layoutGlyph(this.def),
             },
@@ -952,7 +954,17 @@ export class VelaWorkspace {
      *  pointer time as ghost crosshairs on the followers (also a toggle in the layout
      *  dropdown). */
     readonly sync = {
-        set: (kind: SyncKind, setting: SyncSetting | false | undefined): void => this.applySyncSetting(kind, setting === false ? undefined : setting, true),
+        /**
+         * `align` (default `true`) also snaps the group to the ACTIVE cell once — the
+         * host-facing "the grid starts coherent" behaviour, and what a programmatic
+         * enable generally wants. The layout dropdown's switches pass `false`: flipping
+         * a link ON there must decide what the cells FOLLOW from the next edit, never
+         * silently rewrite the market every other cell shows right now (a user turning
+         * on the Symbol switch keeps four different pairs until they change one).
+         * Disabling never aligns — there is nothing to align to.
+         */
+        set: (kind: SyncKind, setting: SyncSetting | false | undefined, align = true): void =>
+            this.applySyncSetting(kind, setting === false ? undefined : setting, align),
         get: (kind: SyncKind): SyncSetting | undefined => this.syncOpts[kind],
         state: (): SyncOptions => ({ ...this.syncOpts }),
     };
@@ -1210,6 +1222,7 @@ export class VelaWorkspace {
         this.cellBackend = nextBackend;
         this.applyGrid();
         this.buildCells();
+        this.alignNewCellMarket(preexisting);
         this.alignNewCellStyles(preexisting);
         this.alignNewCellDrawings(preexisting);
         this.syncCellPresentation();
@@ -1887,6 +1900,28 @@ export class VelaWorkspace {
     }
 
     /**
+     * Bring cells minted by a layout change into their MARKET group: with the symbol or
+     * interval link on in its all-cells form (`true` — the shape the dropdown switches
+     * set), a NEW cell (fresh slot, or one returning from the pool that missed edits
+     * while dormant) adopts a pre-existing group peer's market instead of booting on
+     * the workspace defaults beside a linked grid — the market twin of
+     * {@link alignNewCellStyles}. Propagation runs FROM the peer, so a newborn's
+     * defaults never overwrite the group, and the setters' equality short-circuits
+     * keep a converged grid untouched.
+     *
+     * Group RECORDS (`{cellId: group}`) are left alone: a newborn has no entry in the
+     * record, so there is no group for it to join — a host that wants a newborn inside
+     * a group assigns it (the dropdown switches cannot express groups anyway).
+     */
+    private alignNewCellMarket(preexisting: ReadonlySet<string>): void {
+        if (this.syncOpts.symbol !== true && this.syncOpts.timeframe !== true) return;
+        const elders = [...this.cellsById.keys()].filter((id) => preexisting.has(id));
+        if (elders.length === 0) return; // an all-new grid has no source to inherit from
+        const sourceId = this.activeId && elders.includes(this.activeId) ? this.activeId : elders[0]!;
+        this.propagateMarket(sourceId);
+    }
+
+    /**
      * Align cells minted by a layout change to their style group: with the link on, a
      * NEW cell (fresh slot or one returning from the pool, which missed edits while
      * dormant) inherits the presentation of a pre-existing group peer — the active
@@ -2335,7 +2370,9 @@ export class VelaWorkspace {
                 ],
                 onToggleSync: (id) => {
                     const kind = id as SyncKind;
-                    this.sync.set(kind, this.syncOpts[kind] ? false : true);
+                    // `align = false`: the switch links what happens NEXT — it must not
+                    // collapse the group onto the active cell's market (see sync.set).
+                    this.sync.set(kind, this.syncOpts[kind] ? false : true, false);
                 },
                 glyph: () => layoutGlyph(this.def),
             },
