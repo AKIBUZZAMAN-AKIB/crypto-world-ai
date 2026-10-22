@@ -132,7 +132,11 @@ export const SYNC_MATRIX_CSS = `
 
 export interface SyncMatrixChart {
     id: string;
+    /** The SLOT number the user sees (1 = top-left, row-major). Never a symbol: a chart
+     *  can change ticker while the table is open, and the header would then lie. */
     label: string;
+    /** The ticker it is showing right now — tooltip and screen-reader text only. */
+    symbol?: string;
     /** The chart the workspace is showing — its column header is tinted. */
     active?: boolean;
 }
@@ -250,7 +254,9 @@ export class SyncMatrix {
             head.className = 'vela-md-matrix-head';
             head.dataset.cell = c.id;
             head.textContent = c.label;
-            head.setAttribute('aria-label', `${c.label}${c.active ? ' (active)' : ''} — its group for each link`);
+            const what = `Chart ${c.label}${c.symbol ? ` — ${c.symbol}` : ''}${c.active ? ' (active)' : ''}`;
+            head.title = what;
+            head.setAttribute('aria-label', `${what} — its group for each link`);
             head.addEventListener('click', () => {
                 this.opts.onSelectChart?.(c.id);
                 this.opts.onChange?.();
@@ -307,6 +313,12 @@ export class SyncMatrix {
             const head = this.heads.get(c.id);
             if (!head) continue;
             head.toggleAttribute('data-active', Boolean(c.active));
+            // The ticker is LIVE: the chart can switch market while the table is open,
+            // and a tooltip that still names the old one is worse than no tooltip.
+            const what = `Chart ${c.label}${c.symbol ? ` — ${c.symbol}` : ''}${c.active ? ' (active)' : ''}`;
+            if (head.title !== what) head.title = what;
+            const aria = `${what} — its group for each link`;
+            if (head.getAttribute('aria-label') !== aria) head.setAttribute('aria-label', aria);
             const marks: string[] = [];
             for (const l of links) {
                 const m = l.marks?.[c.id];
@@ -323,7 +335,7 @@ export class SyncMatrix {
                 if (!chip) continue;
                 const mark = link.marks?.[c.id];
                 paintChip(chip, mark);
-                chip.setAttribute('aria-label', `${link.label} for ${c.label}: ${mark ?? 'not linked'}`);
+                chip.setAttribute('aria-label', `${link.label} for chart ${c.label}: ${mark ?? 'not linked'}`);
             }
             const all = this.allChips.get(link.id);
             if (all) {

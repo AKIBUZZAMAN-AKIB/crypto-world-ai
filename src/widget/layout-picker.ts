@@ -93,18 +93,27 @@ const CSS = `
 .vela-lp-preset:active { transform: scale(0.98); }
 .vela-lp-preset[data-checked='1'] { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
 .vela-lp-sync { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
-/* The link x chart table, under both columns. Fixed width so it scrolls inside itself
-   instead of widening the popover as charts are added. */
-.vela-lp-matrix {
-    width: 336px;
-    max-width: 78vw;
-    margin-top: 10px;
-    padding-top: 9px;
-    border-top: 1px solid var(--vela-border-faint);
+/* The link x chart table: a fixed side pane with its OWN vertical scroll, so the
+   popover keeps its shape as charts are added and the footer stays put. The table
+   scrolls sideways inside itself; the fade marks the rest of the columns. */
+.vela-lp-charts {
+    width: 302px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
 }
-.vela-lp-matrix[hidden] { display: none !important; }
-.vela-lp-matrix .vela-md-matrix-label { background: var(--vela-surface); }
-.vela-lp-matrix .vela-md-matrix-corner { background: var(--vela-surface); }
+.vela-lp-charts[hidden], .vela-lp-vsep[hidden] { display: none !important; }
+.vela-lp-charthint { margin: -4px 0 6px; font-size: 10.5px; line-height: 1.35; color: var(--vela-fg-muted); }
+.vela-lp-chartscroll {
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: 286px;
+    margin-right: -6px;
+    padding-right: 6px;
+    overscroll-behavior: contain;
+}
+.vela-lp-charts .vela-md-matrix-label,
+.vela-lp-charts .vela-md-matrix-corner { background: var(--vela-surface); }
 /* Preset glyphs: a compact 4-up grid of icon buttons (the canvas cannot draw them). */
 .vela-lp-presets[data-icons='1'] { display: block; max-height: 232px; overflow-y: auto; overflow-x: hidden; margin-right: -4px; padding-right: 4px; }
 .vela-lp-presetcount { margin: 6px 0 2px; font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--vela-fg-muted); opacity: 0.8; }
@@ -257,7 +266,7 @@ export interface LayoutPickerOptions {
     onCycleGroup?: (id: string) => void;
     /** The charts the "Marking" strip lists, in slot order (the phone's sheet has the
      *  same list). Without it the picker can only mark the active cell. */
-    charts?: () => Array<{ id: string; label: string; active: boolean }>;
+    charts?: () => Array<{ id: string; label: string; symbol?: string; active: boolean }>;
     /** Make a chart active from the table's column header. */
     onSelectChart?: (cellId: string) => void;
     /** Cycle ANY chart through a link's groups — the desktop twin of the phone's chart
@@ -303,6 +312,7 @@ export class LayoutPicker {
     /** Which chart the group chips mark: a cell id, or 'all' for "every chart at once". */
     private matrix: SyncMatrix | null = null;
     private matrixSec: HTMLElement | null = null;
+    private vsep2: HTMLElement | null = null;
 
     private readonly onDocPointerDown = (e: PointerEvent): void => {
         const t = e.target as Node | null;
@@ -373,15 +383,29 @@ export class LayoutPicker {
         syncCol.appendChild(this.syncEl);
         cols.appendChild(syncCol);
 
-        // ── the TABLE: link x chart, full width under both columns ───────────────
-        // Same component as the phone sheet (sync-matrix.ts). Before this, the desktop
-        // popover could only ever mark the chart that was already active.
-        const matrixSec = doc.createElement('div');
-        matrixSec.className = 'vela-lp-matrix';
-        matrixSec.hidden = true;
-        const matrixHeading = doc.createElement('div');
-        matrixHeading.className = 'vela-lp-heading';
-        matrixHeading.textContent = 'Chart syncing';
+        // ── the TABLE: its own column, beside the two, with its OWN scrollbars ───
+        // Same component as the phone sheet (sync-matrix.ts) — but on desktop it must
+        // not stretch the panel or push the footer off-screen: a fixed-width side pane
+        // that scrolls vertically by itself, and sideways inside the table (the fade
+        // says there is more). Charts are identified by SLOT NUMBER, never by ticker:
+        // the chart you called BTC can be showing XRPUSDT a second later.
+        const vsep2 = doc.createElement('div');
+        vsep2.className = 'vela-lp-vsep';
+        cols.appendChild(vsep2);
+        this.vsep2 = vsep2;
+
+        const chartsCol = doc.createElement('div');
+        chartsCol.className = 'vela-lp-charts';
+        chartsCol.hidden = true;
+        const chartsHeading = doc.createElement('div');
+        chartsHeading.className = 'vela-lp-heading';
+        chartsHeading.textContent = 'Chart syncing';
+        // The one line that matters: the numbers below are the numbers on the charts.
+        const chartsHint = doc.createElement('div');
+        chartsHint.className = 'vela-lp-charthint';
+        chartsHint.textContent = 'Same mark, same group · numbers match the charts';
+        const chartsScroll = doc.createElement('div');
+        chartsScroll.className = 'vela-lp-chartscroll';
         this.matrix = new SyncMatrix({
             doc,
             shell: 'desktop',
@@ -390,9 +414,10 @@ export class LayoutPicker {
             ...(opts.onAllInOneGroup ? { onAllInOneGroup: (kind: string) => opts.onAllInOneGroup?.(kind) } : {}),
             onChange: () => this.renderSyncs(),
         });
-        matrixSec.append(matrixHeading, this.matrix.el);
-        panel.appendChild(matrixSec);
-        this.matrixSec = matrixSec;
+        chartsScroll.append(this.matrix.el);
+        chartsCol.append(chartsHeading, chartsHint, chartsScroll);
+        cols.appendChild(chartsCol);
+        this.matrixSec = chartsCol;
 
         // ── footer: named layouts + the tab link (both shell-level, not per cell) ──
         this.footEl = doc.createElement('div');
@@ -563,6 +588,7 @@ export class LayoutPicker {
         // whom. One surface each, no duplicate.
         const table = charts.length > 1 && Boolean(this.opts.onCycleCellGroup || this.opts.onAllInOneGroup);
         if (this.matrixSec) this.matrixSec.hidden = !table;
+        if (this.vsep2) this.vsep2.hidden = !table;
         if (table) this.matrix?.update(charts, syncs);
         for (const s of syncs) {
             const row = doc.createElement('button');

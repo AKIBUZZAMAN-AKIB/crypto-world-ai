@@ -689,6 +689,7 @@ export class VelaWorkspace {
                 linkGroup: () => this.linkGroup,
                 onLinkGroup: (tag) => this.setLinkGroup(tag),
                 glyph: () => layoutGlyph(this.def),
+                onOpenChange: (open) => this.setSyncSurfaceOpen(open),
             },
             getContext: () => this.context(),
         });
@@ -1928,6 +1929,26 @@ export class VelaWorkspace {
             if (host) this.gridEl.appendChild(host);
         }
         this.mountAttributionMark(); // fresh hosts exist now — (re)claim the bottom-left one
+        this.paintChartNumbers();
+    }
+
+    /** Write each chart's SLOT NUMBER onto its status line. Hidden until a sync surface is
+     *  open — then the table's column "3" and the chart wearing "3" are the same thing,
+     *  which is the only honest way to identify a chart whose ticker can change. */
+    private paintChartNumbers(): void {
+        const ids = this.order.filter((id) => this.cellsById.has(id));
+        for (const id of this.cellsById.keys()) if (!ids.includes(id)) ids.push(id);
+        for (const [i, id] of ids.entries()) {
+            const cell = this.cellsById.get(id);
+            cell?.host.querySelector('.vela-sl-symbol')?.setAttribute('data-chart-no', String(i + 1));
+        }
+    }
+
+    /** The sync surfaces (phone sheet, desktop popover) number the charts while they are
+     *  up — a number with nothing to match it against is just noise. */
+    private setSyncSurfaceOpen(open: boolean): void {
+        if (open) this.root.setAttribute('data-sync-open', '1');
+        else this.root.removeAttribute('data-sync-open');
     }
 
     /** Per-cell chart subscriptions (trigger ② — the chart instance is stable for the
@@ -2318,10 +2339,20 @@ export class VelaWorkspace {
     }
 
     /** The charts the sync matrix lists, in slot order, with the active one flagged. */
-    private syncCharts(): Array<{ id: string; label: string; active: boolean }> {
+    /** The charts the sync table lists, in LAYOUT order — identified by SLOT, not by
+     *  symbol. A cell's id ('btc') and its ticker are both moving targets: the chart
+     *  named 'btc' can be showing XRPUSDT a second later, and a host may name its cells
+     *  anything. The number is the slot the user sees (1 = top-left, row-major), and the
+     *  live ticker rides along for the tooltip only. */
+    private syncCharts(): Array<{ id: string; label: string; symbol: string; active: boolean }> {
         const ids = this.order.filter((id) => this.cellsById.has(id));
         for (const id of this.cellsById.keys()) if (!ids.includes(id)) ids.push(id);
-        return ids.map((id) => ({ id, label: id.toUpperCase(), active: id === this.activeId }));
+        return ids.map((id, i) => ({
+            id,
+            label: String(i + 1),
+            symbol: this.cellsById.get(id)?.symbol ?? '',
+            active: id === this.activeId,
+        }));
     }
 
     /** Flip one link: on ⇒ off, off ⇒ on. `align = false` — the switch decides what the
@@ -3082,6 +3113,9 @@ export class VelaWorkspace {
             },
             onOpenChange: (open) => {
                 this.trackDialog(open);
+                // While the sheet is up its table numbers the charts, so "column 3" and
+                // the chart wearing "3" are visibly the same thing.
+                this.setSyncSurfaceOpen(open);
                 const anchor = this.pendingReplayAnchor;
                 if (!open && anchor) {
                     this.pendingReplayAnchor = null;

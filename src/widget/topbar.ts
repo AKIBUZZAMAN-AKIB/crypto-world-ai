@@ -201,10 +201,12 @@ export interface TopbarOptions {
         /** Cycle the ACTIVE cell through a link's groups (the row's chip). */
         onCycleGroup?: (id: string) => void;
         /** The charts the picker's link x chart table lists, in slot order. */
-        charts?: () => Array<{ id: string; label: string; active: boolean }>;
+        charts?: () => Array<{ id: string; label: string; symbol?: string; active: boolean }>;
         onCycleCellGroup?: (kind: string, cellId: string) => void;
         /** Make a chart active from the table's column header. */
         onSelectChart?: (cellId: string) => void;
+        /** The popover opened/closed (the workspace numbers its charts while it is up). */
+        onOpenChange?: (open: boolean) => void;
         onAllInOneGroup?: (kind: string) => void;
         /** The drawing scope the workspace holds (the chip on the Drawings row). */
         drawingsScope?: () => 'layout' | 'global';
@@ -497,6 +499,7 @@ export class Topbar {
                 ...(layout.charts ? { charts: () => layout.charts?.() ?? [] } : {}),
                 ...(layout.onCycleCellGroup ? { onCycleCellGroup: (kind: string, cellId: string) => layout.onCycleCellGroup?.(kind, cellId) } : {}),
                 ...(layout.onSelectChart ? { onSelectChart: (cellId: string) => layout.onSelectChart?.(cellId) } : {}),
+                ...(layout.onOpenChange ? { onOpenChange: (open: boolean) => layout.onOpenChange?.(open) } : {}),
                 ...(layout.onAllInOneGroup ? { onAllInOneGroup: (kind) => layout.onAllInOneGroup?.(kind) } : {}),
                 ...(layout.drawingsScope ? { drawingsScope: () => layout.drawingsScope?.() ?? 'layout' } : {}),
                 ...(layout.onToggleDrawingsScope ? { onToggleDrawingsScope: () => layout.onToggleDrawingsScope?.() } : {}),

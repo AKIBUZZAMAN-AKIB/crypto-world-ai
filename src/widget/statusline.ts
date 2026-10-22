@@ -96,6 +96,28 @@ const CSS = `
     font-weight: 700;
 }
 .vela-statusline .vela-sl-symbol { font-weight: 600; font-size: var(--vela-font-size-lg); }
+/* While a sync surface is open every chart wears its SLOT NUMBER (see
+   VelaWorkspace.paintChartNumbers). The sync table identifies charts by number, never
+   by ticker — the chart you called BTC can be showing XRPUSDT a second later. */
+[data-sync-open] .vela-statusline .vela-sl-symbol[data-chart-no]::before {
+    content: attr(data-chart-no);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 15px;
+    height: 15px;
+    margin-right: 6px;
+    padding: 0 3px;
+    border-radius: 4px;
+    border: 1px solid var(--vela-border-faint);
+    background: var(--vela-hover);
+    color: var(--vela-fg-muted);
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0;
+    vertical-align: middle;
+}
 .vela-statusline .vela-sl-meta { color: var(--vela-fg-muted); font-size: var(--vela-font-size-md); font-weight: 600; }
 /* The meta opens with "· " — sit its dot one space-width after the ticker, as far as the
  * venue sits after it, not a full row gap away. */

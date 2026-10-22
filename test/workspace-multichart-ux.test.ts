@@ -123,14 +123,23 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         expect(ws.cell('btc')!.host.querySelector<HTMLElement>('.vela-sl-marks')!.hidden).toBe(true);
     });
 
-    it('the desktop popover has the SAME table — any chart is marked without activating it', () => {
+    it('the desktop popover has the SAME table — any chart is marked without activating it', async () => {
         const ws = mountWorkspace(PAGE);
         ws.sync.set('symbol', true, false); // all-cells form
         openPicker(ws);
-        const table = ws.root.querySelector<HTMLElement>('.vela-lp-matrix')!;
+        const table = ws.root.querySelector<HTMLElement>('.vela-lp-charts')!;
         expect(table.hidden).toBe(false);
+        // Slot numbers, never tickers: the chart called 'btc' may be showing XRPUSDT.
         const heads = [...table.querySelectorAll<HTMLElement>('.vela-md-matrix-head[data-cell]')];
-        expect(heads.map((h) => h.textContent)).toEqual(['BTC', 'ETH', 'SOL', 'BNB']);
+        expect(heads.map((h) => h.textContent)).toEqual(['1', '2', '3', '4']);
+        expect(heads[1]!.title).toContain('Chart 2');
+        expect(heads[1]!.title).toContain('ETHUSDT');
+        // The ticker in that tooltip is LIVE — a chart can switch market under the table.
+        ws.cell('eth')!.setSymbol('XRPUSDT');
+        await settle(ws);
+        ws.root.querySelector<HTMLElement>('button[aria-label^="Layout"]')!.click(); // close
+        openPicker(ws); // reopen: the table re-reads every chart
+        expect(ws.root.querySelector<HTMLElement>('.vela-lp-charts .vela-md-matrix-head[data-cell="eth"]')!.title).toContain('XRPUSDT');
         // One cell per chart, for the Symbol link — no strip, no row chip: one surface.
         const cell = (id: string): HTMLElement => table.querySelector<HTMLElement>(`.vela-md-chip[data-kind="symbol"][data-cell="${id}"]`)!;
         expect(ws.root.querySelector('.vela-lp-target')).toBeNull();
@@ -148,6 +157,22 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         table.querySelector<HTMLElement>('.vela-md-chip-all[data-kind="symbol"]')!.click();
         expect(ws.sync.state().symbol).toBe(true);
         expect(cell('eth').textContent).toBe('A');
+    });
+
+    it('opening the table numbers the charts — column 3 IS the chart wearing 3', () => {
+        const ws = mountWorkspace(PAGE);
+        const nos = (): Array<string | null> =>
+            [...ws.root.querySelectorAll<HTMLElement>('.vela-sl-symbol')].map((el) => el.getAttribute('data-chart-no'));
+        expect(nos()).toEqual(['1', '2', '3', '4']);
+        // …but a number is only shown while the surface that uses it is up.
+        expect(ws.root.hasAttribute('data-sync-open')).toBe(false);
+        openPicker(ws);
+        expect(ws.root.getAttribute('data-sync-open')).toBe('1');
+        // After a layout change the numbers follow the NEW slots, not the old ids.
+        ws.setLayout('8');
+        expect(nos()).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
+        ws.root.querySelector<HTMLElement>('button[aria-label^="Layout"]')!.click(); // close
+        expect(ws.root.hasAttribute('data-sync-open')).toBe(false);
     });
 
     it('the drawable scope chip flips the drawing scope in place', () => {

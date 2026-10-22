@@ -131,9 +131,9 @@ describe('the kebab drawer’s Sync view', () => {
                     s.checked = true;
                 },
                 charts: () => [
-                    { id: 'btc', label: 'BTC', active: true },
-                    { id: 'eth', label: 'ETH', active: false },
-                    { id: 'sol', label: 'SOL', active: false },
+                    { id: 'btc', label: '1', symbol: 'AAA', active: true },
+                    { id: 'eth', label: '2', symbol: 'BBB', active: false },
+                    { id: 'sol', label: '3', symbol: 'CCC', active: false },
                 ],
                 onCycleCellGroup: (id, cellId) => cycles.push([id, cellId]),
                 onAllInOneGroup: (id) => all.push(id),
@@ -212,7 +212,7 @@ describe('the kebab drawer’s Sync view', () => {
         expect(rows.length).toBe(2);
         expect(rows.every((r) => r.querySelector('.vela-md-chip') === null)).toBe(true);
         // One column per chart, plus the link column and the ALL column.
-        expect([...document.querySelectorAll('.vela-md-matrix-head[data-cell]')].map((h) => h.textContent)).toEqual(['BTC', 'ETH', 'SOL']);
+        expect([...document.querySelectorAll('.vela-md-matrix-head[data-cell]')].map((h) => h.textContent)).toEqual(['1', '2', '3']);
         drawer.destroy();
     });
 
@@ -273,10 +273,11 @@ describe('the kebab drawer’s Sync view', () => {
                 onSelectPreset: () => {},
                 syncs: () => [{ id: 'symbol', label: 'Symbol', checked: true, marks: { btc: 'A', eth: 'A', sol: 'A', bnb: 'A' } }],
                 charts: () => [
-                    { id: 'btc', label: 'BTC', active: true },
-                    { id: 'eth', label: 'ETH', active: false },
-                    { id: 'sol', label: 'SOL', active: false },
-                    { id: 'bnb', label: 'BNB', active: false },
+                    // Slot numbers, like the workspace hands over: never tickers.
+                    { id: 'btc', label: '1', symbol: 'AAA', active: true },
+                    { id: 'eth', label: '2', symbol: 'BBB', active: false },
+                    { id: 'sol', label: '3', symbol: 'CCC', active: false },
+                    { id: 'bnb', label: '4', symbol: 'DDD', active: false },
                 ],
                 onCycleCellGroup: () => {},
                 onSelectChart: (id) => picked.push(id),

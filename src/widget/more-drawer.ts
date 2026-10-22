@@ -583,7 +583,7 @@ export interface MoreDrawerOptions {
         /** Cycle the ACTIVE cell through a link's groups (the row's chip). */
         onCycleGroup?: (id: string) => void;
         /** The charts the marking matrix lists, in slot order. Omitted ⇒ no matrix. */
-        charts?: () => Array<{ id: string; label: string; active: boolean }>;
+        charts?: () => Array<{ id: string; label: string; symbol?: string; active: boolean }>;
         /** Cycle ONE chart through a link's groups (a matrix tap) — no active-cell detour. */
         onCycleCellGroup?: (id: string, cellId: string) => void;
         /** Make a chart active by tapping its matrix column header (the phone's way of
