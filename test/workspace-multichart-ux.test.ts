@@ -265,10 +265,19 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
 
 describe("the grid keyboard (TradingView's two chords)", () => {
     const press = (ws: VelaWorkspace, init: KeyboardEventInit): boolean => ws.keymap.handleKeydown(new KeyboardEvent('keydown', init));
+    // Tab cycles charts ONLY while the chart itself owns focus. Anywhere else it must
+    // move focus: rebinding Tab globally made every control in the shell unreachable
+    // (WCAG 2.1.1 — measured with the layout sheet open: Tab was dead).
+    const focusChart = (ws: VelaWorkspace): void => {
+        const cell = ws.root.querySelector<HTMLElement>('.vela-cell')!;
+        cell.tabIndex = 0;
+        cell.focus();
+    };
 
     it('Tab walks the active chart and wraps', () => {
         const ws = mountWorkspace(PAGE);
         expect(ws.active.id).toBe('btc');
+        focusChart(ws);
         press(ws, { key: 'Tab' });
         expect(ws.active.id).toBe('eth');
         press(ws, { key: 'Tab' });
@@ -276,6 +285,15 @@ describe("the grid keyboard (TradingView's two chords)", () => {
         expect(ws.active.id).toBe('bnb');
         press(ws, { key: 'Tab' });
         expect(ws.active.id).toBe('btc'); // wrapped
+    });
+
+    it('Tab on a control does NOT cycle charts — focus moves instead', () => {
+        const ws = mountWorkspace(PAGE);
+        const button = ws.root.querySelector<HTMLElement>('button')!;
+        button.focus();
+        const handled = press(ws, { key: 'Tab' });
+        expect(handled).toBe(false);
+        expect(ws.active.id).toBe('btc'); // the chart did not change under the user
     });
 
     it('Alt+Enter maximizes the active chart, and again restores the grid', () => {
@@ -289,6 +307,7 @@ describe("the grid keyboard (TradingView's two chords)", () => {
 
     it('both chords are inert on a single-chart grid', () => {
         const ws = mountWorkspace({ layout: '1', data: BARS });
+        focusChart(ws);
         press(ws, { key: 'Tab' });
         press(ws, { key: 'Enter', altKey: true });
         expect(ws.active.id).toBe('c1');

@@ -118,6 +118,16 @@ ws.on("cell:created", ({ id }) => {
 // Handy for poking around from the browser console (and for the automated probes).
 (window as unknown as { __ws: VelaWorkspace }).__ws = ws;
 
+// A share link OUTRANKS both the page config and the saved document: it is the whole
+// workspace, deliberately frozen by whoever sent it. `#s1=…` (gzip) or `#s0=…` (raw)
+// decode to the same document `persist` writes, so adopting one is `applyState`.
+if (location.hash.startsWith("#s")) {
+  void ws.applyShareLink().then((ok) => {
+    if (ok) console.log("[share] workspace adopted from the URL fragment");
+    else console.warn("[share] this link does not decode — keeping the local workspace");
+  });
+}
+
 // The saved document OUTRANKS the page config above: `persist: true` restores the
 // layout, the sync links and every cell's market from localStorage, so an edit made
 // once in a session (say, turning the Symbol link on, which the OLD build aligned at

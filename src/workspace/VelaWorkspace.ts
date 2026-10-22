@@ -83,6 +83,7 @@ import {
     type SyncSetting,
 } from './sync';
 import { encodeState, decodeState, decodeStateDetailed, sanitizeState, type CellState, type ChartTemplate, type DrawingToolsState, type SavedLayoutMeta, type WorkspaceState, type WorkspaceStorage } from './persist';
+import { encodeShareUrl, decodeShareHash } from '../state/share';
 import { localStorageAdapter, type StorageFailure } from '../widget/persist';
 
 /** The links in TradingView's reading order — the picker's rows and the badge's order. */
@@ -643,6 +644,16 @@ export class VelaWorkspace {
         // saved arrangement); a fresh boot takes the `cells` declaration order.
         this.order = boot?.charts ? boot.charts.map((c) => c.id) : declaredOrder(opts.cells);
         const bootActive = boot?.activeCellId ?? null;
+        // ── side-cars: everything in the document that is NOT the grid ──────────────
+        // The boot path used to restore the layout, the cells and the links only. Saved
+        // layouts, templates, the watchlist, group names/marks, seen tips, recents and
+        // the tab-link tag were read from disk and then DROPPED — and the first debounced
+        // save wrote the empty maps straight back over them. Restoring them here (before
+        // any cell is built) is what makes a reload a reload.
+        if (boot) {
+            this.hydrateSideCars(boot);
+            if (this.linkGroup) this.link.setTag(this.linkGroup);
+        }
 
         const doc = hostEl.ownerDocument;
         injectStyles(STYLE_ID, CSS, doc);
@@ -783,6 +794,9 @@ export class VelaWorkspace {
                 onRenameLayout: (from, to) => this.renameLayout(from, to),
                 onExportLayout: (name) => this.exportLayout(name),
                 onImportLayout: (json) => this.importLayout(json),
+                // A share link is the only way to hand a layout to someone else without an
+                // account: the whole document, compressed, in the URL fragment.
+                onCopyLink: () => this.copyShareLink(),
                 linkGroup: () => this.linkGroup,
                 onLinkGroup: (tag) => this.setLinkGroup(tag),
                 glyph: () => layoutGlyph(this.def),
@@ -1285,16 +1299,20 @@ export class VelaWorkspace {
      * document. A layout id that is not registered keeps the current grid (register
      * custom layouts first).
      */
-    applyState(state: unknown): void {
-        if (this.destroyed) return;
-        const st = sanitizeState(state);
-        if (!st) return;
-        if (st.drawingsBySymbol) this.drawingsBySymbol = { ...st.drawingsBySymbol };
-        // The scope itself must round-trip: restored without it, `drawingsBySymbol` would be
-        // a dead store (nothing consults it in layout scope).
-        if (st.drawingsScope) this.drawingsScope = st.drawingsScope;
+    /**
+     * Copy the document's SIDE-CARS onto the live workspace: the maps and lists that live
+     * beside the grid — snapshots, templates, watchlist, group names and glyphs, tips
+     * already shown, recent commands, the tab-link tag, the drawings scope and the
+     * per-symbol drawing store.
+     *
+     * ONE function, because it has two callers with the same contract: `applyState`
+     * (a document arriving after construction) and the constructor's boot path (a
+     * document read from storage before the first cell exists). Before this existed, the
+     * boot path silently restored only the grid — and the next save wrote the empty
+     * side-cars over the stored ones.
+     */
+    private hydrateSideCars(st: WorkspaceState): void {
         if (st.savedLayouts) {
-            // A restored snapshot SET (not a single layout) — merge over the live map.
             for (const [name, doc] of Object.entries(st.savedLayouts)) {
                 const parsed = sanitizeState(doc);
                 if (parsed) this.savedLayouts.set(name, parsed);
@@ -1308,19 +1326,68 @@ export class VelaWorkspace {
         }
         if (st.watchlist) this.watchlist = [...st.watchlist];
         if (st.groupNames) this.groupNames = { ...st.groupNames };
-        if (st.groupMarks) this.groupMarks = { ...st.groupMarks };
-        setMarkOverrides(this.groupMarks);
+        if (st.groupMarks) {
+            this.groupMarks = { ...st.groupMarks };
+            // The palette registry is module-level; every reader (chip, matrix, legend)
+            // pulls the display glyph from it, so it is mirrored on the way in.
+            setMarkOverrides(this.groupMarks);
+        }
         if (st.seenTips) for (const tip of st.seenTips) this.seenTips.add(tip);
+        if (st.recentCommands) this.recentCommands = [...st.recentCommands];
+        // The scope must round-trip: restored without it, `drawingsBySymbol` would be a
+        // dead store (nothing consults it in layout scope).
+        if (st.drawingsScope) this.drawingsScope = st.drawingsScope;
+        if (st.drawingsBySymbol) this.drawingsBySymbol = { ...st.drawingsBySymbol };
+        if (typeof st.linkedGroup === 'string' && st.linkedGroup) this.linkGroup = st.linkedGroup;
         // A document can arrive from an older build, a hand-edited file or a share link:
         // keep only the side-cars that still name a real snapshot.
         for (const name of [...this.layoutMeta.keys()]) {
             if (!this.savedLayouts.has(name)) this.layoutMeta.delete(name);
         }
-        if (st.recentCommands) this.recentCommands = [...st.recentCommands];
-        if (typeof st.linkedGroup === 'string') {
-            this.linkGroup = st.linkedGroup;
-            this.link.setTag(this.linkGroup);
+    }
+
+    /**
+     * This workspace as a URL. The whole document rides in the fragment (gzip + base64url,
+     * ~1.3 KB for a 4-chart layout), so a link restores the exact layout, markets, group
+     * names/marks, saved layouts and templates — no server, no account.
+     */
+    async shareLink(base?: string): Promise<string> {
+        return encodeShareUrl(this.getState(), base);
+    }
+
+    /** Copy the share link. Returns the URL either way; null means the clipboard refused
+     *  (insecure context / permission) and the caller should show it instead. */
+    async copyShareLink(base?: string): Promise<string | null> {
+        const url = await this.shareLink(base);
+        try {
+            await navigator.clipboard.writeText(url);
+            return url;
+        } catch {
+            return null;
         }
+    }
+
+    /**
+     * Adopt a shared document from a URL fragment (`#s1=…` / `#s0=…`). A hash that is not
+     * a share link, or that this build cannot read, returns false and leaves the session
+     * exactly as it was — a broken link never blanks the screen.
+     */
+    async applyShareLink(href?: string): Promise<boolean> {
+        const view = this.root.ownerDocument.defaultView;
+        const base = view?.location.href ?? 'https://vela.local/';
+        const target = new URL(href ?? base, base);
+        const state = await decodeShareHash(target.hash);
+        if (!state || this.destroyed) return false;
+        this.applyState(state);
+        return true;
+    }
+
+    applyState(state: unknown): void {
+        if (this.destroyed) return;
+        const st = sanitizeState(state);
+        if (!st) return;
+        this.hydrateSideCars(st);
+        if (typeof st.linkedGroup === 'string') this.link.setTag(this.linkGroup);
         if (st.favorites) this.favs = [...st.favorites]; // newborn cells inherit below (buildCells)
         if (st.drawingTools) this.adoptDrawingTools(st.drawingTools); // ditto; the active cell takes the magnet/stay mirrors
         if (st.timeframeFavorites) {
@@ -1523,6 +1590,20 @@ export class VelaWorkspace {
         this.refreshRetention();
         this.events.emit('layout:changed', { layout: next.id });
         this.markStateDirty();
+    }
+
+    /**
+     * Is the keystroke Tab *from the chart*? True only when focus sits on a plot canvas,
+     * a cell box or the grid container — never on a button, an input, a link or anything
+     * inside a UI layer (popover, dialog, menu). That is the difference between "Tab
+     * cycles my charts" and "Tab is dead everywhere".
+     */
+    private tabBelongsToChart(): boolean {
+        const a = this.root.ownerDocument.activeElement as HTMLElement | null;
+        if (!a) return false;
+        if (a.closest('.vela-ui-layer, [role="dialog"], [role="menu"], [role="listbox"]')) return false;
+        if (a.matches('input, textarea, select, button, a[href], [contenteditable="true"]')) return false;
+        return a.tagName === 'CANVAS' || a === this.gridEl || !!a.closest('.vela-cell');
     }
 
     /**
@@ -4262,9 +4343,15 @@ export class VelaWorkspace {
         this.keymap.register({
             id: 'layout.cycle-active',
             keys: 'tab',
-            label: 'Switch to the next chart',
+            label: 'Switch to the next chart (while the chart itself has focus)',
             category: 'Layout',
-            when: () => this.def.cells.length > 1,
+            // Tab is the ONLY way to move focus with a keyboard, so it may not be
+            // globally rebound: doing that made every control in the shell unreachable
+            // (measured: with the layout sheet open, Tab was dead and focus could not
+            // leave the first control; WCAG 2.1.1). The chart-cycle stays, but only
+            // where the chart itself owns the keystroke — everywhere else Tab moves
+            // focus the way the platform says it should.
+            when: () => this.def.cells.length > 1 && this.tabBelongsToChart(),
             run: () => this.cycleActiveCell(),
         });
         this.keymap.register({

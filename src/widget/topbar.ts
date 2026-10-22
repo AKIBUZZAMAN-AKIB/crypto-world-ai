@@ -238,6 +238,8 @@ export interface TopbarOptions {
         onRenameLayout?: (from: string, to: string) => boolean;
         onExportLayout?: (name: string) => string | null;
         onImportLayout?: (json: string) => string | null;
+        /** Copy a permalink for the whole workspace (null = clipboard refused). */
+        onCopyLink?: () => Promise<string | null>;
         linkGroup?: () => string | null;
         onLinkGroup?: (tag: string | null) => void;
         /** The current layout's 16px glyph (`<svg>` markup) for the button, re-read on
@@ -546,6 +548,7 @@ export class Topbar {
                 ...(layout.onRenameLayout ? { onRenameLayout: (from, to) => layout.onRenameLayout?.(from, to) ?? false } : {}),
                 ...(layout.onExportLayout ? { onExportLayout: (name) => layout.onExportLayout?.(name) ?? null } : {}),
                 ...(layout.onImportLayout ? { onImportLayout: (json) => layout.onImportLayout?.(json) ?? null } : {}),
+                ...(layout.onCopyLink ? { onCopyLink: () => layout.onCopyLink?.() ?? Promise.resolve(null) } : {}),
                 ...(layout.linkGroup ? { linkGroup: () => layout.linkGroup?.() ?? null } : {}),
                 ...(layout.onLinkGroup ? { onLinkGroup: (tag) => layout.onLinkGroup?.(tag) } : {}),
             });

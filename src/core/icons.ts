@@ -156,6 +156,9 @@ registerIcon('unlock', S('<rect x="3.2" y="7" width="9.6" height="6.6" rx="1.2"/
 // they read at 13px beside the row label.
 registerIcon('download', S('<path d="M8 2.4v7.6M4.8 6.8 8 10l3.2-3.2"/><path d="M2.6 12.6h10.8"/>'));
 registerIcon('upload', S('<path d="M8 10.4V2.8M4.8 6 8 2.8 11.2 6"/><path d="M2.6 12.6h10.8"/>'));
+// A share link is a chain, not a page-with-an-arrow: the arrow verbs above mean
+// file in/out, and a link is neither.
+registerIcon('link', S('<path d="M6.4 9.6a2.6 2.6 0 0 0 3.7 0l2.3-2.3a2.6 2.6 0 0 0-3.7-3.7l-1.2 1.2"/><path d="M9.6 6.4a2.6 2.6 0 0 0-3.7 0L3.6 8.7a2.6 2.6 0 0 0 3.7 3.7l1.2-1.2"/>'));
 registerIcon('trash', S('<path d="M2.5 4.3h11M6.2 4.3V3.1a1 1 0 0 1 1-1h1.6a1 1 0 0 1 1 1v1.2M4.2 4.3l.5 9.1a1.15 1.15 0 0 0 1.15 1.1h4.3a1.15 1.15 0 0 0 1.15-1.1l.5-9.1M6.5 7v4.5M9.5 7v4.5"/>'));
 registerIcon('group', S('<path d="M1.8 4.5V2.4a.6.6 0 0 1 .6-.6h2.1M11.5 1.8h2.1a.6.6 0 0 1 .6.6v2.1M14.2 11.5v2.1a.6.6 0 0 1-.6.6h-2.1M4.5 14.2H2.4a.6.6 0 0 1-.6-.6v-2.1"/><rect x="4" y="4" width="4.2" height="4.2" rx="0.7"/><rect x="7.8" y="7.8" width="4.2" height="4.2" rx="0.7"/>'));
 registerIcon('ungroup', S('<rect x="1.6" y="1.6" width="6.2" height="6.2" rx="0.9"/><rect x="8.2" y="8.2" width="6.2" height="6.2" rx="0.9" stroke-dasharray="2 1.5"/>'));

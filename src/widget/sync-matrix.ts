@@ -36,7 +36,7 @@ export const SYNC_MATRIX_CSS = `
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--vela-border);
+    border: 1px solid color-mix(in srgb, var(--vela-border) 62%, transparent);
     border-radius: 15px;
     font-size: 14px;
     line-height: 1;
@@ -62,7 +62,7 @@ export const SYNC_MATRIX_CSS = `
        red group"), and a chip twice the glyph's height is a billboard. The desktop cell
        stays comfortably over the WCAG 2.2 AA floor (24px); the coarse-pointer block at
        the bottom of this sheet puts the finger-sized 44px back. */
-    --vela-sx-cell: 30px;
+    --vela-sx-cell: 28px;
     --vela-sx-cell-max: 52px;
     --vela-sx-label: 74px;
     --vela-sx-all: 40px;
@@ -123,7 +123,7 @@ export const SYNC_MATRIX_CSS = `
     font-weight: 600;
     letter-spacing: 0.5px;
     text-transform: uppercase;
-    color: var(--vela-fg-faint, var(--vela-fg-muted));
+    color: var(--vela-fg-muted);
     background: var(--vela-surface-elev);
 }
 .vela-md-matrix-head {
@@ -157,7 +157,7 @@ export const SYNC_MATRIX_CSS = `
 }
 .vela-md-matrix-head[data-focus] { box-shadow: inset 0 0 0 1px var(--vela-accent, var(--vela-selected-bg)); }
 .vela-md-matrix-head:active { background: var(--vela-hover-strong); }
-.vela-md-matrix-allhead { color: var(--vela-fg-faint); font-size: 9px; letter-spacing: 0.6px; }
+.vela-md-matrix-allhead { color: var(--vela-fg-muted); font-size: 9.5px; letter-spacing: 0.6px; }
 .vela-md-matrix-label {
     position: sticky;
     left: 0;
@@ -186,9 +186,12 @@ export const SYNC_MATRIX_CSS = `
     min-width: 0;
     justify-self: center;
     height: var(--vela-sx-cell);
-    border-radius: 10px;
+    border-radius: 8px;
     font-size: 14px;
-    color: color-mix(in srgb, var(--vela-fg-faint, var(--vela-fg-muted)) 78%, transparent);
+    /* An unset chip's dash is the control's STATE ("no group"), not decoration: at
+       78% of a 35%-alpha ink it composited to ~1.5:1 and vanished. 72% of the muted ink
+       lands at ~3:1, which is what WCAG 1.4.11 asks of a control's state. */
+    color: color-mix(in srgb, var(--vela-fg-muted) 72%, transparent);
 }
 /* A table that fills its column must not turn four charts into four billboards. */
 .vela-md-matrix-chip[data-on='1'] { color: var(--vela-fg-bright); }
@@ -198,10 +201,13 @@ export const SYNC_MATRIX_CSS = `
 }
 .vela-md-matrix-chip:active { transform: scale(0.94); }
 .vela-md-chip-all {
-    font-size: 8.5px;
+    font-size: 9.5px;
     font-weight: 700;
     letter-spacing: 0.4px;
-    color: var(--vela-fg-faint);
+    /* Measured at 8 px in 35%-alpha faint ink the word "ALL" came out at 2.16:1 —
+       below the 4.5:1 that a text label owes, and it is the only label the ALL
+       column has. Muted ink at 9.5 px measures 5.25:1. */
+    color: var(--vela-fg-muted);
     border-color: transparent;
     background: transparent;
 }
@@ -215,7 +221,7 @@ export const SYNC_MATRIX_CSS = `
 @container (max-width: 340px) {
     .vela-md-matrix { --vela-sx-cell: 32px; --vela-sx-cell-max: 44px; --vela-sx-label: 68px; --vela-sx-all: 38px; }
     .vela-md-matrix-label { font-size: 11px; }
-    .vela-md-chip-all { font-size: 8px; letter-spacing: 0.2px; }
+    .vela-md-chip-all { font-size: 9px; letter-spacing: 0.2px; }
 }
 @container (max-width: 300px) {
     .vela-md-matrix { --vela-sx-cell: 30px; --vela-sx-label: 60px; --vela-sx-all: 34px; }
@@ -387,7 +393,11 @@ export class SyncMatrix {
         const kind = chip.dataset.kind ?? '';
         const cellId = chip.dataset.cell ?? '';
         const k = kinds.indexOf(kind);
-        const c = cells.indexOf(cellId);
+        // The ALL column is a COLUMN of this grid, not a separate control: index it as
+        // `cells.length` so ←/→ and Home/End walk into it and out again. Before this,
+        // each ALL chip was its own tab stop — eight stops for one table.
+        const isAll = chip.dataset.all === '1';
+        const c = isAll ? cells.length : cells.indexOf(cellId);
         if (k < 0 || c < 0) return;
         let nextK = k;
         let nextC = c;
@@ -396,15 +406,16 @@ export class SyncMatrix {
         // direction. Home/End keep their LOGICAL meaning: first and last cell of the row.
         const rtl = isRtl(this.el);
         const next = rtl ? -1 : 1;
-        if (e.key === 'ArrowRight') nextC = Math.min(cells.length - 1, Math.max(0, c + next));
-        else if (e.key === 'ArrowLeft') nextC = Math.min(cells.length - 1, Math.max(0, c - next));
+        if (e.key === 'ArrowRight') nextC = Math.min(cells.length, Math.max(0, c + next));
+        else if (e.key === 'ArrowLeft') nextC = Math.min(cells.length, Math.max(0, c - next));
         else if (e.key === 'ArrowDown') nextK = Math.min(kinds.length - 1, k + 1);
         else if (e.key === 'ArrowUp') nextK = Math.max(0, k - 1);
         else if (e.key === 'Home') nextC = 0;
-        else if (e.key === 'End') nextC = cells.length - 1;
+        else if (e.key === 'End') nextC = cells.length - 1; // last DATA cell; ALL is one ← away
         else return;
         e.preventDefault();
-        this.focusCell(kinds[nextK]!, cells[nextC]!, chip.dataset.all === '1');
+        const toAll = nextC === cells.length && this.allChips.has(kinds[nextK]!);
+        this.focusCell(kinds[nextK]!, cells[Math.min(nextC, cells.length - 1)]!, toAll);
     };
 
     /** Move the roving focus (and the visible scroll) to one cell of the table. */
@@ -612,6 +623,7 @@ export class SyncMatrix {
                 all.dataset.kind = link.id;
                 all.textContent = 'ALL';
                 all.setAttribute('aria-label', `Put every chart in one ${link.label} group`);
+                all.tabIndex = -1; // roving: the ALL column is a column of the same grid
                 all.addEventListener('click', () => {
                     this.opts.onAllInOneGroup?.(link.id);
                     this.opts.onChange?.();

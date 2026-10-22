@@ -16,6 +16,7 @@ import { holdForExit, type SurfaceExit } from '../ui/surface-exit';
 import { IMPLICIT_GROUP } from '../state/document';
 import { groupMarkColor } from '../workspace/sync-marks';
 import { iconEl } from '../ui/icons';
+import { isRtl } from '../ui/gesture';
 import { downloadText } from '../ui/download';
 
 /** "just now" / "3h ago" / "2d ago" — a saved row's second line. */
@@ -30,7 +31,7 @@ function relativeTime(ms: number): string {
     return `${Math.round(hr / 24)}d ago`;
 }
 
-const STYLE_ID = 'vela-widget-layout-picker-v15';
+const STYLE_ID = 'vela-widget-layout-picker-v16';
 // One monochrome selection language across the panel: lit cells and sync ON
 // switches both speak --vela-selected-*.
 const CSS = `
@@ -38,19 +39,30 @@ const CSS = `
 .vela-lp {
     /* Responsive by construction: the popover never grows past the window. It is a COLUMN
        because it owns the only scrollbar — the table used to scroll inside a scrolling
-       panel, which meant two bars for one gesture and a bar even when everything fit. */
+       panel, which meant two bars for one gesture and a bar even when everything fit.
+       Measured on a 1440x900 desktop the old card was 685x825 (92% of the viewport's
+       height): a settings sheet, not a popover. The card is now a compact 2-column
+       block — canvas + presets on the left, links over the matrix on the right. */
     display: flex;
     flex-direction: column;
-    max-width: min(900px, calc(100vw - 24px));
-    max-height: calc(100vh - 24px);
+    width: min(536px, calc(100vw - 16px));
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
     overflow: auto;
+    /* The card sits on the WORKSPACE surface, not the elevated one: measured on the
+       elevated grey, the muted label ink fell to 4.13:1 (below AA) while the same ink
+       on this surface is 5.25:1. The lift is the border, the top hairline and the
+       shadow — not a lighter fill. */
     background: var(--vela-surface);
     color: var(--vela-fg);
     border: 1px solid var(--vela-border-strong);
-    border-radius: 8px;
-    box-shadow: var(--vela-shadow);
-    padding: 10px 12px 10px;
-    font-size: 13px;
+    border-radius: 10px;
+    /* The elevation is a hairline of light on the top edge plus one soft shadow: the
+       card reads as a sheet of glass, not a text box with a border. */
+    box-shadow: var(--vela-shadow), inset 0 1px 0 rgb(255 255 255 / 5%);
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.35;
     user-select: none;
     transform-origin: top;
     animation: vela-lp-in var(--vela-dur-fast) var(--vela-ease);
@@ -59,17 +71,29 @@ const CSS = `
     from { opacity: 0; transform: translateY(-4px) scale(0.98); }
     to { opacity: 1; transform: translateY(0) scale(1); }
 }
-.vela-lp-cols { display: flex; align-items: stretch; gap: 14px; flex-wrap: wrap; flex: 0 1 auto; }
+.vela-lp-cols {
+    /* Canvas column fixed, the rest stacked beside it: links over the matrix. This is
+       the layout the narrow breakpoint already used; making it the default is what
+       turns one 685x825 card into a 2-column 530x560 one. */
+    display: grid;
+    grid-template-columns: 124px minmax(0, 1fr);
+    align-items: start;
+    column-gap: 12px;
+    row-gap: 8px;
+}
+.vela-lp-cols > .vela-lp-vsep { display: none; }
 .vela-lp-heading {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 600;
-    letter-spacing: 1.2px;
+    letter-spacing: 1px;
     text-transform: uppercase;
-    color: var(--vela-fg-faint);
-    margin-bottom: 10px;
+    /* 35%-alpha ink measured 2.16:1 on the panel — a label nobody can read. The
+       hierarchy survives in the size and the tracking, not in the invisibility. */
+    color: var(--vela-fg-muted);
+    margin-bottom: 6px;
 }
 /* "?" help badge: hover it for the canvas explainer. */
 .vela-lp-badge {
@@ -90,10 +114,10 @@ const CSS = `
 .vela-lp-badge:hover { color: var(--vela-fg-bright); border-color: var(--vela-fg-muted); }
 .vela-lp-tip { display: flex; flex-direction: column; gap: 4px; max-width: 230px; white-space: normal; }
 .vela-lp-vsep { width: 1px; flex: none; align-self: stretch; background: var(--vela-border-faint); }
-.vela-lp-layout { width: 132px; display: flex; flex-direction: column; align-items: center; }
+.vela-lp-layout { grid-column: 1; grid-row: 1 / span 2; min-width: 0; display: flex; flex-direction: column; align-items: center; align-self: stretch; }
 .vela-lp-layout > .vela-lp-heading,
 .vela-lp-layout > .vela-lp-presets { align-self: stretch; }
-.vela-lp-grid { display: grid; grid-template-columns: repeat(4, 24px); grid-auto-rows: 24px; gap: 4px; }
+.vela-lp-grid { display: grid; grid-template-columns: repeat(4, 24px); grid-auto-rows: 24px; gap: 3px; }
 .vela-lp-sq {
     all: unset;
     box-sizing: border-box;
@@ -109,16 +133,24 @@ const CSS = `
     background: var(--vela-selected-bg);
     border-color: var(--vela-selected-bg);
 }
-.vela-lp-presets { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
-.vela-lp-preset { all: unset; padding: 5px 8px; border-radius: 4px; cursor: pointer; color: var(--vela-fg-muted); font-size: 12px; white-space: nowrap; transition: transform 120ms var(--vela-ease); }
+.vela-lp-presets { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.vela-lp-preset { all: unset; padding: 4px 7px; border-radius: 5px; cursor: pointer; /* 11.5px label: muted sits at 4.50 (the AA line exactly) — this ink lands at ~5.9 with the same quiet tone. */ color: color-mix(in srgb, var(--vela-fg) 78%, transparent); font-size: 11.5px; white-space: nowrap; transition: transform 120ms var(--vela-ease); }
 .vela-lp-preset:hover { background: var(--vela-hover); }
 .vela-lp-preset:active { transform: scale(0.98); }
 .vela-lp-preset[data-checked='1'] { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
-.vela-lp-sync { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.vela-lp-sync {
+    /* Seven switches in one column cost 234px of height for seven 30px rows. Two
+       columns halve that and read faster: the pairs are the axes a trader thinks in
+       (range/time, symbol/crosshair, drawings/…). */
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 6px;
+    min-width: 0;
+}
 /* The switch column takes the slack when the table has wrapped under it. */
 /* The switch column sizes to its LABELS: stretching it to 260px put 100px of dead
    space between "Crosshair" and its switch, and stole that width from the table. */
-.vela-lp-synccol { flex: 0 1 190px; min-width: 150px; max-width: 210px; display: flex; flex-direction: column; }
+.vela-lp-synccol { grid-column: 2; grid-row: 1; min-width: 0; display: flex; flex-direction: column; }
 /* The link x chart table: a fixed side pane with its OWN vertical scroll, so the
    popover keeps its shape as charts are added and the footer stays put. The table
    scrolls sideways inside itself; the fade marks the rest of the columns. */
@@ -126,20 +158,21 @@ const CSS = `
    of leaving a stray divider at the end of the first line. */
 .vela-lp-chartspane {
     display: flex;
-    gap: 14px;
-    flex: 1 1 300px;
+    flex-direction: column;
+    grid-column: 2;
+    grid-row: 2;
+    gap: 0;
     min-width: 0;
 }
 .vela-lp-chartspane[hidden] { display: none !important; }
 .vela-lp-charts {
-    width: clamp(240px, 302px, 34vw);
-    flex: 1 1 240px;
+    width: auto;
     min-width: 0;
     display: flex;
     flex-direction: column;
 }
 .vela-lp-charts[hidden], .vela-lp-vsep[hidden] { display: none !important; }
-.vela-lp-charthint { margin: -4px 0 6px; font-size: 10.5px; line-height: 1.35; color: var(--vela-fg-muted); }
+.vela-lp-charthint { margin: -2px 0 5px; font-size: 10px; line-height: 1.3; color: var(--vela-fg-muted); }
 .vela-lp-chartscroll {
     /* No cap and no bar of its own: a table is at most one row per LINK (≤ 9), so it is
        short by construction. The panel scrolls when — and only when — the whole card is
@@ -150,35 +183,50 @@ const CSS = `
 .vela-lp-charts .vela-md-matrix-corner { background: var(--vela-surface); }
 /* Full-width row (narrow window): the table keeps a readable width instead of stretching
    four columns across the whole popover. */
-.vela-lp-charts .vela-md-matrixwrap { max-width: 430px; }
+.vela-lp-charts .vela-md-matrixwrap { max-width: none; }
 /* Narrow window: the table used to WRAP under the switches at its 430px cap and leave a
    hundred-odd pixels of empty panel beside it. Two columns instead — the layout grid on
    the left, switches over table on the right — so the table fills the width it has and
    the card gets shorter, not just narrower. */
-@media (max-width: 900px) {
-    /* A grid needs a width to divide: without this the card shrinks to its content and the
-       "1fr" table column is whatever the table happens to be. */
-    .vela-lp { width: min(880px, calc(100vw - 24px)); }
-    .vela-lp-cols {
-        display: grid;
-        grid-template-columns: auto minmax(0, 1fr);
-        align-items: start;
-        column-gap: 14px;
-        row-gap: 10px;
-    }
-    .vela-lp-layout { grid-column: 1; grid-row: 1 / span 2; }
-    .vela-lp-cols > .vela-lp-vsep { display: none; }
-    .vela-lp-synccol { grid-column: 2; grid-row: 1; max-width: 380px; justify-self: start; width: 100%; }
-    .vela-lp-chartspane { grid-column: 2; grid-row: 2; min-width: 0; }
-    .vela-lp-chartspane > .vela-lp-vsep { display: none; }
-    .vela-lp-charts { width: auto; flex: 1 1 auto; }
-    .vela-lp-charts .vela-md-matrixwrap { max-width: none; }
-}
 /* Preset glyphs: a compact 4-up grid of icon buttons (the canvas cannot draw them). */
-.vela-lp-presets[data-icons='1'] { display: block; max-height: 232px; overflow-y: auto; overflow-x: hidden; margin-right: -4px; padding-right: 4px; }
-.vela-lp-presetcount { margin: 6px 0 2px; font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--vela-fg-muted); opacity: 0.8; }
+/* The presets scroller TAKES the leftover height of the left column instead of leaving
+   a hundred-pixel hole under it: the card's rows stay flush and there is no dead space
+   at any viewport (the canvas + presets column is the shorter of the two). */
+.vela-lp-presets[data-icons='1'] {
+    display: block;
+    flex: 1 1 0;
+    height: 0;
+    min-height: 60px;
+    max-height: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    margin-right: -4px;
+    padding-right: 4px;
+    scrollbar-width: thin;
+    /* The list is longer than its column on purpose (32 presets): a 10px fade is the
+       scroll hint, so no permanent scrollbar stands in the middle of the card. */
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent);
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), transparent);
+}
+.vela-lp-presetcount {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 6px 0 2px;
+    font-size: 9px;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--vela-fg-muted);
+    opacity: 0.9;
+}
+.vela-lp-presetcount::after {
+    content: '';
+    flex: 1 1 auto;
+    height: 1px;
+    background: var(--vela-border-faint);
+}
 .vela-lp-presetrow { display: grid; grid-template-columns: repeat(4, 24px); gap: 4px; }
-.vela-lp-preset[data-icon='1'] { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; color: var(--vela-fg-muted); background: var(--vela-hover); border: 1px solid var(--vela-border-faint); }
+.vela-lp-preset[data-icon='1'] { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; color: color-mix(in srgb, var(--vela-fg) 78%, transparent); background: var(--vela-hover); border: 1px solid var(--vela-border-faint); }
 .vela-lp-preset[data-icon='1'] svg { width: 16px; height: 16px; }
 .vela-lp-preset[data-icon='1']:hover { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
 
@@ -187,7 +235,7 @@ const CSS = `
 
 .vela-lp-scope[data-global='1'] { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); }
 /* Footer: saved layouts + tab link. */
-.vela-lp-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--vela-border-faint); display: flex; flex-direction: column; gap: 6px; }
+.vela-lp-foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--vela-border-faint); display: flex; flex-direction: column; gap: 4px; }
 .vela-lp-save { display: flex; gap: 6px; }
 .vela-lp-save input {
     flex: 1 1 auto;
@@ -219,10 +267,11 @@ const CSS = `
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     padding: 0;
-    color: var(--vela-fg-faint);
+    /* 2.16:1 in faint ink — an icon is a control, and a control owes 3:1. */
+    color: var(--vela-fg-muted);
     background: transparent;
 }
 .vela-lp-saved .vela-lp-saved-act:hover { color: var(--vela-fg-bright); background: var(--vela-hover-strong); }
@@ -238,17 +287,17 @@ const CSS = `
     background: var(--vela-hover);
     border: 1px solid var(--vela-border-soft);
 }
-.vela-lp-saved .vela-lp-when { flex: none; font-size: 10px; color: var(--vela-fg-faint); }
+.vela-lp-saved .vela-lp-when { flex: none; font-size: 10px; color: var(--vela-fg-muted); }
 /* Template rows: the indicator count is the useful second line, so the name column is
    a two-line stack rather than one ellipsized string. */
 .vela-lp-tpl { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .vela-lp-tpl .vela-lp-tplname { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
 .vela-lp-tpl .vela-lp-tplname b { font-weight: 500; color: var(--vela-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vela-lp-tpl .vela-lp-tplname span { font-size: 10px; color: var(--vela-fg-faint); }
-.vela-lp-tpl .vela-lp-saved-act { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--vela-fg-faint); cursor: pointer; }
+.vela-lp-tpl .vela-lp-tplname span { font-size: 10px; color: var(--vela-fg-muted); }
+.vela-lp-tpl .vela-lp-saved-act { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--vela-fg-muted); cursor: pointer; }
 .vela-lp-tpl .vela-lp-saved-act:hover { color: var(--vela-fg-bright); background: var(--vela-hover-strong); }
 .vela-lp-tpl .vela-lp-saved-act .vela-icon { font-size: 13px; width: 13px; height: 13px; }
-.vela-lp-grouphead { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vela-fg-faint); margin-top: 2px; }
+.vela-lp-grouphead { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vela-fg-muted); margin-top: 2px; }
 /* The legend under the table: the same marks the cells wear, with the name the user
    gave them. BOTH halves are editable in place — the glyph (what the chart wears) and
    the name (what the group is for) — and both are keyboard-reachable buttons, not
@@ -287,6 +336,63 @@ const CSS = `
     padding: 3px 6px;
 }
 .vela-lp-rename[data-refused] { border-color: var(--vela-danger); }
+/* Focus. Every control here starts with \`all: unset\`, which also unset the UA
+   outline: measured on the built card, a focused preset reported
+   \`outline: none 0px\` and a focused grid the near-invisible UA \`auto 1px\`. That is
+   WCAG 2.4.7 (Focus Visible) failing on 32 presets, 7 switches and the footer —
+   so the ring is drawn here ONCE, in the accent, and it keeps its offset away from
+   the control's own border. */
+.vela-lp :is(.vela-lp-preset, .vela-lp-sync-row, .vela-lp-name, .vela-lp-save button, .vela-lp-saved button, .vela-lp-scope):focus-visible {
+    outline: 2px solid var(--vela-accent, var(--vela-fg-bright));
+    outline-offset: 1px;
+}
+.vela-lp-grid:focus-visible {
+    outline: 2px solid var(--vela-accent, var(--vela-fg-bright));
+    outline-offset: 3px;
+    border-radius: 6px;
+}
+/* The one native control in the card, drawn in the card's own language: an unstyled
+   checkbox was a white square in a dark popover. */
+.vela-lp-tplmarket {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+.vela-lp-tplmarket input {
+    appearance: none;
+    -webkit-appearance: none;
+    box-sizing: border-box;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    border: 1px solid var(--vela-border-strong);
+    border-radius: 4px;
+    background: var(--vela-hover);
+    cursor: pointer;
+    display: inline-grid;
+    place-content: center;
+    transition: background var(--vela-dur-fast) var(--vela-ease), border-color var(--vela-dur-fast) var(--vela-ease);
+}
+.vela-lp-tplmarket input::after {
+    content: '';
+    width: 7px;
+    height: 4px;
+    border-left: 1.5px solid var(--vela-selected-fg);
+    border-bottom: 1.5px solid var(--vela-selected-fg);
+    transform: rotate(-45deg) translateY(-1px);
+    opacity: 0;
+}
+.vela-lp-tplmarket input:checked {
+    background: var(--vela-selected-bg);
+    border-color: var(--vela-selected-bg);
+}
+.vela-lp-tplmarket input:checked::after { opacity: 1; }
+.vela-lp-tplmarket input:focus-visible { outline: 2px solid var(--vela-accent, var(--vela-fg-bright)); outline-offset: 1px; }
 /* Import = one action in the row it belongs to (not a dashed bar with its own line). */
 .vela-lp-importbtn {
     all: unset;
@@ -307,16 +413,18 @@ const CSS = `
 }
 .vela-lp-importbtn svg { width: 13px; height: 13px; }
 .vela-lp-importbtn:hover { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); background: var(--vela-hover); }
+.vela-lp-importbtn[data-copied='1'] { color: var(--vela-selected-fg); border-color: var(--vela-selected-bg); background: var(--vela-selected-bg); }
 .vela-lp-importbtn:focus-visible { outline: 2px solid var(--vela-accent, var(--vela-fg-bright)); outline-offset: 1px; }
-.vela-lp-links { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--vela-fg-faint); }
+.vela-lp-links { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--vela-fg-muted); }
 .vela-lp-linkdot {
     all: unset;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     box-sizing: border-box;
-    min-width: 22px;
-    height: 22px;
+    /* WCAG 2.2 SC 2.5.8 asks for 24×24 on any pointer; 22 was a rounding mistake. */
+    min-width: 24px;
+    height: 24px;
     border-radius: 4px;
     cursor: pointer;
     border: 1px solid var(--vela-border-strong);
@@ -327,7 +435,7 @@ const CSS = `
         background var(--vela-dur-fast) var(--vela-ease);
 }
 .vela-lp-linkdot:hover { color: var(--vela-fg-bright); border-color: var(--vela-fg-muted); background: var(--vela-hover); }
-.vela-lp-linkdot[data-tag='none'] { color: var(--vela-fg-faint); }
+.vela-lp-linkdot[data-tag='none'] { color: var(--vela-fg-muted); }
 .vela-lp-pool {
     display: block;
     width: 100%;
@@ -347,16 +455,17 @@ const CSS = `
 .vela-lp-undo { color: var(--vela-fg-muted); }
 .vela-lp-linkdot[data-on='1'] { color: var(--vela-fg-bright); border-color: var(--vela-accent); background: var(--vela-focus-soft); }
 .vela-lp-linkdot:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: 1px; }
-.vela-lp-sync-row { all: unset; display: flex; align-items: center; gap: 14px; padding: 6px 8px; border-radius: 5px; cursor: pointer; }
+.vela-lp-sync-row { all: unset; display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px; cursor: pointer; min-height: 24px; box-sizing: border-box; }
+.vela-lp-sync-row .vela-lp-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vela-lp-sync-row:hover { background: var(--vela-hover); }
 .vela-lp-sync-row .vela-lp-label { flex: 1 1 auto; }
 /* Toggle pill — same control language as the menu's switch rows, monochrome ON state. */
 .vela-lp-switch {
     position: relative;
     flex: none;
-    width: 34px;
-    height: 18px;
-    border-radius: 9px;
+    width: 30px;
+    height: 16px;
+    border-radius: 8px;
     background: var(--vela-hover);
     border: 1px solid var(--vela-border-soft);
     transition: background 0.16s ease, border-color 0.16s ease;
@@ -366,14 +475,14 @@ const CSS = `
     position: absolute;
     top: 2px;
     left: 2px;
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     background: var(--vela-fg-muted);
     transition: transform 0.16s ease, background 0.16s ease;
 }
 .vela-lp-switch.on { background: var(--vela-selected-bg); border-color: var(--vela-selected-bg); }
-.vela-lp-switch.on::after { transform: translateX(16px); background: var(--vela-selected-fg); }
+.vela-lp-switch.on::after { transform: translateX(14px); background: var(--vela-selected-fg); }
 `;
 
 /** The picker canvas is a fixed 4×4 — 16 cells, the workspace pool capacity. */
@@ -388,6 +497,13 @@ export function layoutGridCanvas(doc: Document): { el: HTMLElement; squares: HTM
     injectStyles(STYLE_ID, CSS, doc);
     const el = doc.createElement('div');
     el.className = 'vela-lp-grid';
+    // ONE tab stop for the canvas: the grid is the control (arrows move the cursor,
+    // Enter applies), so its sixteen squares stay out of the tab order entirely. A
+    // browser that refuses to tab OUT of a focused square cannot trap a user who is
+    // never on one.
+    el.tabIndex = 0;
+    el.setAttribute('role', 'group');
+    el.setAttribute('aria-label', 'Layout size — arrow keys choose, Enter applies');
     const squares: HTMLButtonElement[] = [];
     for (let r = 0; r < GRID; r += 1) {
         for (let c = 0; c < GRID; c += 1) {
@@ -396,6 +512,7 @@ export function layoutGridCanvas(doc: Document): { el: HTMLElement; squares: HTM
             sq.dataset.r = String(r);
             sq.dataset.c = String(c);
             sq.setAttribute('aria-label', `${c + 1} × ${r + 1}`);
+            sq.tabIndex = -1; // the grid container is the tab stop (see above)
             squares.push(sq);
             el.appendChild(sq);
         }
@@ -458,6 +575,9 @@ export interface LayoutPickerOptions {
     onExportLayout?: (name: string) => string | null;
     /** Restore a snapshot from a picked file; returns the name it landed under. */
     onImportLayout?: (json: string) => string | null;
+    /** Copy a permalink that restores this workspace (resolves the URL; null = the
+     *  clipboard refused, and the button says so instead of lying). */
+    onCopyLink?: () => Promise<string | null>;
     /** Save WITH a preview image (the row then shows the grid it restores). */
     onSaveLayoutWithThumb?: (name: string) => boolean;
     /** Saved chart templates — indicator sets (drawings never travel). */
@@ -490,11 +610,15 @@ export interface LayoutPickerOptions {
 
 export class LayoutPicker {
     private readonly opts: LayoutPickerOptions;
+    /** The open was requested from the keyboard (Enter/Space on the trigger). */
+    private keyboardOpen = false;
     private readonly doc: Document;
     private readonly layer: HTMLElement;
     /** The picker card inside the layer — the element open/close are announced on. */
     private readonly panel: HTMLElement;
     private readonly squares: HTMLButtonElement[] = []; // row-major, 16 entries
+    /** The canvas container — the single tab stop for all sixteen squares. */
+    private gridEl: HTMLElement | null = null;
     private readonly infoTip: Tooltip;
     private readonly presetsEl: HTMLElement;
     private readonly syncEl: HTMLElement;
@@ -519,7 +643,15 @@ export class LayoutPicker {
         this.close();
     };
     private readonly onDocKeydown = (e: KeyboardEvent): void => {
-        if (e.key === 'Escape') this.close();
+        if (e.key !== 'Escape') return;
+        // Escape inside an inline editor belongs to THAT editor: it cancels the edit and
+        // must not close the popover. Closing it would move focus to the trigger, the
+        // field would blur, and blur COMMITS — so renaming to "Nope" and pressing Escape
+        // applied "Nope" instead of discarding it (measured; the field's own handler
+        // never got the key because this one is on the capture path).
+        const t = e.target as HTMLElement | null;
+        if (t && this.panel.contains(t) && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+        this.close();
     };
 
     constructor(opts: LayoutPickerOptions) {
@@ -533,6 +665,12 @@ export class LayoutPicker {
         this.layer.style.display = 'none';
         const panel = doc.createElement('div');
         panel.className = 'vela-lp';
+        // A labelled, non-modal dialog: many controls, its own focus management, and a
+        // screen reader should hear what it is the moment it opens.
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-label', 'Layout, link and sync settings');
+        panel.tabIndex = -1; // a keyboard-open focus target; never in the tab order itself
+        panel.addEventListener('keydown', this.onPanelKeydown);
         this.layer.appendChild(panel);
         this.panel = panel;
 
@@ -559,6 +697,7 @@ export class LayoutPicker {
         });
 
         const { el: grid, squares } = layoutGridCanvas(doc);
+        this.gridEl = grid;
         this.squares.push(...squares);
         layoutCol.appendChild(grid);
 
@@ -655,8 +794,25 @@ export class LayoutPicker {
                 this.render();
             }
         });
+        // The canvas is ONE control, not sixteen: a single tab stop sits on the square
+        // that matches the current layout, and the arrows move the cursor inside it —
+        // the APG grid rule, and the reason the panel stopped costing 16 tab presses.
+        grid.addEventListener('keydown', (e) => this.onGridKey(e));
+        grid.addEventListener('focusin', () => {
+            // Arriving on the canvas previews the layout ON SCREEN, so the first arrow
+            // key moves one square from where the user actually is.
+            this.syncGridCursor();
+            this.hover = { rows: this.gridPos.r + 1, cols: this.gridPos.c + 1 };
+            this.render();
+        });
 
-        opts.trigger.addEventListener('click', () => this.toggle());
+        // Keyboard-open detection: a click synthesised from Enter/Space has detail === 0.
+        // A popover must move focus INTO itself only for the keyboard user — doing it on
+        // a mouse click would yank the caret away from wherever the pointer is.
+        opts.trigger.addEventListener('click', (e) => {
+            this.keyboardOpen = e.detail === 0;
+            this.toggle();
+        });
         opts.trigger.setAttribute('aria-haspopup', 'true');
         opts.trigger.setAttribute('aria-expanded', 'false');
         opts.host.appendChild(this.layer);
@@ -681,6 +837,7 @@ export class LayoutPicker {
         this.exit = null;
         this.hover = null;
         this.refresh();
+        this.syncGridCursor(); // arrows start from the layout on screen
         this.layer.style.display = '';
         this.position();
         this.opts.trigger.setAttribute('aria-expanded', 'true');
@@ -689,7 +846,107 @@ export class LayoutPicker {
         this.opts.onOpenChange?.(true);
         // After the host heard it — a listener that closes the picker again then reports last.
         if (this.isOpen) announceSurface(this.panel, true, 'popover', this.opts.trigger);
+        // The panel is portalled at the END of the root: without this, a keyboard user
+        // who pressed Enter on the trigger had to tab through the whole shell to reach
+        // the panel they had just opened. Focus lands on the panel itself (tabindex -1),
+        // so Escape still works and the next Tab enters its first control.
+        const doc = this.doc;
+        const focused = doc.activeElement;
+        if (this.isOpen && (this.keyboardOpen || focused === this.opts.trigger) && doc.activeElement === this.opts.trigger) {
+            // Focus the FIRST CONTROL, not the panel box: a focused scroll container
+            // swallows Tab in Chromium (the panel would become a keyboard trap).
+            const first = this.firstFocusable();
+            try {
+                (first ?? this.panel).focus({ preventScroll: true });
+            } catch {
+                /* a detached panel */
+            }
+        }
+        this.keyboardOpen = false;
     }
+
+    /** Where the roving focus sits inside the 4×4 canvas. */
+    private gridPos = { r: 0, c: 0 };
+
+    /** Seed the cursor from the layout currently on screen (arrow keys start there). */
+    private syncGridCursor(): void {
+        const shape = this.opts.shape();
+        this.gridPos = {
+            r: Math.max(0, Math.min(GRID - 1, (shape?.rows ?? 1) - 1)),
+            c: Math.max(0, Math.min(GRID - 1, (shape?.cols ?? 1) - 1)),
+        };
+    }
+
+    private onGridKey(e: KeyboardEvent): void {
+        const { r, c } = this.gridPos;
+        let nr = r;
+        let nc = c;
+        if (e.key === 'ArrowRight') nc = Math.min(GRID - 1, c + 1);
+        else if (e.key === 'ArrowLeft') nc = Math.max(0, c - 1);
+        else if (e.key === 'ArrowDown') nr = Math.min(GRID - 1, r + 1);
+        else if (e.key === 'ArrowUp') nr = Math.max(0, r - 1);
+        else if (e.key === 'Home') { nr = 0; nc = 0; }
+        else if (e.key === 'End') { nr = GRID - 1; nc = GRID - 1; }
+        else if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            this.close();
+            this.opts.onSelectGrid(r + 1, c + 1);
+            return;
+        } else return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.gridPos = { r: nr, c: nc };
+        // The arrow previews the rectangle exactly like a hover does. Focus stays on the
+        // container (the tab stop), so Tab keeps working in every engine.
+        this.hover = { rows: nr + 1, cols: nc + 1 };
+        this.render();
+        const live = this.gridEl;
+        if (live) live.setAttribute('aria-label', `Layout size — ${nc + 1} by ${nr + 1}, Enter applies`);
+    }
+
+    /** Every focusable control in the panel, in DOM order (visible + enabled only). */
+    private focusables(): HTMLElement[] {
+        const selector = 'button, input, select, textarea, [tabindex]:not([tabindex="-1"])';
+        const out: HTMLElement[] = [];
+        for (const el of this.panel.querySelectorAll<HTMLElement>(selector)) {
+            if (el.hasAttribute('disabled')) continue;
+            if (el.tabIndex < 0) continue; // a roving/programmatic stop, not a Tab stop
+            if (el.hidden || el.closest('[hidden]')) continue;
+            const cs = getComputedStyle(el);
+            if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+            out.push(el);
+        }
+        return out;
+    }
+
+    private firstFocusable(): HTMLElement | null {
+        return this.focusables()[0] ?? null;
+    }
+
+    /**
+     * Tab is handled HERE, not by the browser.
+     *
+     * Chromium does not advance out of the layout canvas' squares (they live in a grid
+     * whose pointer handlers cancel the press), so a keyboard user who reached the panel
+     * could not leave the first square — a real trap, measured. Cycling the panel's own
+     * focusables makes the behaviour explicit and identical in every engine, and a
+     * settings popover that keeps Tab inside itself until Escape is the standard
+     * non-modal-dialog reading of APG.
+     */
+    private readonly onPanelKeydown = (e: KeyboardEvent): void => {
+        if (e.key !== 'Tab' || e.altKey || e.ctrlKey || e.metaKey) return;
+        const list = this.focusables();
+        if (list.length === 0) return;
+        const at = list.indexOf(this.doc.activeElement as HTMLElement);
+        const step = e.shiftKey ? -1 : 1;
+        const next = at < 0 ? (step > 0 ? 0 : list.length - 1) : at + step;
+        // At either END the browser keeps the keystroke: Shift+Tab from the first control
+        // returns to the trigger, Tab from the last one leaves the panel. A popover that
+        // wraps its own focus is a keyboard trap — the thing this round set out to fix.
+        if (next < 0 || next >= list.length) return;
+        e.preventDefault();
+        list[next]!.focus({ preventScroll: false });
+    };
 
     close(): void {
         if (!this.isOpen) return;
@@ -702,6 +959,9 @@ export class LayoutPicker {
             if (!this.isOpen) this.layer.style.display = 'none';
         });
         this.opts.trigger.setAttribute('aria-expanded', 'false');
+        // Focus was inside the panel (a keyboard user) → hand it back to the trigger
+        // rather than dropping it on <body>, which loses the user's place.
+        if (this.panel.contains(this.doc.activeElement)) this.opts.trigger.focus({ preventScroll: true });
         this.doc.removeEventListener('pointerdown', this.onDocPointerDown, true);
         this.doc.removeEventListener('keydown', this.onDocKeydown, true);
         this.opts.onOpenChange?.(false);
@@ -786,10 +1046,44 @@ export class LayoutPicker {
                     this.close();
                     this.opts.onSelectPreset(p.id);
                 });
+                b.addEventListener('keydown', (e) => this.onPresetKey(e));
                 row.appendChild(b);
             }
             this.presetsEl.appendChild(row);
         }
+        // The presets are a single choice — say so, and spend ONE tab stop on it. Before
+        // this each of the 32 presets was its own tab stop: eleven presses to walk past a
+        // list you were not going to use (measured, tab-stop probe).
+        this.presetsEl.setAttribute('role', 'radiogroup');
+        this.presetsEl.setAttribute('aria-label', 'Layout presets');
+        const buttons = [...this.presetsEl.querySelectorAll<HTMLButtonElement>('.vela-lp-preset')];
+        const chosen = buttons.findIndex((b) => b.dataset.checked === '1');
+        buttons.forEach((b, i) => {
+            b.setAttribute('role', 'radio');
+            b.setAttribute('aria-checked', String(b.dataset.checked === '1'));
+            b.tabIndex = i === (chosen >= 0 ? chosen : 0) ? 0 : -1;
+        });
+    }
+
+    /** Arrow keys walk the presets, Home/End jump to the ends; Enter/Space choose (the
+     *  button's own click). Same contract as the link-tab radiogroup below it. */
+    private onPresetKey(e: KeyboardEvent): void {
+        const keys = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+        if (!keys.includes(e.key)) return;
+        const list = [...this.presetsEl.querySelectorAll<HTMLButtonElement>('.vela-lp-preset')];
+        if (list.length === 0) return;
+        const at = list.indexOf(this.doc.activeElement as HTMLButtonElement);
+        const rtl = isRtl(this.presetsEl);
+        const step = e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? (rtl && e.key === 'ArrowLeft' ? 1 : -1) : e.key === 'ArrowRight' ? (rtl ? -1 : 1) : 0;
+        let next = at < 0 ? 0 : at + step;
+        if (e.key === 'Home') next = 0;
+        else if (e.key === 'End') next = list.length - 1;
+        e.preventDefault();
+        e.stopPropagation(); // the panel's Tab walk must not also move
+        const target = list[Math.max(0, Math.min(list.length - 1, next))]!;
+        for (const b of list) b.tabIndex = -1;
+        target.tabIndex = 0;
+        target.focus({ preventScroll: true });
     }
 
     private renderSyncs(): void {
@@ -922,6 +1216,27 @@ export class LayoutPicker {
         input.focus();
         input.select();
         row.dataset.editing = '1';
+    }
+
+    /**
+     * Copy the permalink and SAY SO on the button itself. A copy action that reports
+     * nothing is indistinguishable from a broken one, and a toast for this is noise:
+     * the label flips to "Copied" (and the title/aria-label with it) for 1.6 s.
+     */
+    private async copyShare(btn: HTMLElement): Promise<void> {
+        const url = await this.opts.onCopyLink?.();
+        if (!url) return;
+        btn.dataset.copied = '1';
+        btn.title = 'Link copied to the clipboard';
+        btn.setAttribute('aria-label', 'Share link copied');
+        const win = this.doc.defaultView;
+        const clear = (): void => {
+            delete btn.dataset.copied;
+            btn.title = 'Copy a link that restores this exact workspace';
+            btn.setAttribute('aria-label', 'Copy share link');
+        };
+        if (win) win.setTimeout(clear, 1600);
+        else clear();
     }
 
     /** Open the OS file picker for an imported snapshot (no drag-drop needed). */
@@ -1118,13 +1433,13 @@ export class LayoutPicker {
     }
 
     /** A file-import action: one icon in the row that owns it (label in title + aria). */
-    private importButton(label: string, title: string, run: () => void): HTMLButtonElement {
+    private importButton(label: string, title: string, run: () => void, glyph = 'upload'): HTMLButtonElement {
         const b = this.doc.createElement('button');
         b.type = 'button';
         b.className = 'vela-lp-importbtn';
         b.title = title;
         b.setAttribute('aria-label', label);
-        b.appendChild(iconEl('upload', this.doc));
+        b.appendChild(iconEl(glyph, this.doc));
         b.addEventListener('click', run);
         return b;
     }
@@ -1187,6 +1502,21 @@ export class LayoutPicker {
             if (this.opts.onImportLayout) {
                 const imp = this.importButton('Import layout file…', 'Restore a layout snapshot from a .json file', () => this.pickImportFile());
                 form.appendChild(imp);
+            }
+            if (this.opts.onCopyLink) {
+                // Share sits with save/import because it IS a save — to a URL instead of a
+                // file. The glyph is a chain, not a page-arrow: import/export already own
+                // the arrow verbs and a link is neither.
+                const share = this.importButton(
+                    'Copy share link',
+                    'Copy a link that restores this exact workspace',
+                    () => {
+                        void this.copyShare(share);
+                    },
+                    'link',
+                );
+                share.classList.add('vela-lp-sharebtn');
+                form.appendChild(share);
             }
             this.footEl.appendChild(form);
             for (const l of saved()) {
@@ -1286,26 +1616,50 @@ export class LayoutPicker {
             const caption = doc.createElement('span');
             caption.textContent = 'Link tabs';
             links.appendChild(caption);
+            // A single-choice control, so it says so: a radiogroup with arrow-key
+            // selection beats five unrelated buttons whose state lived only in a
+            // data-attribute. (The old dots also carried no aria-state at all.)
+            links.setAttribute('role', 'radiogroup');
+            links.setAttribute('aria-label', 'Link tabs');
             const current = this.opts.linkGroup?.() ?? null;
             // NEUTRAL by design: four identity-coloured dots competed with the sync marks
             // two rows above them and meant nothing to anyone who had not read the TV
             // desktop docs. The tag is a NUMBER now, colour is reserved for groups, and
             // the selected set is an outline — information no longer depends on hue.
+            const dots: HTMLButtonElement[] = [];
             for (const [i, tag] of ([null, 'red', 'green', 'blue', 'amber'] as const).entries()) {
                 const dot = doc.createElement('button');
                 dot.type = 'button';
                 dot.className = 'vela-lp-linkdot';
                 dot.dataset.tag = tag ?? 'none';
-                if ((current ?? null) === tag) dot.dataset.on = '1';
                 dot.textContent = tag ? String(i) : '—';
                 dot.title = tag ? `Link to other tabs in set ${i}` : 'Unlink tabs';
+                const picked = (current ?? null) === tag;
+                dot.setAttribute('role', 'radio');
+                dot.setAttribute('aria-checked', String(picked));
                 dot.setAttribute('aria-label', dot.title);
+                dot.tabIndex = picked ? 0 : -1; // one tab stop for the whole group
+                if (picked) dot.dataset.on = '1';
                 dot.addEventListener('click', () => {
                     this.opts.onLinkGroup?.(tag);
                     this.renderFooter();
                 });
+                dots.push(dot);
                 links.appendChild(dot);
             }
+            // Roving arrow keys, direction-aware: in RTL "next" is to the left.
+            links.addEventListener('keydown', (e) => {
+                const at = dots.indexOf(doc.activeElement as HTMLButtonElement);
+                if (at < 0) return;
+                if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+                e.preventDefault();
+                e.stopPropagation();
+                const step = (e.key === 'ArrowRight' ? 1 : -1) * (isRtl(links) ? -1 : 1);
+                const next = dots[(at + step + dots.length) % dots.length]!;
+                next.focus({ preventScroll: true });
+                next.click();
+            });
+            if (dots.length > 0 && !dots.some((d) => d.tabIndex === 0)) dots[0]!.tabIndex = 0;
             this.footEl.appendChild(links);
         }
         this.footEl.style.display = this.footEl.childElementCount > 0 ? '' : 'none';
