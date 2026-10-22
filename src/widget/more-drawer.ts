@@ -15,7 +15,20 @@ import { IMPLICIT_GROUP } from '../state/document';
 import { groupMarkColor } from '../workspace/sync-marks';
 
 const STYLE_ID = 'vela-widget-more-drawer';
+/** "just now" / "3h ago" / "2d ago" — a saved row's second line. */
+function agoLabel(ms: number): string {
+    const diff = Date.now() - ms;
+    if (!Number.isFinite(diff) || diff < 0) return '';
+    const min = Math.round(diff / 60_000);
+    if (min < 1) return 'just now';
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.round(min / 60);
+    if (hr < 24) return `${hr}h ago`;
+    return `${Math.round(hr / 24)}d ago`;
+}
+
 const CSS = `
+
 /* Share: the hero card's one action. 44px tall, so it is a thumb target even though it
    sits inside a card; the copied state flips the ink and the label for 1.6 s. */
 .vela-md-share {
@@ -496,45 +509,16 @@ const CSS = `
     color: var(--vela-fg-muted);
 }
 /* Save-as field (TV's \"Save layout as…\"). */
-.vela-md-saved { gap: 6px; }
-.vela-md-saved-open, .vela-md-saved-del {
-    all: unset;
-    flex: none;
-    height: 32px;
-    padding: 0 10px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    border: 1px solid var(--vela-border);
-    font-size: 12px;
-    color: var(--vela-fg);
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-}
-.vela-md-saved-open:active, .vela-md-saved-del:active { background: var(--vela-hover); }
-.vela-md-saved-del { padding: 0 8px; width: 34px; }
 /* The three per-row verbs are ICONS, not three more boxes: on a 390 px row four
    outlines read as four equally-important actions. The Open pill keeps its border;
    the rest stay quiet until touched (their 34 px hit area is unchanged). */
-.vela-md-saved-del { border-color: transparent; background: transparent; }
-.vela-md-saved-del:active { background: var(--vela-hover); }
-.vela-md-savedtext { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.vela-md-saved .vela-md-row-label { display: inline-flex; align-items: center; gap: 5px; }
-.vela-md-savedmeta { font-size: 10.5px; color: var(--vela-fg-faint); }
 /* The open layout's strip: name + state on the left, Save on the right. */
-.vela-md-open { gap: 8px; min-height: 46px; }
-.vela-md-open .vela-md-row-label { font-size: 14px; }
 /* "Show all N layouts": a quiet row, not a button-shaped box. */
-.vela-md-showall { all: unset; box-sizing: border-box; display: flex; width: 100%; align-items: center; gap: 8px; min-height: 40px; padding: 0 2px; border-radius: 8px; cursor: pointer; }
-.vela-md-showall:active { background: var(--vela-hover); }
-.vela-md-showall:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
-.vela-md-showall .vela-md-row-label { flex: 1 1 auto; font-size: 13px; color: var(--vela-fg-muted); }
-.vela-md-showall .vela-icon { flex: none; width: 14px; height: 14px; font-size: 14px; color: var(--vela-fg-faint); transform: rotate(90deg); }
-.vela-md-showall[aria-expanded='true'] .vela-icon { transform: rotate(-90deg); }
 /* The library's own top gap: it opens the sheet, so it needs air above the actions. */
-.vela-md-lib { padding-top: 2px; }
-.vela-md-charthead { margin-top: 6px; }
+.vela-md-lib { padding-top: 2px; padding-bottom: 0; }
+/* The library and the settings rows are two lists in one scroll: give the second
+   one a heading, but not a second page's worth of air between them. */
+.vela-md-charthead { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--vela-border); }
 /* Autosave's row: a real switch row, not a stray native button — the dialog's row
    primitive is all:unset + flex, and a class without it paints UA white on dark. */
 .vela-md-switchrow {
@@ -554,7 +538,6 @@ const CSS = `
 .vela-md-switchrow:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
 .vela-md-switchrow[aria-checked='true'] .vela-md-switch { background: var(--vela-accent, var(--vela-selected-bg)); }
 .vela-md-switchrow[aria-checked='true'] .vela-md-switch::after { transform: translateX(16px); background: #fff; }
-.vela-md-saved-del .vela-icon { font-size: 15px; width: 15px; height: 15px; color: var(--vela-fg-muted); }
 .vela-md-row[data-danger='1'] .vela-md-row-value { color: var(--vela-danger); }
 .vela-md-rename {
     flex: 1 1 auto;
@@ -568,35 +551,11 @@ const CSS = `
     padding: 6px 8px;
 }
 .vela-md-rename[data-refused] { border-color: var(--vela-danger); }
-.vela-md-import {
-    all: unset;
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    margin-top: 8px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px dashed var(--vela-border-soft);
-    font-size: 12px;
-    color: var(--vela-fg-muted);
-    cursor: pointer;
-}
-.vela-md-import:active { background: var(--vela-hover); }
 .vela-md-saveas { display: flex; gap: 8px; padding: 4px 0 8px; }
 /* A muted one-line subtitle inside a switch row (Autosave's "saving as you edit"). */
 .vela-md-row-sub { flex: none; font-size: 11.5px; color: var(--vela-fg-muted); }
 /* A saved layout's preview: 56×34 — big enough to recognise the grid at a glance. */
-.vela-md-savedthumb { flex: none; width: 56px; height: 34px; border-radius: 5px; object-fit: cover; border: 1px solid var(--vela-border); background: var(--vela-hover); }
-.vela-md-tpl .vela-md-row-label { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
-.vela-md-tplmeta { font-size: 10.5px; color: var(--vela-fg-faint); }
 /* The house-template star: 30px square so it is a real target, and gold only when on. */
-.vela-md-tplstar { flex: none; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
-.vela-md-tplstar .vela-icon { width: 16px; height: 16px; font-size: 16px; color: var(--vela-fg-faint); }
-.vela-md-tplstar[data-on='1'] .vela-icon { color: var(--vela-accent, var(--vela-selected-bg)); }
-.vela-md-tplstar:active { background: var(--vela-hover); }
-.vela-md-tplstar:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
-.vela-md-tplmarket { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--vela-fg-muted); flex: none; padding: 0 2px; }
-.vela-md-tplmarket input { width: 16px; height: 16px; accent-color: var(--vela-accent, var(--vela-selected-bg)); }
 /* The legend under the matrix: mark + the name the user gave the group. */
 .vela-md-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 2px 2px 6px; }
 .vela-md-leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--vela-fg-muted); min-height: 26px; }
@@ -646,6 +605,161 @@ const CSS = `
     cursor: pointer;
 }
 .vela-md-saveas button:disabled { opacity: 0.4; }
+
+/* ── the layout library: two panes, one row language ────────────────────────── */
+.vela-md-libhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 2px; }
+/* The sheet's tab strip is sticky and 50-ish px tall: anything that scrolls into view
+   (a focused field, a kebab opened far down the list) must stop BELOW it, not under it. */
+.vela-md-libhead, .vela-md-libpane { scroll-margin-top: 56px; }
+.vela-md-libhead .vela-md-section { padding: 0; margin: 0; }
+/* The toggle: two stops, 30 px tall, the selected one lifted — a segmented control,
+   not two buttons that both look pressable. */
+.vela-md-seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 9px; background: color-mix(in srgb, var(--vela-fg) 8%, transparent); }
+.vela-md-segbtn {
+    all: unset;
+    box-sizing: border-box;
+    min-width: 74px;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 7px;
+    font-size: 12px;
+    text-align: center;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-segbtn[data-active] { background: var(--vela-elevated, var(--vela-hover-strong)); color: var(--vela-fg-bright); }
+.vela-md-segbtn:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: 1px; }
+.vela-md-libpane { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
+
+/* The open layout: one line, name + state, and a Save pill only when it has drifted. */
+.vela-md-lopen { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 2px; }
+.vela-md-lopen .vela-md-ltext { flex: 1 1 auto; min-width: 0; }
+.vela-md-lopen b { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--vela-fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vela-md-lopen small { display: block; font-size: 11px; color: var(--vela-fg-muted); }
+.vela-md-pill {
+    all: unset;
+    flex: none;
+    box-sizing: border-box;
+    min-height: 32px;
+    padding: 0 14px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    background: var(--vela-accent, var(--vela-selected-bg));
+    color: #fff;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.vela-md-pill:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: 2px; }
+
+/* A row: tap to use, the kebab to manage. Nothing else. */
+.vela-md-lrow { position: relative; display: flex; align-items: center; gap: 4px; min-height: 48px; border-radius: 9px; }
+.vela-md-lrow[data-active] { background: var(--vela-hover); }
+.vela-md-lrow[data-active]::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 2px; border-radius: 1px; background: var(--vela-accent, var(--vela-selected-bg)); }
+.vela-md-lrow.renaming { padding: 4px 2px; }
+.vela-md-lmain {
+    all: unset;
+    box-sizing: border-box;
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 48px;
+    padding: 0 2px 0 8px;
+    border-radius: 9px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-lmain:active { background: var(--vela-hover-strong); }
+.vela-md-lmain:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
+.vela-md-ltext { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.vela-md-ltext b { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; color: var(--vela-fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vela-md-ltext small { font-size: 11px; color: var(--vela-fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vela-md-lthumb { flex: none; width: 44px; height: 28px; border-radius: 4px; object-fit: cover; border: 1px solid var(--vela-border); background: var(--vela-hover); }
+/* The drift dot: small, filled, and never the only signal (the state is in words too). */
+.vela-md-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--vela-accent, var(--vela-selected-bg)); }
+.vela-md-lkebab {
+    all: unset;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-lkebab .vela-icon { width: 18px; height: 18px; font-size: 18px; }
+.vela-md-lkebab[aria-expanded='true'] { color: var(--vela-fg-bright); background: color-mix(in srgb, var(--vela-fg) 10%, transparent); }
+.vela-md-lkebab:active { background: var(--vela-hover); }
+.vela-md-lkebab:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
+/* The unfolded verbs: text on one line, 40 px tall, delete in the down colour. */
+.vela-md-lacts { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 4px 6px 10px; }
+.vela-md-lact {
+    all: unset;
+    box-sizing: border-box;
+    min-height: 36px;
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 8px;
+    font-size: 12.5px;
+    color: var(--vela-fg);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-lact:active { background: var(--vela-hover-strong); }
+.vela-md-lact:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
+.vela-md-lact[data-danger] { color: var(--vela-down); }
+.vela-md-linput { flex: 1 1 auto; min-width: 0; box-sizing: border-box; min-height: 40px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--vela-border); background: var(--vela-hover); color: var(--vela-fg-bright); font: inherit; font-size: 14px; }
+.vela-md-linput:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -1px; }
+.vela-md-linput[data-refused] { border-color: var(--vela-down); }
+/* The house template: a star that is a state, not a verb. */
+.vela-md-star {
+    all: unset;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-star .vela-icon { width: 18px; height: 18px; font-size: 18px; color: var(--vela-fg-faint); }
+.vela-md-star[data-on='1'] .vela-icon { color: var(--vela-accent, var(--vela-selected-bg)); }
+.vela-md-star:active { background: var(--vela-hover); }
+.vela-md-star:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
+/* "Show all N" and the two "+ save" / "import" entry points: quiet rows, no boxes. */
+.vela-md-more, .vela-md-lghost {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    padding: 0 8px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-more { justify-content: space-between; }
+.vela-md-more .vela-icon { width: 14px; height: 14px; font-size: 14px; transform: rotate(0deg); transition: transform 120ms ease; }
+.vela-md-more[aria-expanded='true'] .vela-icon { transform: rotate(180deg); }
+.vela-md-lghost { color: var(--vela-fg); }
+.vela-md-lghost .vela-icon { width: 15px; height: 15px; font-size: 15px; color: var(--vela-fg-muted); }
+.vela-md-lghost:active, .vela-md-more:active { background: var(--vela-hover); }
+.vela-md-lghost:focus-visible, .vela-md-more:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
+
 `;
 
 /** Paint a group chip: its mark, lit when it is in a group, dashed while it is the
@@ -806,8 +920,16 @@ export class MoreDrawer {
     private readonly drawer: Drawer;
     /** First tap arms the "hidden charts" row; the second one commits. */
     private poolArmed = false;
-    /** "Show all N layouts" — the main tab shows the newest few until asked for more. */
+    /** "Show all N layouts" — the sheet shows the newest few until asked for more. */
     private layoutsExpanded = false;
+    /** Which half of the library is showing (layouts sit first: they are the workspace). */
+    private libTab: 'layouts' | 'templates' = 'layouts';
+    /** The row whose `⋯` menu is open, keyed `L:<name>` / `T:<name>`. */
+    private openRow: string | null = null;
+    /** The name field a "+ save" row unfolded, if any. */
+    private saveField: 'layout' | 'template' | null = null;
+    /** Selector for the field the sheet should focus once this render is mounted. */
+    private pendingFocus: string | null = null;
     private view: MoreView = 'main';
     /** Scroll the layout sheet to its sync block on the next paint. */
     private focus: 'sync' | undefined;
@@ -829,6 +951,10 @@ export class MoreDrawer {
         this.focus = opts.focus;
         this.focusCell = opts.cell;
         this.tab = opts.focus ?? 'layouts';
+        // Transient library state does not survive a close: a reopened sheet must not
+        // come back with a half-typed rename or a save form unfolded on a stale row.
+        this.openRow = null;
+        this.saveField = null;
         this.render();
         this.drawer.show();
     }
@@ -869,6 +995,13 @@ export class MoreDrawer {
         else this.renderAlerts(doc);
         this.focus = undefined;
         this.focusCell = undefined;
+        // Fields built inside a detached pane cannot take focus; the sheet asks for it
+        // here, once everything is mounted (the phone keyboard follows the cursor).
+        if (this.pendingFocus) {
+            const target = this.drawer.body.querySelector<HTMLElement>(this.pendingFocus);
+            this.pendingFocus = null;
+            target?.focus({ preventScroll: true });
+        }
     }
 
     private row(doc: Document, label: string, opts: { icon?: string; glyph?: string; value?: string; chevron?: boolean; checked?: boolean; danger?: boolean; onClick: () => void }): HTMLElement {
@@ -927,8 +1060,7 @@ export class MoreDrawer {
         if (this.opts.layout) {
             const lib = doc.createElement('div');
             lib.className = 'vela-md-list vela-md-lib';
-            this.renderSavedLayouts(doc, lib, this.opts.layout);
-            this.renderTemplates(doc, lib, this.opts.layout);
+            this.renderLibrary(doc, lib, this.opts.layout);
             if (lib.childElementCount > 0) this.drawer.body.append(lib);
         }
         const current = this.opts.priceStyles().find((s) => s.id === this.opts.priceStyle());
@@ -1514,46 +1646,209 @@ export class MoreDrawer {
         if (focusCell) matrix?.focus(focusCell);
     }
 
-    /** Saved snapshots: open on tap, plus a one-tap save (auto-named). */
-    private renderSavedLayouts(
-        doc: Document,
-        list: HTMLElement,
-        layout: NonNullable<MoreDrawerOptions['layout']>,
-    ): void {
-        if (!layout.savedLayouts) return;
-        const rows = layout.savedLayouts();
-        const heading = doc.createElement('div');
-        heading.className = 'vela-md-section';
-        heading.textContent = 'Layouts';
-        list.appendChild(heading);
-        // ── the OPEN layout: its name, whether it drifted, and the one-tap write ──
-        // The desktop card states this in a strip; without it a phone has no "save
-        // changes" verb at all (only "Save layout as…", which would make a second one).
+    // ── the library ─────────────────────────────────────────────────────────────
+    /**
+     * Layouts and indicator templates, on ONE screen with a two-stop toggle.
+     *
+     * TradingView keeps these apart on purpose: a LAYOUT is the whole workspace
+     * (Ctrl+S, "Manage layouts"), a TEMPLATE is an indicator set that re-skins any
+     * chart. Printing both as one long list made the drawer read as a wall of rows —
+     * the measured complaint — so the sheet gives each its own pane, and every row is
+     * one tap to USE plus one `⋯` to manage (rename / copy / export / delete). The
+     * four bordered buttons a row used to wear are gone.
+     */
+    private renderLibrary(doc: Document, list: HTMLElement, layout: NonNullable<MoreDrawerOptions['layout']>): void {
+        const hasLayouts = !!layout.savedLayouts;
+        const hasTemplates = !!(layout.onSaveTemplate && layout.templates);
+        if (!hasLayouts && !hasTemplates) return;
+        if (!hasTemplates) this.libTab = 'layouts';
+        if (!hasLayouts) this.libTab = 'templates';
+
+        const head = doc.createElement('div');
+        head.className = 'vela-md-libhead';
+        // With both panes the toggle IS the heading — printing "LAYOUTS" beside a
+        // control that already says Layouts is the kind of noise this screen is losing.
+        if (!(hasLayouts && hasTemplates)) {
+            head.appendChild(this.sectionLabel(doc, hasLayouts ? 'Layouts' : 'Templates'));
+        }
+        if (hasLayouts && hasTemplates) {
+            const seg = doc.createElement('div');
+            seg.className = 'vela-md-seg';
+            seg.setAttribute('role', 'tablist');
+            seg.setAttribute('aria-label', 'Layouts or templates');
+            const stops: Array<['layouts' | 'templates', string]> = [['layouts', 'Layouts'], ['templates', 'Templates']];
+            for (const [key, label] of stops) {
+                const b = doc.createElement('button');
+                b.type = 'button';
+                b.className = 'vela-md-segbtn';
+                b.id = `vela-md-libtab-${key}`;
+                b.dataset.tab = key;
+                b.setAttribute('role', 'tab');
+                b.setAttribute('aria-controls', 'vela-md-libpane');
+                b.setAttribute('aria-selected', String(this.libTab === key));
+                b.toggleAttribute('data-active', this.libTab === key);
+                b.tabIndex = this.libTab === key ? 0 : -1;
+                b.textContent = label;
+                b.addEventListener('click', () => {
+                    this.libTab = key;
+                    this.openRow = null;
+                    this.saveField = null;
+                    // Re-render replaces this node, so the tab that was just chosen asks
+                    // for focus back — a toggle that drops focus to the document makes
+                    // the next arrow key scroll the page instead of moving the tab.
+                    this.pendingFocus = '.vela-md-segbtn[data-active]';
+                    this.render();
+                });
+                b.addEventListener('keydown', (e) => {
+                    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                    e.preventDefault();
+                    this.libTab = key === 'layouts' ? 'templates' : 'layouts';
+                    this.openRow = null;
+                    this.saveField = null;
+                    this.pendingFocus = '.vela-md-segbtn[data-active]';
+                    this.render();
+                });
+                seg.appendChild(b);
+            }
+            head.appendChild(seg);
+        }
+        list.appendChild(head);
+
+        const pane = doc.createElement('div');
+        pane.className = 'vela-md-libpane';
+        // A real tabpanel: the toggle is a tablist, so the pane it swaps must say which
+        // tab it belongs to (a bare div leaves the screen reader with two tabs and no body).
+        pane.setAttribute('role', 'tabpanel');
+        pane.id = 'vela-md-libpane';
+        pane.setAttribute('aria-labelledby', `vela-md-libtab-${this.libTab}`);
+        if (this.libTab === 'layouts') this.renderLayoutsPane(doc, pane, layout);
+        else this.renderTemplatesPane(doc, pane, layout);
+        // Focus lands after the pane is in the document (see render()): focusing a
+        // detached input is a no-op and leaves the phone keyboard closed.
+        if (pane.querySelector('.vela-md-linput, .vela-md-saveas input')) {
+            this.pendingFocus = '.vela-md-linput, .vela-md-saveas input';
+        }
+        list.appendChild(pane);
+    }
+
+    /** The small caps heading this sheet uses above every group. */
+    private sectionLabel(doc: Document, text: string): HTMLElement {
+        const el = doc.createElement('div');
+        el.className = 'vela-md-section';
+        el.textContent = text;
+        return el;
+    }
+
+    /** The row's `⋯` — the ONLY per-row control besides the row itself. */
+    private kebab(doc: Document, label: string, open: boolean, run: () => void): HTMLElement {
+        const b = doc.createElement('button');
+        b.type = 'button';
+        b.className = 'vela-md-lkebab';
+        b.setAttribute('aria-label', label);
+        b.title = label;
+        b.setAttribute('aria-expanded', String(open));
+        b.appendChild(iconEl('more', doc));
+        b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            run();
+        });
+        return b;
+    }
+
+    /** The card of verbs a `⋯` unfolds — text, not four more icons. */
+    private actionsStrip(doc: Document, entries: Array<{ label: string; danger?: boolean; run: () => void }>): HTMLElement {
+        const strip = doc.createElement('div');
+        strip.className = 'vela-md-lacts';
+        for (const entry of entries) {
+            const b = doc.createElement('button');
+            b.type = 'button';
+            b.className = 'vela-md-lact';
+            if (entry.danger) b.dataset.danger = '1';
+            b.textContent = entry.label;
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                entry.run();
+            });
+            strip.appendChild(b);
+        }
+        return strip;
+    }
+
+    /** Rename in place: the row's own text field, never a modal for one word. */
+    private rowRename(doc: Document, row: HTMLElement, from: string, apply: (from: string, to: string) => boolean, onLeave: () => void): void {
+        const input = doc.createElement('input');
+        input.type = 'text';
+        input.className = 'vela-md-linput';
+        input.value = from;
+        input.setAttribute('aria-label', `Rename ${from}`);
+        let done = false;
+        const finish = (allowRetry: boolean): void => {
+            if (done) return;
+            const to = input.value.trim();
+            if (!to || to === from) {
+                done = true;
+                onLeave();
+                return;
+            }
+            if (apply(from, to) || !allowRetry) {
+                done = true;
+                onLeave();
+                return;
+            }
+            input.dataset.refused = to; // taken: stay editable, say why
+            input.title = `“${to}” is already used — pick another name`;
+            input.focus();
+            input.select();
+        };
+        input.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                finish(true);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                done = true;
+                onLeave();
+            }
+        });
+        input.addEventListener('blur', () => finish(false));
+        row.replaceChildren(input);
+        row.classList.add('renaming');
+        input.focus();
+        input.select();
+    }
+
+    /** Saved snapshots: tap to open, `⋯` to manage. */
+    private renderLayoutsPane(doc: Document, pane: HTMLElement, layout: NonNullable<MoreDrawerOptions['layout']>): void {
+        const rows = layout.savedLayouts?.() ?? [];
+
+        // ── the open layout: name, drift, and the one-tap write ──────────────
         const activeName = layout.activeLayout?.() ?? null;
+        const dirty = rows.some((r) => r.dirty);
         if (activeName) {
-            const dirty = rows.some((r) => r.dirty);
             const strip = doc.createElement('div');
-            strip.className = 'vela-md-row vela-md-open';
+            strip.className = 'vela-md-lopen';
             const text = doc.createElement('span');
-            text.className = 'vela-md-savedtext';
-            const name = doc.createElement('span');
-            name.className = 'vela-md-row-label';
+            text.className = 'vela-md-ltext';
+            const name = doc.createElement('b');
             name.textContent = activeName;
+            text.appendChild(name);
+            const state = doc.createElement('small');
             if (dirty) {
                 const dot = doc.createElement('span');
-                dot.className = 'vela-lp-dot';
-                dot.setAttribute('aria-label', 'Unsaved changes');
-                name.appendChild(dot);
+                dot.className = 'vela-md-dot';
+                dot.setAttribute('aria-hidden', 'true');
+                text.querySelector('b')?.prepend(dot);
+                state.textContent = 'unsaved changes';
+            } else {
+                state.textContent = 'saved';
             }
-            const state = doc.createElement('span');
-            state.className = 'vela-md-savedmeta';
-            state.textContent = dirty ? 'unsaved changes' : 'saved';
-            text.append(name, state);
+            text.appendChild(state);
             strip.appendChild(text);
             if (dirty && layout.onSaveChanges) {
                 const save = doc.createElement('button');
                 save.type = 'button';
-                save.className = 'vela-md-saved-open';
+                save.className = 'vela-md-pill';
                 save.textContent = 'Save';
                 save.setAttribute('aria-label', `Save changes to ${activeName}`);
                 save.addEventListener('click', () => {
@@ -1562,15 +1857,15 @@ export class MoreDrawer {
                 });
                 strip.appendChild(save);
             }
-            list.appendChild(strip);
+            pane.appendChild(strip);
         }
-        // TradingView's Autosave, on the phone too — the switch sits under the heading
-        // where the list it governs begins, not in a settings page two taps away.
+
+        // ── autosave: a real switch, not a checkbox ─────────────────────────
         if (layout.onToggleAutosave) {
             const on = layout.autosave?.() === true;
             const auto = doc.createElement('button');
             auto.type = 'button';
-            auto.className = 'vela-md-row vela-md-switchrow';
+            auto.className = 'vela-md-switchrow';
             auto.setAttribute('role', 'switch');
             auto.setAttribute('aria-checked', String(on));
             const alabel = doc.createElement('span');
@@ -1578,7 +1873,7 @@ export class MoreDrawer {
             alabel.textContent = 'Autosave';
             const hint = doc.createElement('span');
             hint.className = 'vela-md-row-sub';
-            hint.textContent = on ? 'saving as you edit' : 'off';
+            hint.textContent = on ? 'on' : 'off';
             const pill = doc.createElement('span');
             pill.className = 'vela-md-switch' + (on ? ' on' : '');
             pill.setAttribute('aria-hidden', 'true');
@@ -1587,352 +1882,306 @@ export class MoreDrawer {
                 layout.onToggleAutosave?.(!on);
                 this.render();
             });
-            list.appendChild(auto);
+            pane.appendChild(auto);
         }
-        // A phone's first screen gets the newest few; the rest is one tap away and
-        // expands in place — no second surface, no "see all" page to come back from.
-        const COLLAPSE_AT = 3;
-        const shown = this.layoutsExpanded || rows.length <= COLLAPSE_AT ? rows : rows.slice(0, COLLAPSE_AT);
+
         if (rows.length === 0) {
             const empty = doc.createElement('div');
             empty.className = 'vela-md-hint';
             empty.textContent = 'No saved layouts yet — name one below and the whole grid is kept.';
-            list.appendChild(empty);
+            pane.appendChild(empty);
         }
+
+        const COLLAPSE_AT = 3;
+        const shown = this.layoutsExpanded || rows.length <= COLLAPSE_AT ? rows : rows.slice(0, COLLAPSE_AT);
         for (const l of shown) {
-            const rowEl = doc.createElement('div');
-            rowEl.className = 'vela-md-row vela-md-saved';
-            if (l.active) rowEl.dataset.checked = '1';
-            // The preview, when one was captured: the quickest way to know which
-            // layout a name stands for.
+            const row = doc.createElement('div');
+            row.className = 'vela-md-lrow';
+            row.dataset.layout = l.name;
+            if (l.active) row.dataset.active = '1';
+            const main = doc.createElement('button');
+            main.type = 'button';
+            main.className = 'vela-md-lmain';
+            main.setAttribute('aria-label', `Open layout ${l.name}`);
             if (typeof l.thumb === 'string' && l.thumb.startsWith('data:image/')) {
                 const img = doc.createElement('img');
-                img.className = 'vela-md-savedthumb';
+                img.className = 'vela-md-lthumb';
                 img.src = l.thumb;
                 img.alt = '';
                 img.loading = 'lazy';
                 img.decoding = 'async';
-                rowEl.appendChild(img);
+                main.appendChild(img);
             }
-            // Name and facts share ONE column: on 390 px a row cannot afford two
-            // separate text runs and four buttons side by side.
             const text = doc.createElement('span');
-            text.className = 'vela-md-savedtext';
-            const label = doc.createElement('span');
-            label.className = 'vela-md-row-label';
-            label.textContent = l.name;
-            if (typeof l.savedAt === 'number' && l.savedAt > 0) {
-                label.title = `Saved ${new Date(l.savedAt).toLocaleString()}`;
-            }
+            text.className = 'vela-md-ltext';
+            const name = doc.createElement('b');
+            name.textContent = l.name;
             if (l.dirty) {
                 const dot = doc.createElement('span');
-                dot.className = 'vela-lp-dot';
-                dot.setAttribute('aria-label', 'Unsaved changes');
-                dot.title = 'Unsaved changes';
-                label.appendChild(dot);
+                dot.className = 'vela-md-dot';
+                dot.setAttribute('aria-hidden', 'true');
+                name.prepend(dot);
             }
-            text.appendChild(label);
-            // Facts, not decoration: two layouts called "Scalp" are told apart by size.
-            if (typeof l.charts === 'number' || typeof l.indicators === 'number') {
-                const bits: string[] = [];
-                if (typeof l.charts === 'number') bits.push(`${l.charts} chart${l.charts === 1 ? '' : 's'}`);
-                if (typeof l.indicators === 'number') bits.push(`${l.indicators} ind`);
-                const sub = doc.createElement('span');
-                sub.className = 'vela-md-savedmeta';
-                sub.textContent = bits.join(' · ');
-                text.appendChild(sub);
+            text.appendChild(name);
+            const bits: string[] = [];
+            if (typeof l.charts === 'number') bits.push(`${l.charts} chart${l.charts === 1 ? '' : 's'}`);
+            if (typeof l.indicators === 'number') bits.push(`${l.indicators} ind`);
+            if (typeof l.savedAt === 'number' && l.savedAt > 0) bits.push(agoLabel(l.savedAt));
+            if (bits.length > 0) {
+                const meta = doc.createElement('small');
+                meta.className = 'vela-md-lmeta';
+                meta.textContent = bits.join(' · ');
+                text.appendChild(meta);
             }
-            rowEl.appendChild(text);
-            const open = doc.createElement('button');
-            open.type = 'button';
-            open.className = 'vela-md-saved-open';
-            open.textContent = 'Open';
-            open.addEventListener('click', () => {
-                layout.onOpenLayout?.(l.name);
-                this.drawer.hide();
-            });
-            rowEl.append(open);
-            if (layout.onRenameLayout) {
-                const ren = doc.createElement('button');
-                ren.type = 'button';
-                ren.className = 'vela-md-saved-del'; // same 34px hit target as delete
-                ren.setAttribute('aria-label', `Rename layout ${l.name}`);
-                ren.title = `Rename “${l.name}”`;
-                ren.appendChild(iconEl('pen', doc));
-                ren.addEventListener('click', () => {
-                    const input = doc.createElement('input');
-                    input.type = 'text';
-                    input.className = 'vela-md-rename';
-                    input.value = l.name;
-                    input.setAttribute('aria-label', `Rename ${l.name}`);
-                    let done = false;
-                    const finish = (allowRetry: boolean): void => {
-                        if (done) return;
-                        const to = input.value.trim();
-                        if (!to || to === l.name) {
-                            done = true;
-                            this.render();
-                            return;
-                        }
-                        const ok = layout.onRenameLayout?.(l.name, to) ?? false;
-                        if (ok || !allowRetry) {
-                            done = true;
-                            this.render();
-                            return;
-                        }
-                        input.dataset.refused = to; // taken: stay editable, say why
-                        input.title = `“${to}” is already used — pick another name`;
-                        input.focus();
-                        input.select();
-                    };
-                    input.addEventListener('keydown', (e) => {
-                        if (e.key === 'Enter') {
-                            e.preventDefault();
-                            finish(true);
-                        } else if (e.key === 'Escape') {
-                            e.preventDefault();
-                            done = true;
-                            this.render();
-                        }
-                    });
-                    input.addEventListener('blur', () => finish(false));
-                    label.replaceWith(input);
-                    input.focus();
-                    input.select();
-                });
-                rowEl.append(ren);
-            }
-            if (layout.onDuplicateLayout) {
-                const dup = doc.createElement('button');
-                dup.type = 'button';
-                dup.className = 'vela-md-saved-del';
-                dup.setAttribute('aria-label', `Duplicate layout ${l.name}`);
-                dup.title = `Duplicate “${l.name}”`;
-                dup.appendChild(iconEl('clone', doc));
-                dup.addEventListener('click', () => {
-                    layout.onDuplicateLayout?.(l.name);
+            main.appendChild(text);
+            main.addEventListener('click', () => layout.onOpenLayout?.(l.name));
+            row.appendChild(main);
+            row.appendChild(
+                this.kebab(doc, `Actions for ${l.name}`, this.openRow === `L:${l.name}`, () => {
+                    this.openRow = this.openRow === `L:${l.name}` ? null : `L:${l.name}`;
+                    this.saveField = null;
                     this.render();
-                });
-                rowEl.append(dup);
+                }),
+            );
+            pane.appendChild(row);
+
+            if (this.openRow === `L:${l.name}`) {
+                pane.appendChild(
+                    this.actionsStrip(
+                        doc,
+                        [
+                            ...(layout.onRenameLayout ? [{ label: 'Rename', run: () => this.rowRename(doc, row, l.name, layout.onRenameLayout ?? (() => false), () => { this.openRow = null; this.render(); }) }] : []),
+                            ...(layout.onDuplicateLayout ? [{ label: 'Duplicate', run: () => { this.openRow = null; layout.onDuplicateLayout?.(l.name); this.render(); } }] : []),
+                            ...(layout.onExportLayout ? [{ label: 'Export', run: () => { const json = layout.onExportLayout?.(l.name); if (json) downloadText(doc, `${l.name}.vela-layout.json`, json); } }] : []),
+                            ...(layout.onDeleteLayout ? [{ label: 'Delete', danger: true, run: () => { this.openRow = null; layout.onDeleteLayout?.(l.name); this.render(); } }] : []),
+                        ].map((e) => ({ ...e })),
+                    ),
+                );
             }
-            if (layout.onDeleteLayout) {
-                const del = doc.createElement('button');
-                del.type = 'button';
-                del.className = 'vela-md-saved-del';
-                del.setAttribute('aria-label', `Delete layout ${l.name}`);
-                del.appendChild(iconEl('trash', doc));
-                del.addEventListener('click', () => {
-                    layout.onDeleteLayout?.(l.name);
-                    this.render();
-                });
-                rowEl.append(del);
-            }
-            list.appendChild(rowEl);
         }
+
         if (rows.length > COLLAPSE_AT) {
             const more = doc.createElement('button');
             more.type = 'button';
-            more.className = 'vela-md-row vela-md-showall';
+            more.className = 'vela-md-more';
             more.setAttribute('aria-expanded', String(this.layoutsExpanded));
-            const label = doc.createElement('span');
-            label.className = 'vela-md-row-label';
-            label.textContent = this.layoutsExpanded ? 'Show fewer' : `Show all ${rows.length} layouts`;
-            more.appendChild(label);
-            more.appendChild(iconEl('chevron-right', doc));
+            more.textContent = this.layoutsExpanded ? 'Show fewer' : `Show all ${rows.length} layouts`;
+            more.appendChild(iconEl('chevron-down', doc));
             more.addEventListener('click', () => {
                 this.layoutsExpanded = !this.layoutsExpanded;
+                this.openRow = null;
                 this.render();
             });
-            list.appendChild(more);
+            pane.appendChild(more);
         }
+
+        // ── save ─────────────────────────────────────────────────────────────
         if (layout.onSaveLayout) {
-            // TV's "Save layout as…": a name field, not a numbered default — the layout
-            // list IS the name picker when you come back to it.
-            const save = doc.createElement('div');
-            save.className = 'vela-md-saveas';
-            const input = doc.createElement('input');
-            input.type = 'text';
-            input.placeholder = `Save layout as… (Layout ${rows.length + 1})`;
-            input.setAttribute('aria-label', 'Save layout as');
-            const button = doc.createElement('button');
-            button.type = 'button';
-            button.textContent = 'Save';
-            button.addEventListener('click', () => {
-                const name = input.value.trim() || `Layout ${rows.length + 1}`;
-                if (layout.onSaveLayoutWithThumb) layout.onSaveLayoutWithThumb(name);
-                else layout.onSaveLayout?.(name);
-                this.render();
-            });
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') button.click();
-            });
-            save.append(input, button);
-            list.appendChild(save);
+            if (this.saveField === 'layout') {
+                const form = doc.createElement('div');
+                form.className = 'vela-md-saveas';
+                const input = doc.createElement('input');
+                input.type = 'text';
+                input.placeholder = `Name (Layout ${rows.length + 1})`;
+                input.setAttribute('aria-label', 'Save layout as');
+                const button = doc.createElement('button');
+                button.type = 'button';
+                button.textContent = 'Save';
+                const commit = (): void => {
+                    const name = input.value.trim();
+                    if (!name) return;
+                    this.saveField = null;
+                    layout.onSaveLayout?.(name);
+                    this.render();
+                };
+                button.addEventListener('click', commit);
+                input.addEventListener('keydown', (e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter') commit();
+                    if (e.key === 'Escape') {
+                        this.saveField = null;
+                        this.render();
+                    }
+                });
+                form.append(input, button);
+                pane.appendChild(form);
+                input.focus();
+            } else {
+                pane.appendChild(
+                    this.ghostButton(doc, 'plus', 'Save as new layout', () => {
+                        this.saveField = 'layout';
+                        this.openRow = null;
+                        this.render();
+                    }),
+                );
+            }
         }
         if (layout.onImportLayout) {
-            const imp = doc.createElement('button');
-            imp.type = 'button';
-            imp.className = 'vela-md-import';
-            imp.textContent = 'Import layout file…';
-            imp.setAttribute('aria-label', 'Import a layout snapshot from a JSON file');
-            imp.addEventListener('click', () => {
-                const picker = doc.createElement('input');
-                picker.type = 'file';
-                picker.accept = 'application/json,.json,.vela';
-                picker.style.display = 'none';
-                picker.addEventListener('change', () => {
-                    const file = picker.files?.[0];
-                    picker.remove();
-                    if (!file) return;
-                    void file.text().then((text) => {
-                        if (layout.onImportLayout?.(text)) this.render();
-                    });
-                });
-                doc.body.appendChild(picker);
-                picker.click();
-            });
-            list.appendChild(imp);
+            pane.appendChild(this.fileButton(doc, 'layout', layout.onImportLayout));
         }
     }
 
-    /**
-     * Chart templates in the phone sheet — the same contract as the desktop card:
-     * applying REPLACES a chart's indicators (drawings never travel), the market is
-     * opt-in, and a multi-chart layout chooses between "this chart" and "all charts".
-     */
-    private renderTemplates(doc: Document, list: HTMLElement, layout: NonNullable<MoreDrawerOptions['layout']>): void {
-        const save = layout.onSaveTemplate;
-        const listTemplates = layout.templates;
-        if (!save || !listTemplates) return;
-        const heading = doc.createElement('div');
-        heading.className = 'vela-md-section';
-        heading.textContent = 'Chart templates';
-        list.appendChild(heading);
-        const templates = listTemplates();
+    /** Indicator templates: tap to apply, `⋯` to manage. */
+    private renderTemplatesPane(doc: Document, pane: HTMLElement, layout: NonNullable<MoreDrawerOptions['layout']>): void {
+        const templates = layout.templates?.() ?? [];
         if (templates.length === 0) {
             const empty = doc.createElement('div');
-            empty.className = 'vela-md-section';
-            empty.style.cssText = 'text-transform:none;letter-spacing:0;font-size:12px;color:var(--vela-fg-faint);padding:0 0 6px;';
-            empty.textContent = 'None yet — save the active chart’s indicators below.';
-            list.appendChild(empty);
+            empty.className = 'vela-md-hint';
+            empty.textContent = 'No templates yet — save this chart’s indicators below and they re-skin any chart.';
+            pane.appendChild(empty);
         }
         for (const t of templates) {
             const row = doc.createElement('div');
-            row.className = 'vela-md-row vela-md-tpl';
-            const label = doc.createElement('span');
-            label.className = 'vela-md-row-label';
-            const meta = doc.createElement('span');
-            meta.className = 'vela-md-tplmeta';
-            meta.textContent = `${t.count} indicator${t.count === 1 ? '' : 's'}${t.symbol ? ` · ${t.symbol}` : ''}`;
-            label.append(doc.createTextNode(t.name), meta);
-            // The house template, on the phone too: a star BEFORE the name (a phone row
-            // cannot afford a fifth button on the right), filled when it seeds new charts.
+            row.className = 'vela-md-lrow';
+            row.dataset.template = t.name;
+            if (layout.defaultTemplate?.() === t.name) row.dataset.house = '1';
+            const main = doc.createElement('button');
+            main.type = 'button';
+            main.className = 'vela-md-lmain';
+            main.setAttribute('aria-label', `Apply template ${t.name} to this chart`);
+            const text = doc.createElement('span');
+            text.className = 'vela-md-ltext';
+            const name = doc.createElement('b');
+            name.textContent = t.name;
+            text.appendChild(name);
+            const meta = doc.createElement('small');
+            meta.className = 'vela-md-lmeta';
+            // "tap to apply" is not decoration: the row has no chevron and no Apply
+            // button, so the meta line is the only place that says what a tap does.
+            meta.textContent = `${t.count} indicator${t.count === 1 ? '' : 's'}${t.symbol ? ` · ${t.symbol}` : ''} · tap to apply`;
+            text.appendChild(meta);
+            main.appendChild(text);
+            main.addEventListener('click', () => {
+                layout.onApplyTemplate?.(t.name, 'active');
+                this.drawer.hide();
+            });
+            row.appendChild(main);
+            // The house template is a STATE, so it is a star, not a verb in the menu.
             if (layout.onSetDefaultTemplate) {
                 const isDefault = layout.defaultTemplate?.() === t.name;
                 const star = doc.createElement('button');
                 star.type = 'button';
-                star.className = 'vela-md-tplstar';
+                star.className = 'vela-md-star';
                 star.dataset.on = isDefault ? '1' : '0';
                 star.setAttribute('aria-pressed', String(isDefault));
-                star.setAttribute(
-                    'aria-label',
-                    isDefault ? `${t.name} already seeds new charts — turn off` : `Start new charts with ${t.name}`,
-                );
-                star.title = star.getAttribute('aria-label') ?? '';
+                const label = isDefault ? `${t.name} seeds new charts — turn off` : `Start new charts with ${t.name}`;
+                star.setAttribute('aria-label', label);
+                star.title = label;
                 star.appendChild(iconEl(isDefault ? 'star-filled' : 'star', doc));
-                star.addEventListener('click', () => {
+                star.addEventListener('click', (e) => {
+                    e.stopPropagation();
                     layout.onSetDefaultTemplate?.(isDefault ? null : t.name);
                     this.render();
                 });
-                row.append(star);
+                row.appendChild(star);
             }
-            row.append(label);
-            const here = doc.createElement('button');
-            here.type = 'button';
-            here.className = 'vela-md-saved-open';
-            here.textContent = 'This chart';
-            here.setAttribute('aria-label', `Apply template ${t.name} to the active chart`);
-            here.addEventListener('click', () => {
-                layout.onApplyTemplate?.(t.name, 'active');
-                this.drawer.hide();
-            });
-            row.append(here);
-            if ((layout.charts?.() ?? []).length > 1) {
-                const all = doc.createElement('button');
-                all.type = 'button';
-                all.className = 'vela-md-saved-open';
-                all.textContent = 'All';
-                all.setAttribute('aria-label', `Apply template ${t.name} to every chart`);
-                all.addEventListener('click', () => {
-                    layout.onApplyTemplate?.(t.name, 'all');
-                    this.drawer.hide();
-                });
-                row.append(all);
-            }
-            if (layout.onDeleteTemplate) {
-                const del = doc.createElement('button');
-                del.type = 'button';
-                del.className = 'vela-md-saved-del';
-                del.setAttribute('aria-label', `Delete template ${t.name}`);
-                del.appendChild(iconEl('trash', doc));
-                del.addEventListener('click', () => {
-                    layout.onDeleteTemplate?.(t.name);
+            row.appendChild(
+                this.kebab(doc, `Actions for ${t.name}`, this.openRow === `T:${t.name}`, () => {
+                    this.openRow = this.openRow === `T:${t.name}` ? null : `T:${t.name}`;
+                    this.saveField = null;
                     this.render();
-                });
-                row.append(del);
+                }),
+            );
+            pane.appendChild(row);
+            if (this.openRow === `T:${t.name}`) {
+                pane.appendChild(
+                    this.actionsStrip(doc, [
+                        ...((layout.charts?.() ?? []).length > 1 && layout.onApplyTemplate
+                            ? [{ label: 'Apply to all charts', run: () => { this.openRow = null; layout.onApplyTemplate?.(t.name, 'all'); this.drawer.hide(); } }]
+                            : []),
+                        ...(layout.onExportTemplate ? [{ label: 'Export', run: () => { const json = layout.onExportTemplate?.(t.name); if (json) downloadText(doc, `${t.name}.vela-template.json`, json); } }] : []),
+                        ...(layout.onDeleteTemplate ? [{ label: 'Delete', danger: true, run: () => { this.openRow = null; layout.onDeleteTemplate?.(t.name); this.render(); } }] : []),
+                    ]),
+                );
             }
-            list.appendChild(row);
         }
-        // Save: name + the opt-in market chip (unchecked by default, like the docs).
-        const form = doc.createElement('div');
-        form.className = 'vela-md-saveas';
-        const input = doc.createElement('input');
-        input.type = 'text';
-        input.placeholder = 'Save indicators as…';
-        input.setAttribute('aria-label', 'Save chart template as');
-        const chip = doc.createElement('label');
-        chip.className = 'vela-md-tplmarket';
-        const box = doc.createElement('input');
-        box.type = 'checkbox';
-        const chipText = doc.createElement('span');
-        chipText.textContent = 'market';
-        chip.append(box, chipText);
-        const button = doc.createElement('button');
-        button.type = 'button';
-        button.textContent = 'Save';
-        button.addEventListener('click', () => {
-            const name = input.value.trim();
-            if (!name) return;
-            if (save(name, box.checked)) this.render();
-        });
-        input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') button.click();
-        });
-        form.append(input, chip, button);
-        list.appendChild(form);
-        if (layout.onImportTemplate) {
-            const imp = doc.createElement('button');
-            imp.type = 'button';
-            imp.className = 'vela-md-import';
-            imp.textContent = 'Import template file…';
-            imp.addEventListener('click', () => {
-                const picker = doc.createElement('input');
-                picker.type = 'file';
-                picker.accept = 'application/json,.json';
-                picker.style.display = 'none';
-                picker.addEventListener('change', () => {
-                    const file = picker.files?.[0];
-                    picker.remove();
-                    if (!file) return;
-                    void file.text().then((text) => {
-                        if (layout.onImportTemplate?.(text)) this.render();
-                    });
+
+        if (layout.onSaveTemplate) {
+            if (this.saveField === 'template') {
+                const form = doc.createElement('div');
+                form.className = 'vela-md-saveas';
+                const input = doc.createElement('input');
+                input.type = 'text';
+                input.placeholder = 'Template name';
+                input.setAttribute('aria-label', 'Save chart template as');
+                const chip = doc.createElement('label');
+                chip.className = 'vela-md-tplmarket';
+                chip.title = 'Also store the symbol and timeframe';
+                const box = doc.createElement('input');
+                box.type = 'checkbox';
+                const chipText = doc.createElement('span');
+                chipText.textContent = 'market';
+                chip.append(box, chipText);
+                const button = doc.createElement('button');
+                button.type = 'button';
+                button.textContent = 'Save';
+                const commit = (): void => {
+                    const name = input.value.trim();
+                    if (!name) return;
+                    this.saveField = null;
+                    layout.onSaveTemplate?.(name, box.checked);
+                    this.render();
+                };
+                button.addEventListener('click', commit);
+                input.addEventListener('keydown', (e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter') commit();
+                    if (e.key === 'Escape') {
+                        this.saveField = null;
+                        this.render();
+                    }
                 });
-                doc.body.appendChild(picker);
-                picker.click();
-            });
-            list.appendChild(imp);
+                form.append(input, chip, button);
+                pane.appendChild(form);
+                input.focus();
+            } else {
+                pane.appendChild(
+                    this.ghostButton(doc, 'plus', 'Save indicators as template', () => {
+                        this.saveField = 'template';
+                        this.openRow = null;
+                        this.render();
+                    }),
+                );
+            }
         }
+        if (layout.onImportTemplate) pane.appendChild(this.fileButton(doc, 'template', layout.onImportTemplate));
+    }
+
+    /** A quiet full-width “+ something” row — the entry point to a save form. */
+    private ghostButton(doc: Document, icon: string, label: string, run: () => void): HTMLElement {
+        const b = doc.createElement('button');
+        b.type = 'button';
+        b.className = 'vela-md-lghost';
+        b.appendChild(iconEl(icon, doc));
+        b.appendChild(doc.createTextNode(label));
+        b.addEventListener('click', () => run());
+        return b;
+    }
+
+    /** Import a JSON file; the picker lives in the body so iOS can open it. */
+    private fileButton(doc: Document, kind: 'layout' | 'template', apply: (json: string) => unknown): HTMLElement {
+        const b = doc.createElement('button');
+        b.type = 'button';
+        b.className = 'vela-md-lghost vela-md-limport';
+        b.appendChild(iconEl('upload', doc));
+        b.appendChild(doc.createTextNode(kind === 'layout' ? 'Import layout file' : 'Import template file'));
+        b.addEventListener('click', () => {
+            const picker = doc.createElement('input');
+            picker.type = 'file';
+            picker.accept = 'application/json,.json';
+            picker.style.display = 'none';
+            picker.addEventListener('change', () => {
+                const file = picker.files?.[0];
+                picker.remove();
+                if (!file) return;
+                void file.text().then((text) => {
+                    if (apply(text)) this.render();
+                });
+            });
+            doc.body.appendChild(picker);
+            picker.click();
+        });
+        return b;
     }
 
     private renderAlerts(doc: Document): void {

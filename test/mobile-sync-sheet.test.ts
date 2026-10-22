@@ -296,7 +296,7 @@ describe('the kebab drawer’s Sync view', () => {
         drawer.destroy();
     });
 
-    it('saved layouts get Open + Delete buttons and the Save-as field', () => {
+    it('a saved row is one tap to open and one kebab to manage', () => {
         const host = document.createElement('div');
         document.body.append(host);
         const opened: string[] = [];
@@ -326,20 +326,76 @@ describe('the kebab drawer’s Sync view', () => {
         // The library lives on the FIRST screen now (TradingView puts its layout verbs
         // up front too) — the Layout pane is the grid and its links, nothing else.
         drawer.open('main');
-        const rows = [...document.querySelectorAll<HTMLElement>('.vela-md-saved')];
-        expect(rows.map((r) => r.querySelector('.vela-md-row-label')?.textContent)).toEqual(['Scalp', 'Swing']);
-        (rows[1]!.querySelector('.vela-md-saved-open') as HTMLElement).click();
+        const rows = [...document.querySelectorAll<HTMLElement>('.vela-md-lrow')];
+        expect(rows.map((r) => r.querySelector('.vela-md-ltext b')?.textContent)).toEqual(['Scalp', 'Swing']);
+        // The row ITSELF is the open verb — no per-row Open button to hunt for.
+        (rows[1]!.querySelector('.vela-md-lmain') as HTMLElement).click();
         expect(opened).toEqual(['Swing']);
-        (rows[0]!.querySelector('.vela-md-saved-del') as HTMLElement).click();
+        // Delete is one level in, behind the kebab, and the verbs are words, not icons.
+        (rows[0]!.querySelector('.vela-md-lkebab') as HTMLElement).click();
+        const acts = [...document.querySelectorAll<HTMLElement>('.vela-md-lact')];
+        expect(acts.map((a) => a.textContent)).toContain('Delete');
+        acts.find((a) => a.textContent === 'Delete')!.click();
         expect(deleted).toEqual(['Scalp']);
+        // Saving unfolds a field instead of parking an input on every screen.
+        expect(document.querySelector('.vela-md-saveas')).toBeNull();
+        (document.querySelector('.vela-md-lghost') as HTMLElement).click();
         const input = document.querySelector<HTMLInputElement>('.vela-md-saveas input')!;
+        // The unfolded field takes focus, or the phone keyboard never comes up and the
+        // "unfold instead of parking an input" idea turns into an extra tap.
+        expect(document.activeElement).toBe(input);
         input.value = 'Breakout';
         (document.querySelector('.vela-md-saveas button') as HTMLElement).click();
         expect(saved).toEqual(['Breakout']);
         // The Layout tab must not repeat the library — two homes for one list is how a
         // "move it to main" turns into "it is in both places and they disagree".
         drawer.open('layout');
-        expect(document.querySelectorAll('.vela-md-saved')).toHaveLength(0);
+        expect(document.querySelectorAll('.vela-md-lrow')).toHaveLength(0);
+        drawer.destroy();
+    });
+
+    it('transient library state (kebab, rename field, save form) dies when the sheet closes', () => {
+        const host = document.createElement('div');
+        document.body.append(host);
+        const saved: string[] = [];
+        const drawer = new MoreDrawer({
+            host,
+            canUndo: () => false,
+            canRedo: () => false,
+            priceStyles: () => [{ id: 'candles', label: 'Candles' }],
+            priceStyle: () => 'candles',
+            onPriceStyle: () => {},
+            panels: () => [],
+            onTogglePanel: () => {},
+            actions: () => [],
+            layout: {
+                shape: () => ({ rows: 2, cols: 2 }),
+                presets: () => [],
+                onSelectGrid: () => {},
+                onSelectPreset: () => {},
+                savedLayouts: () => [{ name: 'Scalp', active: true }],
+                onSaveLayout: (n) => saved.push(n),
+                onDeleteLayout: () => {},
+            },
+        });
+        drawer.open('main');
+        (document.querySelector('.vela-md-lkebab') as HTMLElement).click();
+        expect(document.querySelector('.vela-md-lkebab')?.getAttribute('aria-expanded')).toBe('true');
+        (document.querySelector('.vela-md-lghost') as HTMLElement).click();
+        expect(document.querySelector('.vela-md-saveas')).not.toBeNull();
+        // Escape backs out of the form only — the sheet (and its scroll position) stays.
+        const field = document.querySelector<HTMLInputElement>('.vela-md-saveas input')!;
+        field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(document.querySelector('.vela-md-saveas')).toBeNull();
+        expect(document.querySelector('.vela-md-lrow')).not.toBeNull();
+        // Re-opening starts clean: no stranded action strip, no half-open form.
+        (document.querySelector('.vela-md-lghost') as HTMLElement).click();
+        expect(document.querySelector('.vela-md-saveas')).not.toBeNull();
+        drawer.open('layout');
+        drawer.open('main');
+        expect(document.querySelector('.vela-md-saveas')).toBeNull();
+        expect(document.querySelectorAll('.vela-md-lact')).toHaveLength(0);
+        expect(saved).toEqual([]);
         drawer.destroy();
     });
 
@@ -380,16 +436,20 @@ describe('the kebab drawer’s Sync view', () => {
         });
         drawer.open('main');
         // The open layout, its drift and its one-tap write.
-        expect(document.querySelector('.vela-md-open')?.textContent).toBe('Aunsaved changesSave');
+        expect(document.querySelector('.vela-md-lopen')?.textContent).toBe('Aunsaved changesSave');
         expect(document.querySelector('.vela-md-switchrow')?.getAttribute('aria-checked')).toBe('false');
         // Three rows, then an honest expander — not a truncated list with no way on.
-        expect(document.querySelectorAll('.vela-md-saved')).toHaveLength(3);
-        const more = document.querySelector<HTMLElement>('.vela-md-showall')!;
+        expect(document.querySelectorAll('.vela-md-lrow')).toHaveLength(3);
+        const more = document.querySelector<HTMLElement>('.vela-md-more')!;
         expect(more.textContent).toContain('Show all 4 layouts');
         more.click();
-        expect(document.querySelectorAll('.vela-md-saved')).toHaveLength(4);
+        expect(document.querySelectorAll('.vela-md-lrow')).toHaveLength(4);
+        // The other half of the library is a TOGGLE stop, not another heading below.
+        (document.querySelector<HTMLElement>('.vela-md-segbtn[data-tab="templates"]')!).click();
+        expect(document.querySelectorAll('.vela-md-lrow')).toHaveLength(1);
+        expect(document.querySelector('.vela-md-ltext b')?.textContent).toBe('Trend');
         // The house template is a star on this screen too.
-        const star = document.querySelector<HTMLElement>('.vela-md-tplstar')!;
+        const star = document.querySelector<HTMLElement>('.vela-md-star')!;
         expect(star.getAttribute('aria-pressed')).toBe('false');
         star.click();
         expect(house).toEqual(['Trend']);

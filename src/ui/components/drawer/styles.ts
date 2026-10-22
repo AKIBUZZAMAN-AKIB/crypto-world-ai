@@ -34,6 +34,18 @@ export const DRAWER_CSS = `
     overflow: hidden;
     outline: none;
 }
+/* A phone sheet stretched across a 1280 px window is an empty room. Past tablet width
+   every drawer keeps a dialog's column and stays centred (the ~420 px TradingView uses)
+   — the same component, just not inflated by the viewport. */
+@media (min-width: 720px) {
+    .vela-drawer {
+        width: 420px;
+        max-height: 78%;
+        margin-bottom: 32px;
+        border-bottom: 1px solid var(--vela-border-strong);
+        border-radius: 16px;
+    }
+}
 .vela-drawer[data-state='open'] { animation: vela-drawer-in var(--vela-dur-med) var(--vela-ease); }
 @keyframes vela-drawer-in {
     from { transform: translateY(100%); }
