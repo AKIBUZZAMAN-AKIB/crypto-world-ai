@@ -249,8 +249,9 @@ export const SYNC_MATRIX_CSS = `
        reading, and it is what makes a 500 ms long press land on the chip rather than on
        its neighbour. */
     .vela-md-matrix { --vela-sx-cell: 44px; }
-    .vela-md-chip { min-height: 40px; }
-    .vela-md-chip { touch-action: manipulation; }
+    .vela-md-chip { min-height: 44px; touch-action: manipulation; }
+    /* Column headers select a chart — a tap target, so they take the cell height too. */
+    .vela-md-matrix-head { height: 44px; }
 }
 `;
 

@@ -16,6 +16,36 @@ import { groupMarkColor } from '../workspace/sync-marks';
 
 const STYLE_ID = 'vela-widget-more-drawer';
 const CSS = `
+/* Share: the hero card's one action. 44px tall, so it is a thumb target even though it
+   sits inside a card; the copied state flips the ink and the label for 1.6 s. */
+.vela-md-share {
+    all: unset;
+    flex: none;
+    align-self: center;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    border: 1px solid var(--vela-border);
+    color: var(--vela-fg);
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-share .vela-icon { font-size: 15px; width: 15px; height: 15px; }
+.vela-md-share:active { background: var(--vela-hover); }
+.vela-md-share[data-copied='1'] { color: var(--vela-up); border-color: color-mix(in srgb, var(--vela-up) 55%, transparent); }
+.vela-md-share[data-copied='0'] { color: var(--vela-down); border-color: color-mix(in srgb, var(--vela-down) 55%, transparent); }
+@media (pointer: coarse) {
+    .vela-md-share { height: 44px; padding: 0 14px; font-size: 13.5px; }
+    /* The sheet's tab bar is navigation, not a caption: a thumb needs the full 44.
+       Scoped to .vela-md-nav so it beats the later base rule regardless of source order. */
+    .vela-md-nav .vela-md-navbtn { min-height: 44px; }
+}
 .vela-md-actions {
     display: flex;
     gap: 6px;
@@ -614,6 +644,17 @@ export interface MoreDrawerOptions {
     onTogglePanel: (id: string) => void;
     /** Omitted ⇒ no Alerts row (composition removed `'alerts'`). */
     alerts?: () => Array<{ title: string; message: string; time: number }>;
+    /** "Reset chart view" — the desktop chart-body menu's one row a phone has no other
+     *  door to (right-click is the crosshair hold here). Omitted ⇒ no row. */
+    onResetView?: () => void;
+    /** The display time zone, read live at open — the row's value. */
+    timezone?: () => string;
+    /** Opens the timezone overflow sheet (the same one a hold on the time axis opens).
+     *  Omitted ⇒ no Time zone row. */
+    onTimeZone?: () => void;
+    /** The desktop chart-body menu (Reset · syncing · apply-to-all · clear · settings) as
+     *  a sheet. Omitted ⇒ no "Chart actions…" row. */
+    onChartMenu?: () => void;
     /** Contributed topbar actions, projected as plain rows at the end of the list. */
     actions: () => MoreDrawerAction[];
     /** Contributed PRIMARY actions (left cluster, menu-placed) — rows right after Layout. */
@@ -687,6 +728,9 @@ export interface MoreDrawerOptions {
         /** The current layout's 16px glyph (`<svg>` markup) for the Layout row. Omitted
          *  ⇒ the registered `'layout'` icon. */
         glyph?: () => string;
+        /** Copy the workspace share link — the phone's twin of the desktop card's chain
+         *  button. Resolves null when the clipboard refuses (the caller reports why). */
+        onShareLink?: () => Promise<string | null>;
     };
     onOpenChange?: (open: boolean) => void;
 }
@@ -827,6 +871,45 @@ export class MoreDrawer {
                 }),
             );
         }
+        if (this.opts.onResetView) {
+            list.appendChild(
+                this.row(doc, 'Reset chart view', {
+                    icon: 'reset',
+                    onClick: () => {
+                        this.opts.onResetView?.();
+                        this.drawer.hide();
+                    },
+                }),
+            );
+        }
+        // Two more doors a phone otherwise only finds by accident: the chart body's own
+        // menu (a desktop right-click) and the display time zone (a long-press on the time
+        // axis). Both open their own sheet, so this one closes first — two stacked
+        // backdrops would leave the user tapping through a ghost surface.
+        if (this.opts.onChartMenu) {
+            list.appendChild(
+                this.row(doc, 'Chart actions…', {
+                    icon: 'more',
+                    onClick: () => {
+                        this.drawer.hide();
+                        this.opts.onChartMenu?.();
+                    },
+                }),
+            );
+        }
+        if (this.opts.onTimeZone) {
+            list.appendChild(
+                this.row(doc, 'Time zone', {
+                    icon: 'clock',
+                    value: this.opts.timezone?.(),
+                    chevron: true,
+                    onClick: () => {
+                        this.drawer.hide();
+                        this.opts.onTimeZone?.();
+                    },
+                }),
+            );
+        }
         if (this.opts.alerts) {
             const alertCount = this.opts.alerts().length;
             list.appendChild(this.row(doc, 'Alerts', { icon: 'bell', value: alertCount > 0 ? String(alertCount) : undefined, chevron: true, onClick: () => this.show('alerts') }));
@@ -910,9 +993,35 @@ export class MoreDrawer {
         const heroTitle = doc.createElement('b');
         heroTitle.textContent = shape ? `${shape.cols} × ${shape.rows} grid` : (layout.presets().find((p) => p.checked)?.label ?? 'Layout');
         const heroSub = doc.createElement('small');
-        heroSub.textContent = `${charts.length || '?'} chart${charts.length === 1 ? '' : 's'} · ${on} link${on === 1 ? '' : 's'} on`;
+        const heroSummary = `${charts.length || '?'} chart${charts.length === 1 ? '' : 's'} · ${on} link${on === 1 ? '' : 's'} on`;
+        heroSub.textContent = heroSummary;
         heroText.append(heroTitle, heroSub);
         hero.append(heroGlyph, heroText);
+        if (layout.onShareLink) {
+            const share = doc.createElement('button');
+            share.type = 'button';
+            share.className = 'vela-md-share';
+            share.setAttribute('aria-label', 'Copy share link');
+            share.title = 'Copy a link to this whole workspace';
+            share.append(iconEl('link', doc), doc.createTextNode('Share'));
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            share.addEventListener('click', () => {
+                void (async () => {
+                    const url = await layout.onShareLink?.();
+                    if (timer) clearTimeout(timer);
+                    share.dataset.copied = url ? '1' : '0';
+                    share.setAttribute('aria-label', url ? 'Share link copied' : 'Could not copy the link');
+                    heroSub.textContent = url ? 'Link copied to the clipboard' : 'Could not copy — check the clipboard permission';
+                    timer = setTimeout(() => {
+                        delete share.dataset.copied;
+                        share.setAttribute('aria-label', 'Copy share link');
+                        heroSub.textContent = heroSummary; // the status is a beat, not a state
+                        timer = null;
+                    }, 1600);
+                })();
+            });
+            hero.append(share);
+        }
         list.append(hero);
 
         // ── sticky nav ─────────────────────────────────────────────────────────

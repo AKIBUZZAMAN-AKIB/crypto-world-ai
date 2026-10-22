@@ -87,6 +87,19 @@ const CSS = `
     font-size: var(--vela-font-size-md);
 }
 .vela-ip-trash:hover { color: var(--vela-down); background: var(--vela-hover); }
+.vela-ip-gear {
+    all: unset;
+    cursor: pointer;
+    color: var(--vela-fg-muted);
+    padding: 2px 4px;
+    border-radius: var(--vela-radius-sm);
+    font-size: var(--vela-font-size-md);
+}
+.vela-ip-gear:hover { color: var(--vela-fg-bright); background: var(--vela-hover); }
+@media (pointer: coarse) {
+    .vela-ip-row { min-height: 44px; padding: 0 6px; }
+    .vela-ip-gear, .vela-ip-trash { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
+}
 .vela-ip-empty { padding: var(--vela-space-3); color: var(--vela-fg-muted); text-align: center; }
 `;
 
@@ -97,6 +110,9 @@ export interface IndicatorPickerOptions {
     onChart: () => readonly IndicatorRow[];
     onAdd: (libraryIndex: number) => void;
     onRemove: (instanceIndex: number) => void;
+    /** Open ONE live instance's settings from its row. Omitted ⇒ no gear (a host whose
+     *  chart has no indicator settings surface keeps the plain remove-only row). */
+    onSettings?: (instanceIndex: number) => void;
     onOpenChange?: (open: boolean) => void;
     host?: HTMLElement;
 }
@@ -143,9 +159,15 @@ export class IndicatorPicker {
         });
         this.list.addEventListener('click', (e) => {
             const trash = (e.target as HTMLElement).closest<HTMLElement>('.vela-ip-trash');
+            const gear = (e.target as HTMLElement).closest<HTMLElement>('.vela-ip-gear');
             const row = (e.target as HTMLElement).closest<HTMLElement>('.vela-ip-row');
             if (!row) return;
-            if (trash) {
+            if (gear) {
+                // One dialog at a time: on a phone both are full-screen, and stacking the
+                // instance's form over the list leaves two ✕ buttons and no back.
+                this.close();
+                this.opts.onSettings?.(Number(row.dataset.instance));
+            } else if (trash) {
                 this.opts.onRemove(Number(row.dataset.instance));
             } else if (row.dataset.library !== undefined) {
                 this.opts.onAdd(Number(row.dataset.library));
@@ -202,6 +224,17 @@ export class IndicatorPicker {
                     badge.className = 'vela-ip-badge';
                     badge.textContent = badgeText;
                     row.appendChild(badge);
+                }
+                // The gear is the row's way into the instance's settings — the legend's own
+                // route is folded away on a phone grid, and the picker is where the user
+                // already is when they think about an indicator.
+                if (this.opts.onSettings) {
+                    const gear = doc.createElement('button');
+                    gear.className = 'vela-ip-gear';
+                    gear.appendChild(iconEl('gear', doc));
+                    gear.title = 'Indicator settings';
+                    gear.setAttribute('aria-label', `${r.name} settings`);
+                    row.appendChild(gear);
                 }
                 const trash = doc.createElement('button');
                 trash.className = 'vela-ip-trash';

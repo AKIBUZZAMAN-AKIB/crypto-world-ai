@@ -22,6 +22,7 @@ import { timeframeMs } from '../widget/timeframe';
 import { Watermark } from '../widget/watermark';
 import { CellControls } from '../widget/cell-controls';
 import { ChartContextMenu } from '../widget/context-menu';
+import { ChartMenuDrawer } from '../widget/chart-menu-drawer';
 import { WidgetHistory } from '../widget/history';
 import type { RangePreset } from '../widget/bottombar';
 import { indicatorLedger, ledgerEntryName, ledgerNativeType, type LedgerManifestEntry, type LedgerNativeEntry, type ResolvedIndicator } from '../widget/indicators';
@@ -266,6 +267,9 @@ export class ChartCell {
     /** Bottom-center hover cluster, pinned to the price plot: drag handle, zoom in/out, maximize/restore, reset view. */
     private readonly cellControls: CellControls;
     private readonly contextMenu: ChartContextMenu;
+    /** The chart-body menu as a bottom sheet — opened from the phone's More drawer
+     *  ("Chart actions…"): a long-press on the plot stays the crosshair. */
+    private chartMenu: ChartMenuDrawer | null = null;
     private readonly offMarket: () => void;
     /** The cell's durable market state — the seed vocabulary plus the venue mirror the
      *  persisted document carries (`provider` = the symbol's parsed prefix). */
@@ -1131,6 +1135,20 @@ export class ChartCell {
         }
     }
 
+    /** Open the chart-body menu sheet — the phone's door to the desktop right-click menu
+     *  (More drawer → "Chart actions…"). A long-press on the plot stays the crosshair. */
+    openChartMenu(): void {
+        this.chartMenu ??= new ChartMenuDrawer({
+            host: this.deps.dialogHost,
+            chart: () => this.inner,
+            resetView: () => this.resetView(),
+            ...(this.deps.applySettingsToAll ? { applySettingsToAll: () => this.deps.applySettingsToAll?.(this.id) } : {}),
+            ...(this.deps.openSyncGesture ? { chartSyncing: () => this.deps.openSyncGesture?.(this.id) } : {}),
+            getContext: () => this.deps.context(),
+        });
+        this.chartMenu.open();
+    }
+
     /** Reset this cell's view: re-enable auto scale and frame the full history —
      *  the same action the chart context menu offers. */
     resetView(): void {
@@ -1293,6 +1311,13 @@ export class ChartCell {
             const entry = this.manifest[index - natives.length];
             if (entry) this.addManifestInstance(entry);
         }
+    }
+
+    /** Open one live instance's settings dialog, by the same picker index onChartRows uses. */
+    openChartRowSettings(index: number): void {
+        const natives = this.nativeHandles();
+        const handle = index < natives.length ? natives[index] : this.instances[index - natives.length]?.handle;
+        if (handle) this.chart.renderer.openIndicatorSettings(handle.id);
     }
 
     /** Remove by picker ON-CHART index (native instances precede script instances — mirrors onChartRows). */
@@ -1637,6 +1662,8 @@ export class ChartCell {
         this.offMarket();
         this.cellControls.destroy();
         this.contextMenu.destroy();
+        this.chartMenu?.destroy();
+        this.chartMenu = null;
         this.history.destroy();
         this.marketStatus?.stop();
         this.sessionShading.stop();

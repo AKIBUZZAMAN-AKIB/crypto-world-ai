@@ -146,11 +146,19 @@ const CSS = `
     position: relative;
     -webkit-tap-highlight-color: transparent;
 }
-/* Invisible slop: the glyph stays 10px on screen, the finger gets 22px of height. */
+/* Invisible slop: the glyph stays 10px on screen, the finger gets a 24x30 hit box — the
+ * WCAG 2.5.8 floor at pointer precision. */
 .vela-statusline .vela-sl-marks::after {
     content: '';
     position: absolute;
-    inset: -6px -4px;
+    inset: -6px -5px;
+}
+/* Touch: the chip is 14px of glyph inside a 22px-tall clipped strip — a target no thumb
+ * can hit, and the strip's own overflow forbids growing it. On a phone the same verbs live
+ * in the Layout sheet (44px rows, one row per chart); the group letters painted on the
+ * chart still say who is linked, so nothing is lost by standing the chip down. */
+@media (pointer: coarse) {
+    .vela-statusline .vela-sl-marks { display: none; }
 }
 .vela-statusline .vela-sl-marks:active { background: var(--vela-hover); }
 .vela-statusline .vela-sl-marks[hidden] { display: none; }

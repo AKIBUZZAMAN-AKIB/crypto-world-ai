@@ -98,7 +98,9 @@ const STATUS_KEYFRAMES =
 const LEGEND_ICON_PX = 16;
 /** Equal hit target for every legend-row action (eye / gear / move / extras / ✕). Compact
  *  enough to sit on the title's line box so revealing the cluster does not grow the chip. */
-const LEGEND_CTL_PX = 18;
+// 24px: the WCAG 2.5.8 minimum target. The 16px glyph is unchanged, so the row still reads
+// as compact as before — only the hit area grew under the pointer.
+const LEGEND_CTL_PX = 24;
 const LEGEND_ROW_PAD_Y = 2;
 const LEGEND_ROW_PAD_X = 6;
 /** Inset of the legend column from the plot's left edge. */
@@ -679,7 +681,7 @@ export class InputsUI {
         // near-white count on a white chip. Extra margin-top clears the last indicator
         // title; the legend column's own 3px gap is too tight under a bordered chip.
         const ink = this.theme.textColor;
-        btn.style.cssText = `pointer-events:auto;display:inline-flex;align-items:center;gap:4px;background:${this.theme.background};color:${ink};border:1px solid ${this.theme.borderColor};border-radius:4px;padding:2px 6px;margin-top:6px;cursor:pointer;font:inherit;line-height:0;`;
+        btn.style.cssText = `pointer-events:auto;display:inline-flex;align-items:center;gap:4px;background:${this.theme.background};color:${ink};border:1px solid ${this.theme.borderColor};border-radius:4px;padding:3px 6px;margin-top:6px;cursor:pointer;font:inherit;line-height:0;`;
         btn.replaceChildren();
         const icon = document.createElement('span');
         // Slightly muted against the count — currentColor rides the button's ink.

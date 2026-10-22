@@ -49,11 +49,17 @@ const CSS = `
     opacity: 0;
     transform: translateY(4px);
     transition: opacity 120ms ease, transform 120ms ease;
-    pointer-events: auto;
+    /* The card floats OVER the thing it explains, and on a phone there is nowhere else to
+       put it: a 264px card over a 41px chip covers it. The card is therefore transparent to
+       the pointer — a press lands on the chip, which is exactly the action the hint is
+       asking for (and which dismisses it, see the anchor's pointerdown). Only the close
+       button takes input, so the hint is still dismissible by thumb. */
+    pointer-events: none;
 }
 .vela-tip[data-in] { opacity: 1; transform: none; }
 .vela-tip-arrow {
     position: fixed;
+    pointer-events: none;
     z-index: 2147481999;
     width: 9px;
     height: 9px;
@@ -77,6 +83,7 @@ const CSS = `
 }
 .vela-tip-x {
     all: unset;
+    pointer-events: auto;
     box-sizing: border-box;
     width: 22px;
     height: 22px;
@@ -111,6 +118,22 @@ export interface TipOptions {
 const GAP = 10;
 const MARGIN = 8;
 
+/** The theme custom properties the card's sheet reads. Copied from the widget root because
+ *  the card lives outside it (one `getComputedStyle` per show, not per token). */
+const TIP_TOKENS = [
+    '--vela-surface-elev',
+    '--vela-surface-sunken',
+    '--vela-fg',
+    '--vela-fg-muted',
+    '--vela-fg-bright',
+    '--vela-border',
+    '--vela-border-strong',
+    '--vela-hover-strong',
+    '--vela-focus',
+    '--vela-font',
+    '--vela-radius-md',
+] as const;
+
 /**
  * Show a coach mark. The returned handle can be dismissed programmatically (after the
  * user performs the action the tip was asking for) and is safe to call twice.
@@ -137,7 +160,9 @@ export class Tip {
 
         const doc = this.doc;
         this.el = doc.createElement('div');
-        this.el.className = 'vela-tip';
+        // `vela-ui-layer` carries the kit's static tokens; the THEME tokens are inline on the
+        // widget root, so they have to be copied across the portal (see copyTokens).
+        this.el.className = 'vela-tip vela-ui-layer';
         this.el.setAttribute('role', 'dialog');
         this.el.setAttribute('aria-modal', 'false');
         this.el.setAttribute('aria-label', 'Hint');
@@ -161,8 +186,15 @@ export class Tip {
         this.el.appendChild(x);
 
         this.arrow = doc.createElement('div');
-        this.arrow.className = 'vela-tip-arrow';
+        this.arrow.className = 'vela-tip-arrow vela-ui-layer';
         this.arrow.setAttribute('aria-hidden', 'true');
+
+        // THE BUG THIS FIXES: the card is portalled into <body>, but the theme's custom
+        // properties live as inline styles on the `.vela-ui` root. At body level every
+        // `var(--vela-surface-elev)` resolved to nothing, the declarations were dropped, and
+        // the coach mark rendered as black text with a transparent background — invisible on
+        // a dark chart (measured: `background: rgba(0,0,0,0)`, `color: rgb(0,0,0)`).
+        this.copyTokens();
 
         doc.body.appendChild(this.arrow);
         doc.body.appendChild(this.el);
@@ -202,6 +234,22 @@ export class Tip {
         } else {
             this.el.dataset.in = '';
             this.arrow.dataset.in = '';
+        }
+    }
+
+    /** Carry the theme across the portal: the widget root's custom properties onto both
+     *  floating nodes. Missing host (a tip anchored outside a kit root) is fine — the sheet's
+     *  own fallbacks take over, which is the pre-existing behaviour for generic anchors. */
+    private copyTokens(): void {
+        const host = this.anchor.closest('.vela-ui') as HTMLElement | null;
+        const win = this.win;
+        if (!host || !win) return;
+        const cs = win.getComputedStyle(host);
+        for (const key of TIP_TOKENS) {
+            const value = cs.getPropertyValue(key).trim();
+            if (value === '') continue;
+            this.el.style.setProperty(key, value);
+            this.arrow.style.setProperty(key, value);
         }
     }
 
@@ -252,14 +300,15 @@ export class Tip {
         const h = this.el.offsetHeight || 56;
         const roomAbove = a.top;
         const roomBelow = vh - a.bottom;
-        const place: TipPlacement =
-            this.placement === 'bottom'
-                ? roomBelow >= h + GAP || roomBelow > roomAbove
-                    ? 'bottom'
-                    : 'top'
-                : roomAbove >= h + GAP || roomAbove > roomBelow
-                  ? 'top'
-                  : 'bottom';
+        // Prefer the requested side, but only when it actually FITS. The old ladder compared
+        // "which side is roomier" and then clamped into the viewport, which on a phone pushed
+        // the card straight back over its own anchor (measured: card at top 8, anchor at 40).
+        const fits = (side: TipPlacement): boolean => (side === 'top' ? roomAbove >= h + GAP : roomBelow >= h + GAP);
+        let place = this.placement;
+        if (!fits(place)) {
+            const other: TipPlacement = place === 'top' ? 'bottom' : 'top';
+            place = fits(other) ? other : roomAbove >= roomBelow ? 'top' : 'bottom';
+        }
         this.el.dataset.place = place;
 
         let top = place === 'top' ? a.top - h - GAP : a.bottom + GAP;
@@ -267,6 +316,16 @@ export class Tip {
         // Horizontally centred on the anchor, then clamped into the viewport.
         let left = a.left + a.width / 2 - w / 2;
         left = Math.max(MARGIN, Math.min(vw - w - MARGIN, left));
+        // Neither side had room and the clamp put the card on top of the anchor: step to the
+        // RIGHT of it (or the left, when that is the roomier side) so the thing being explained
+        // stays visible. The card is pointer-transparent either way — this is about reading it.
+        const covers = (l: number): boolean => !(l + w <= a.left || l >= a.right || top + h <= a.top || top >= a.bottom);
+        if (covers(left)) {
+            const rightRoom = vw - a.right - GAP - MARGIN;
+            const leftRoom = a.left - GAP - MARGIN;
+            if (rightRoom >= w) left = a.right + GAP;
+            else if (leftRoom >= w) left = a.left - GAP - w;
+        }
         this.el.style.left = `${Math.round(left)}px`;
         this.el.style.top = `${Math.round(top)}px`;
 

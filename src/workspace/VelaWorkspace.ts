@@ -732,6 +732,7 @@ export class VelaWorkspace {
                       onChart: () => this.active.onChartRows(),
                       onAdd: (i) => this.active.addFromLibrary(i),
                       onRemove: (i) => this.active.removeFromChart(i),
+                      onSettings: (i) => this.active.openChartRowSettings(i),
                       onOpenChange: (open) => {
                           // Same rule as the symbol search: the renderer's in-chart dialogs never see
                           // an outside-dismiss from a topbar dialog — close them on every cell.
@@ -3937,6 +3938,16 @@ export class VelaWorkspace {
             panels: () => (has('panels') ? [...this.dock.list()] : []),
             onTogglePanel: (id) => this.dock.toggle(id),
             ...(has('alerts') ? { alerts: () => this.alerts.map((a) => ({ title: `${a.source} · ${a.title}`, message: a.message, time: a.time })) } : {}),
+            // The chart-body menu's "Reset chart view" row, reachable on a phone through the
+            // drawer (its only other door is a right-click, which touch does not have).
+            onResetView: () => this.active.resetView(),
+            // …and the rest of that menu as one sheet ("Chart actions…"), so the phone gets
+            // the bulk clears too — the one pair of verbs it had no door to at all.
+            onChartMenu: () => this.active.openChartMenu(),
+            // Display time zone: the sheet a hold on the time axis opens, now also a row a
+            // user can find without knowing the gesture.
+            timezone: () => this.timezone,
+            onTimeZone: () => this.openTimezoneDrawer(),
             // The replay slot's mobile counterpart (the desktop topbar is hidden here).
             ...(has('replay') && this.replayBar ? { onReplay: () => this.requestReplayMenuFromDrawer() } : {}),
             // Actions placed on the bottom bar (left-aligned by default) have their stop
@@ -3997,6 +4008,8 @@ export class VelaWorkspace {
                 linkGroup: () => this.linkGroup,
                 onLinkGroup: (tag) => this.setLinkGroup(tag),
                 glyph: () => layoutGlyph(this.def),
+                // The phone's door to the same link the desktop card copies.
+                onShareLink: () => this.copyShareLink(),
             },
             onOpenChange: (open) => {
                 this.trackDialog(open);

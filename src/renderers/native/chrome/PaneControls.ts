@@ -181,8 +181,9 @@ export class PaneControls {
         b.className = selected ? 'vela-pc-btn vela-pc-on' : 'vela-pc-btn';
         Object.assign(b.style, {
             cursor: disabled ? 'default' : 'pointer',
-            width: '20px',
-            height: '20px',
+            // 24px — the WCAG 2.5.8 floor; the glyph inside keeps its 14px scale.
+            width: '24px',
+            height: '24px',
             opacity: disabled ? '0.3' : '1',
         });
         if (!disabled) b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
@@ -206,9 +207,9 @@ export class PaneControls {
             const stateChipRole = p.collapsed ? 'collapse' : !this.suspended && p.maximized ? 'maximize' : null;
             const visible = hasButtons && (hovered || stateChipRole != null) && p.height > 8;
             cluster.style.right = `${rightPx}px`;
-            // Center the cluster inside the ~26px collapsed strip (24 = cluster height incl. padding).
+            // Center the cluster inside the collapsed strip (28 = 24px button + 2px cluster padding each side).
             cluster.style.top = p.collapsed
-                ? `${p.top + Math.max(1, Math.round((p.height - 24) / 2))}px`
+                ? `${p.top + Math.max(1, Math.round((p.height - 28) / 2))}px`
                 : `${p.top + 4}px`;
             cluster.style.display = visible ? 'flex' : 'none';
             if (!visible) continue;

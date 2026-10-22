@@ -66,6 +66,8 @@ export class Drawer {
     private readonly titleEl: HTMLElement;
     private readonly handle: HandleOf<typeof zagDialog.machine>;
     private readonly ctrl: ReturnType<typeof drawerController>;
+    /** Tears down the stale-click guard armed by {@link guardStaleClick}. */
+    private staleClickOff: (() => void) | null = null;
 
     constructor(opts: DrawerOptions = {}) {
         const doc = (opts.host ?? document.body).ownerDocument;
@@ -309,10 +311,44 @@ export class Drawer {
     show(): void {
         this.opener = this.panel.ownerDocument.activeElement as HTMLElement | null;
         this.ctrl.connect(this.handle.service).setOpen(true);
+        this.guardStaleClick();
     }
 
     hide(): void {
+        this.clearStaleClickGuard();
         this.ctrl.connect(this.handle.service).setOpen(false);
+    }
+
+    /**
+     * Swallow the RELEASE click of the gesture that opened the sheet. A sheet slides up
+     * under the very finger that summoned it, so the browser's synthesized click would
+     * land on whichever row happens to be under that finger — a long-press on the time
+     * axis silently picked a timezone that way. A deliberate tap always starts with a
+     * fresh `pointerdown` (which disarms the guard), so nothing a user means to press is
+     * ever swallowed; keyboard activation (`detail === 0`) passes untouched.
+     */
+    private guardStaleClick(): void {
+        this.clearStaleClickGuard();
+        const win = this.positioner.ownerDocument.defaultView;
+        if (!win) return;
+        const onClick = (e: MouseEvent): void => {
+            if (e.detail === 0) return; // keyboard / assistive activation
+            e.stopPropagation();
+            e.preventDefault();
+            this.clearStaleClickGuard();
+        };
+        const onDown = (): void => this.clearStaleClickGuard();
+        win.addEventListener('click', onClick, true);
+        win.addEventListener('pointerdown', onDown, true);
+        this.staleClickOff = () => {
+            win.removeEventListener('click', onClick, true);
+            win.removeEventListener('pointerdown', onDown, true);
+        };
+    }
+
+    private clearStaleClickGuard(): void {
+        this.staleClickOff?.();
+        this.staleClickOff = null;
     }
 
     destroy(): void {

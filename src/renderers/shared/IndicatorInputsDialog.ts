@@ -875,7 +875,10 @@ ${overlayScrollbarCss('.vela-dialog.vela-ind-dialog *', 9)}
 .vela-ind-ctl:hover{background-color:var(--vela-hover-strong);}
 .vela-ind-close:hover{color:var(--vela-danger) !important;background-color:var(--vela-hover-strong);}
 .vela-ind-fold{transition:border-color var(--vela-dur-fast) ease,opacity var(--vela-dur-fast) ease;}
-.vela-ind-fold:hover{border-color:var(--vela-border-strong);opacity:0.9;}`;
+.vela-ind-fold:hover{border-color:var(--vela-border-strong);opacity:0.9;}
+/* Touch: the chip is the only legend affordance a phone shows, so it carries a full
+   44px target instead of the desktop 24px one. */
+@media (pointer: coarse){.vela-ind-fold{min-height:44px !important;min-width:44px !important;padding:0 8px !important;background-clip:padding-box;}}`;
     if (!existing) document.head.appendChild(s);
 }
 

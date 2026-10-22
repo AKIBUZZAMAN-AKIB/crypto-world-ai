@@ -75,7 +75,9 @@ const CSS = `
     display: flex;
     align-items: center;
     gap: 9px;
-    padding: 6px 6px;
+    /* 24px targets + 4px breathing = the same 32px row desktop always had. */
+    padding: 4px 6px;
+    min-height: 32px;
     border-radius: 6px;
     cursor: default;
 }
@@ -122,12 +124,14 @@ const CSS = `
     all: unset;
     cursor: pointer;
     flex: none;
-    width: 20px;
-    height: 20px;
+    /* 24px is the WCAG 2.5.8 floor. The glyph stays 12px, so the box grows under the pointer
+       without the row reading any heavier; the 2px gap keeps neighbouring targets apart. */
+    width: 24px;
+    height: 24px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 3px;
+    border-radius: 4px;
     color: var(--vela-fg-muted);
     font-size: 12px;
     visibility: hidden;
@@ -138,6 +142,33 @@ const CSS = `
    see by hovering is a state they will not find. */
 .vela-ot-row .vela-ot-btn[data-engaged] { visibility: visible; color: var(--vela-fg); }
 .vela-ot-btn:hover:not(:disabled) { background: var(--vela-active); color: var(--vela-fg-bright); }
+/* The last plot value of an indicator row — the legend's readout, which a phone never sees
+   (the grid folds every legend row away). Tabular figures so the column does not jitter. */
+.vela-ot-val {
+    flex: none;
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--vela-fg-muted);
+    text-align: right;
+}
+/* Touch: a hover-revealed button does not exist. Every row action stays visible, and the row
+   grows to a 44px target (WCAG 2.5.5) instead of the 32px pointer row. This is the surface a
+   phone uses INSTEAD of the legend, so it has to carry the legend's verbs. */
+@media (pointer: coarse) {
+    .vela-ot .vela-panel-body { padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px)); }
+    .vela-ot-row { min-height: 44px; gap: 10px; padding: 0 8px; }
+    .vela-ot-row .vela-ot-btn { visibility: visible; width: 32px; height: 32px; border-radius: 8px; font-size: 15px; }
+    .vela-ot-row .vela-ot-btn[data-icon='more'] { color: var(--vela-fg); }
+    .vela-ot-btn + .vela-ot-btn { margin-left: 2px; }
+    .vela-ot-val { max-width: 118px; font-size: 12.5px; }
+    .vela-ot-panehead { min-height: 34px; }
+    .vela-ot-panehead .vela-ot-btn { visibility: visible; width: 32px; height: 32px; }
+}
+
 .vela-ot-btn:disabled { opacity: 0.35; cursor: default; }
 .vela-ot-empty { padding: 20px 10px; text-align: center; color: var(--vela-fg-muted); font-size: 12px; }
 
@@ -178,7 +209,7 @@ const CSS = `
     background: var(--vela-bg);
 }
 .vela-ot-selcount { flex: 1; min-width: 0; color: var(--vela-fg-muted); font-size: 11px; }
-.vela-ot-selbar .vela-ot-btn { visibility: visible; width: 24px; height: 22px; }
+.vela-ot-selbar .vela-ot-btn { visibility: visible; width: 24px; height: 24px; }
 .vela-ot-selbar .vela-ot-btn[data-icon='group'] .vela-icon { width: 16px; height: 16px; font-size: 16px; }
 
 /* ── drag-and-drop ── */
@@ -374,6 +405,9 @@ export class ObjectTree extends SidePanel {
     }
     /** The last render's model, kept so a right-click reads the same state the rows show. */
     private pass: Pass | null = null;
+    /** Live value spans by indicator id, plus the frame that will refresh them. */
+    private readonly valueSpans = new Map<string, HTMLElement>();
+    private valueFrame = 0;
     private menu: Menu | null = null;
     private menuActions = new Map<string, () => void>();
     private drag: DragSession | null = null;
@@ -410,6 +444,9 @@ export class ObjectTree extends SidePanel {
         for (const ev of REFRESH_EVENTS) {
             this.unsubs.push(chart.on(ev, () => this.refresh()));
         }
+        // The readout follows the live bar; only the value TEXT is rewritten (see
+        // refreshValues) so the list is never rebuilt on a tick.
+        this.unsubs.push(chart.on('bar', () => this.refreshValues()));
         // Selection both stores and repaints, in that order: a refresh triggered before the id
         // is recorded would paint the previous selection and never come back to fix it.
         this.unsubs.push(
@@ -467,7 +504,45 @@ export class ObjectTree extends SidePanel {
         this.render();
     }
 
+    /** One indicator's newest plot value, pre-formatted by the renderer. Empty when the
+     *  chart has no readout for it (a hidden or not-yet-run indicator). */
+    private valueFor(id: string): string {
+        const chart = this.chart;
+        if (!chart) return '';
+        const readout = chart.renderer.dataWindowReadout?.();
+        if (!readout) return '';
+        const title = chart.indicators().find((h) => h.id === id)?.title;
+        if (title === undefined) return '';
+        const group = readout.groups.find((g) => g.name === title);
+        return group?.rows[0]?.value ?? '';
+    }
+
+    /** Rewrite the value spans in place — no re-render, so the list never jumps while a
+     *  finger is on it. Coalesced to one pass per animation frame. */
+    private refreshValues(): void {
+        if (this.valueSpans.size === 0 || this.chart === null) return;
+        const win = this.el.ownerDocument.defaultView;
+        const raf = win?.requestAnimationFrame;
+        if (!raf) {
+            this.writeValues();
+            return;
+        }
+        if (this.valueFrame !== 0) return;
+        this.valueFrame = raf(() => {
+            this.valueFrame = 0;
+            this.writeValues();
+        });
+    }
+
+    private writeValues(): void {
+        for (const [id, span] of this.valueSpans) {
+            const next = this.valueFor(id);
+            if (span.isConnected && span.textContent !== next) span.textContent = next;
+        }
+    }
+
     private render(): void {
+        this.valueSpans.clear();
         if (this.el.hidden || !this.chart) return;
         const chart = this.chart;
         this.prune(chart);
@@ -664,9 +739,14 @@ export class ObjectTree extends SidePanel {
                 },
             ],
             row.ownScale ? 'scale' : undefined,
+            { value: this.valueFor(row.id), more: true },
         );
         el.dataset.rowKind = 'indicator';
         el.dataset.id = row.id;
+        // Live readout: the span is painted once and only its TEXT is rewritten afterwards
+        // (see refreshValues) — a re-render per tick would rebuild the list under a finger.
+        const val = el.querySelector<HTMLElement>('.vela-ot-val');
+        if (val) this.valueSpans.set(row.id, val);
         el.dataset.pane = pane.id;
         if (pass.repanable || pass.stackable) {
             el.dataset.drag = '1';
@@ -822,8 +902,20 @@ export class ObjectTree extends SidePanel {
         }
     }
 
-    /** The shared row shell: icon, name, optional tag, then the action buttons. */
-    private row(icon: HTMLElement, label: string, visible: boolean, actions: readonly RowAction[], tag?: string): HTMLElement {
+    /**
+     * The shared row shell: icon, name, optional tag, the live value slot, then the action
+     * buttons. `more` appends the row's own ▾ menu — the touch route to everything a narrow
+     * row has no space for (settings, re-paning, reverse), and the pointer route to the same
+     * items a right-click already offered.
+     */
+    private row(
+        icon: HTMLElement,
+        label: string,
+        visible: boolean,
+        actions: readonly RowAction[],
+        tag?: string,
+        extra: { value?: string; more?: boolean } = {},
+    ): HTMLElement {
         const doc = this.el.ownerDocument;
         const el = doc.createElement('div');
         el.className = 'vela-ot-row';
@@ -840,11 +932,42 @@ export class ObjectTree extends SidePanel {
             t.title = 'Draws against its own price scale';
             el.appendChild(t);
         }
+        if (extra.value !== undefined) {
+            const v = doc.createElement('span');
+            v.className = 'vela-ot-val';
+            v.textContent = extra.value;
+            el.appendChild(v);
+        }
         const acts = doc.createElement('span');
         acts.className = 'vela-ot-acts';
         for (const a of actions) acts.appendChild(this.btn(a));
+        if (extra.more === true) {
+            acts.appendChild(
+                this.btn({
+                    icon: 'more',
+                    title: 'More actions',
+                    run: () => this.openRowMenuAt(el),
+                }),
+            );
+        }
         el.appendChild(acts);
         return el;
+    }
+
+    /** Open a row's action menu at the row (the right-click twin). Returns the menu so a
+     *  caller can close it; `null` when the row has no actions. */
+    private openRowMenuAt(el: HTMLElement): Menu | null {
+        const pass = this.pass;
+        if (!pass) return null;
+        const b = new MenuBuilder();
+        const items = this.itemsForRow(b, pass, el);
+        if (items.length === 0) return null;
+        this.menuActions = b.actions;
+        const menu = this.ensureMenu();
+        menu.setItems(items);
+        const r = el.getBoundingClientRect();
+        menu.openAt(r.left + 24, r.bottom - 6);
+        return menu;
     }
 
     private btn(a: RowAction): HTMLButtonElement {
