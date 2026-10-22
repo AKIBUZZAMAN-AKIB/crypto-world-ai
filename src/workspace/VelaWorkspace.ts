@@ -61,10 +61,12 @@ import { timeframeToMs } from '../data/timeframe';
 import { timeframeLabel } from '../widget/timeframe';
 import { registerBuiltinChartTypes } from '../chart-types/builtins';
 import { parseSymbol } from '../data/ProviderRegistry';
+import { groupsForCount, groupMarkOf, setMarkOverrides } from './sync-marks';
 import {
     alignedRangeAround,
     groupDef,
     groupIdOf,
+    groupNameOf,
     groupOf,
     groupSetting,
     IMPLICIT_GROUP,
@@ -438,6 +440,10 @@ export class VelaWorkspace {
     private watchlist: string[] = [];
     /** Names the USER gave to sync groups, keyed by the stable group id. */
     private groupNames: Record<string, string> = {};
+    /** Custom GLYPHS for sync groups, keyed by the stable group id. Mirrored into the
+     *  palette registry (`setMarkOverrides`) on every change, because the chip, the
+     *  matrix and the legend all read the mark from there. */
+    private groupMarks: Record<string, string> = {};
     /** One-time tips already shown (the ◌ affordance, the palette chord). */
     private readonly seenTips = new Set<string>();
     /** The live coach mark, if any (one at a time — two pointing fingers is noise). */
@@ -767,6 +773,8 @@ export class VelaWorkspace {
                 onImportTemplate: (json) => this.importTemplate(json),
                 legend: () => this.groupLegend(),
                 onRenameGroup: (id, name) => this.setGroupName(id, name),
+                groupName: (id) => this.groupNames[id],
+                onSetGroupMark: (id, glyph) => this.setGroupMark(id, glyph),
                 onOpenLayout: (name) => this.openLayout(name),
                 onDeleteLayout: (name) => this.deleteLayout(name),
                 onRenameLayout: (from, to) => this.renameLayout(from, to),
@@ -1256,6 +1264,7 @@ export class VelaWorkspace {
         }
         if (this.watchlist.length > 0) state.watchlist = [...this.watchlist];
         if (Object.keys(this.groupNames).length > 0) state.groupNames = { ...this.groupNames };
+        if (Object.keys(this.groupMarks).length > 0) state.groupMarks = { ...this.groupMarks };
         if (this.seenTips.size > 0) state.seenTips = [...this.seenTips];
         if (this.recentCommands.length > 0) state.recentCommands = [...this.recentCommands];
         if (this.linkGroup) state.linkedGroup = this.linkGroup;
@@ -1296,6 +1305,8 @@ export class VelaWorkspace {
         }
         if (st.watchlist) this.watchlist = [...st.watchlist];
         if (st.groupNames) this.groupNames = { ...st.groupNames };
+        if (st.groupMarks) this.groupMarks = { ...st.groupMarks };
+        setMarkOverrides(this.groupMarks);
         if (st.seenTips) for (const tip of st.seenTips) this.seenTips.add(tip);
         // A document can arrive from an older build, a hand-edited file or a share link:
         // keep only the side-cars that still name a real snapshot.
@@ -2593,7 +2604,12 @@ export class VelaWorkspace {
         // An all-cells link reports the implicit group; `nextGroupMark` treats a real id
         // as a position in the palette and anything else as "unlinked" — so the first tap
         // on an all-cells chart hands it red while the rest keep 'A'.
-        const next = nextGroupMark(current === IMPLICIT_GROUP ? undefined : current, syncGroups(setting));
+        const inUse = syncGroups(setting);
+        // The palette the chip cycles is the SAME slice every other surface offers: one
+        // mark per chart in this layout (2 charts → 2, 4 → 4, 16 → 16), plus any group
+        // already in use so a shrink never strands an assignment off the end of the list.
+        const palette = groupsForCount(this.cellsById.size, inUse);
+        const next = nextGroupMark(current === IMPLICIT_GROUP ? undefined : current, inUse, palette.map((g) => g.id));
         this.sync.setGroup(kind, cellId, next);
         this.projectGroupMarks();
     }
@@ -2980,6 +2996,26 @@ export class VelaWorkspace {
         this.projectGroupMarks();
     }
 
+    /** The glyph a group currently paints (the user's override, else the palette's). */
+    groupMark(id: string): string | undefined {
+        return groupMarkOf(id);
+    }
+
+    /**
+     * Repaint a group's glyph. `null` restores the palette mark. Bounded to two graphemes
+     * — a chip is 14px wide and a legend row is one word — and stored by STABLE id, so it
+     * survives reloads, imports and layout changes without touching propagation.
+     */
+    setGroupMark(id: string, glyph: string | null): void {
+        const key = groupIdOf(id) ?? id;
+        const clean = glyph ? [...glyph.trim()].slice(0, 2).join('') : '';
+        if (clean && clean !== groupDef(key)?.mark) this.groupMarks[key] = clean;
+        else delete this.groupMarks[key];
+        setMarkOverrides(this.groupMarks);
+        this.projectGroupMarks();
+        this.markStateDirty();
+    }
+
     /**
      * The groups actually in use, one entry per group, with the user's name and how many
      * charts wear it. This is what the legend beside the matrix renders — the table says
@@ -3000,9 +3036,11 @@ export class VelaWorkspace {
             const def = groupDef(id);
             return {
                 id,
-                mark: def?.mark ?? id,
+                // The USER's glyph wins over the palette one; both the chip and the legend
+                // read it through the same registry, so a repaint happens in one place.
+                mark: groupMarkOf(id) ?? id,
                 ...(def ? { color: def.color } : {}),
-                name: this.groupNames[id] ?? def?.name ?? id,
+                name: this.groupNames[id] ?? groupNameOf(id) ?? def?.name ?? id,
                 count,
             };
         });
@@ -3021,6 +3059,10 @@ export class VelaWorkspace {
      */
     private maybeShowGroupTip(): void {
         if (this.destroyed || this.monoLayout || this.cellsById.size < 2) return;
+        // Never while a popover or dialog is open: the card points at a badge INSIDE the
+        // grid, and a coach mark floating over the layout sheet points at nothing. Closing
+        // the last dialog re-arms it (see `trackDialog`).
+        if (this.openDialogs > 0) return;
         if (this.groupTip || this.groupTipTimer != null || this.hasSeenTip('group-badge')) return;
         const first = this.cellsById.get(this.order[0] ?? '') ?? this.cellsById.values().next().value;
         const anchor = first?.groupBadgeAnchor();
@@ -3032,6 +3074,7 @@ export class VelaWorkspace {
         this.groupTipTimer = win.setTimeout(() => {
             this.groupTipTimer = null;
             if (this.destroyed || this.hasSeenTip('group-badge')) return;
+            if (this.openDialogs > 0) return; // a sheet opened while we waited
             // The badge may have gained a group during the beat — re-check, do not guess.
             if (anchor.hidden || !anchor.hasAttribute('data-empty') || !anchor.isConnected) return;
             this.groupTip = new Tip({
@@ -3825,6 +3868,8 @@ export class VelaWorkspace {
                 onImportTemplate: (json) => this.importTemplate(json),
                 legend: () => this.groupLegend(),
                 onRenameGroup: (id, name) => this.setGroupName(id, name),
+                groupName: (id) => this.groupNames[id],
+                onSetGroupMark: (id, glyph) => this.setGroupMark(id, glyph),
                 onOpenLayout: (name) => this.openLayout(name),
                 onDeleteLayout: (name) => this.deleteLayout(name),
                 onRenameLayout: (from, to) => this.renameLayout(from, to),
@@ -4450,8 +4495,18 @@ export class VelaWorkspace {
 
     private trackDialog(open: boolean): void {
         this.openDialogs = Math.max(0, this.openDialogs + (open ? 1 : -1));
-        if (open) this.keymap.pushScope('dialog');
-        else this.keymap.popScope('dialog');
+        if (open) {
+            this.keymap.pushScope('dialog');
+            // A coach mark must never float on top of a sheet: it points at a badge that
+            // the sheet is covering. Opening the sheet IS the journey it was pointing to,
+            // so this counts as answered.
+            if (this.groupTip) this.dismissGroupTip(true);
+        }
+        else {
+            this.keymap.popScope('dialog');
+            // A coach mark that was suppressed while the sheet was open gets its turn now.
+            if (this.openDialogs === 0) this.root.ownerDocument.defaultView?.setTimeout(() => this.maybeShowGroupTip(), 320);
+        }
     }
 
     /** Pool a dehydrated slot state (bounded — oldest entries drop past the cap). */

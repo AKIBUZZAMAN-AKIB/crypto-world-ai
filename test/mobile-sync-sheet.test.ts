@@ -71,10 +71,12 @@ describe('markOf — the chip/status-line reading of a link', () => {
         expect(nextGroupMark('🔴', ['🔴'])).toBe('orange'); // legacy mark in, id out
     });
 
-    it('the palette holds TEN distinct marks — one per chart of the biggest layout, and then some', () => {
-        expect(SYNC_GROUP_MARKS.length).toBe(10);
-        expect(new Set(SYNC_GROUP_MARKS).size).toBe(10);
+    it('the palette holds SIXTEEN distinct marks — one per chart of the biggest layout', () => {
+        expect(SYNC_GROUP_MARKS.length).toBe(16);
+        expect(new Set(SYNC_GROUP_MARKS).size).toBe(16);
         expect((SYNC_GROUP_MARKS as readonly string[]).includes(IMPLICIT_GROUP)).toBe(false);
+        // What a SURFACE offers is a slice of that list — see group-marks-scale.test.ts:
+        // a 2-chart grid offers two, a 4×4 sixteen.
     });
 });
 

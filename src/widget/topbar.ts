@@ -229,6 +229,10 @@ export interface TopbarOptions {
         onImportTemplate?: (json: string) => string | null;
         legend?: () => Array<{ id: string; mark: string; color?: string; name: string; count: number }>;
         onRenameGroup?: (id: string, name: string | null) => void;
+        /** Repaint a group's glyph (null restores the palette mark). */
+        onSetGroupMark?: (id: string, glyph: string | null) => void;
+        /** The user's name for a group id. */
+        groupName?: (id: string) => string | undefined;
         onOpenLayout?: (name: string) => void;
         onDeleteLayout?: (name: string) => void;
         onRenameLayout?: (from: string, to: string) => boolean;
@@ -535,6 +539,8 @@ export class Topbar {
                 ...(layout.onImportTemplate ? { onImportTemplate: (json: string) => layout.onImportTemplate?.(json) ?? null } : {}),
                 ...(layout.legend ? { legend: () => layout.legend?.() ?? [] } : {}),
                 ...(layout.onRenameGroup ? { onRenameGroup: (id: string, name: string | null) => layout.onRenameGroup?.(id, name) } : {}),
+                ...(layout.onSetGroupMark ? { onSetGroupMark: (id: string, glyph: string | null) => layout.onSetGroupMark?.(id, glyph) } : {}),
+                ...(layout.groupName ? { groupName: (id: string) => layout.groupName?.(id) } : {}),
                 ...(layout.onOpenLayout ? { onOpenLayout: (name) => layout.onOpenLayout?.(name) } : {}),
                 ...(layout.onDeleteLayout ? { onDeleteLayout: (name) => layout.onDeleteLayout?.(name) } : {}),
                 ...(layout.onRenameLayout ? { onRenameLayout: (from, to) => layout.onRenameLayout?.(from, to) ?? false } : {}),

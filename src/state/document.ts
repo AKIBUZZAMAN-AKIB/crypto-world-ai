@@ -209,6 +209,10 @@ export interface WorkspaceState {
     /** User-given names for sync groups, keyed by the STABLE group id (`'red'`), not by
      *  the emoji — so a palette change can never rename a group. */
     groupNames?: Record<string, string>;
+    /** Custom glyphs for sync groups, keyed by the STABLE group id — the display twin of
+     *  `groupNames`. Anything the palette cannot express (a fox, initials, a flag) goes
+     *  here; propagation still compares ids, so a repaint never merges two groups. */
+    groupMarks?: Record<string, string>;
     /** One-time tips already seen (`'group-badge'`, `'palette'`). */
     seenTips?: string[];
     /** Commands run from the palette most recently (ids, newest first, ≤ 8). */
@@ -357,6 +361,18 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
             if (key && name) names[key] = name;
         }
         if (Object.keys(names).length > 0) out.groupNames = names;
+    }
+    if (d.groupMarks != null && typeof d.groupMarks === 'object' && !Array.isArray(d.groupMarks)) {
+        const marks: Record<string, string> = {};
+        // Bounded twice: eight code units per glyph (an emoji + a keycap modifier is
+        // already six), and 32 entries — the palette is 16 and a document that carries
+        // more is a document doing something it was not written to do.
+        for (const [key, value] of Object.entries(d.groupMarks as Record<string, unknown>).slice(0, 32)) {
+            if (typeof value !== 'string' || !key) continue;
+            const glyph = [...value.trim()].slice(0, 2).join('');
+            if (glyph) marks[key] = glyph;
+        }
+        if (Object.keys(marks).length > 0) out.groupMarks = marks;
     }
     if (Array.isArray(d.seenTips)) {
         const tips = d.seenTips.filter((t): t is string => typeof t === 'string' && t.length > 0);

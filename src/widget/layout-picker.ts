@@ -111,9 +111,11 @@ const CSS = `
 .vela-lp-preset:hover { background: var(--vela-hover); }
 .vela-lp-preset:active { transform: scale(0.98); }
 .vela-lp-preset[data-checked='1'] { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
-.vela-lp-sync { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
+.vela-lp-sync { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 /* The switch column takes the slack when the table has wrapped under it. */
-.vela-lp-synccol { flex: 1 1 150px; min-width: 150px; display: flex; flex-direction: column; }
+/* The switch column sizes to its LABELS: stretching it to 260px put 100px of dead
+   space between "Crosshair" and its switch, and stole that width from the table. */
+.vela-lp-synccol { flex: 0 1 190px; min-width: 150px; max-width: 210px; display: flex; flex-direction: column; }
 /* The link x chart table: a fixed side pane with its OWN vertical scroll, so the
    popover keeps its shape as charts are added and the footer stays put. The table
    scrolls sideways inside itself; the fade marks the rest of the columns. */
@@ -224,11 +226,30 @@ const CSS = `
 .vela-lp-tpl .vela-lp-saved-act .vela-icon { font-size: 13px; width: 13px; height: 13px; }
 .vela-lp-grouphead { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vela-fg-faint); margin-top: 2px; }
 /* The legend under the table: the same marks the cells wear, with the name the user
-   gave them. Clicking a name edits it in place. */
+   gave them. BOTH halves are editable in place — the glyph (what the chart wears) and
+   the name (what the group is for) — and both are keyboard-reachable buttons, not
+   spans with a click handler. */
 .vela-lp-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 2px 2px 4px; }
 .vela-lp-leg { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--vela-fg-muted); max-width: 100%; }
-.vela-lp-leg .vela-lp-legmark { font-size: 12px; line-height: 1; }
+.vela-lp-leg .vela-lp-legmark {
+    all: unset;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    min-height: 16px;
+    padding: 0 1px;
+    border-radius: 3px;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background var(--vela-dur-fast) var(--vela-ease);
+}
+.vela-lp-leg .vela-lp-legmark:hover { background: var(--vela-hover-strong); }
+.vela-lp-leg .vela-lp-legmark:focus-visible { outline: 1px solid var(--vela-selected-bg); outline-offset: 1px; }
+.vela-lp-leg .vela-lp-legmark:disabled { cursor: default; }
 .vela-lp-leg input { width: 84px; background: var(--vela-hover); border: 1px solid var(--vela-selected-bg); border-radius: 3px; color: var(--vela-fg-bright); font: inherit; font-size: 11px; padding: 1px 4px; }
+.vela-lp-leg input.vela-lp-legmarkinput { width: 30px; text-align: center; }
 
 .vela-lp-rename {
     flex: 1 1 auto;
@@ -257,14 +278,25 @@ const CSS = `
 }
 .vela-lp-import:hover { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); }
 .vela-lp-links { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--vela-fg-faint); }
-.vela-lp-linkdot { all: unset; width: 14px; height: 14px; border-radius: 50%; cursor: pointer; border: 1px solid var(--vela-border-strong); }
-.vela-lp-linkdot[data-tag='none'] { background: transparent; }
-/* The four tab-link tags are identity colors, not theme colors: they must read the same
-   in every theme, so they are deliberately fixed. */
-.vela-lp-linkdot[data-tag='red'] { background: #e05252; border-color: #e05252; } /* palette-exempt: tab link tag */
-.vela-lp-linkdot[data-tag='green'] { background: #3fa45b; border-color: #3fa45b; } /* palette-exempt: tab link tag */
-.vela-lp-linkdot[data-tag='blue'] { background: #4a86d8; border-color: #4a86d8; } /* palette-exempt: tab link tag */
-.vela-lp-linkdot[data-tag='amber'] { background: #d8a13a; border-color: #d8a13a; } /* palette-exempt: tab link tag */
+.vela-lp-linkdot {
+    all: unset;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    min-width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid var(--vela-border-strong);
+    color: var(--vela-fg-muted);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    transition: color var(--vela-dur-fast) var(--vela-ease), border-color var(--vela-dur-fast) var(--vela-ease),
+        background var(--vela-dur-fast) var(--vela-ease);
+}
+.vela-lp-linkdot:hover { color: var(--vela-fg-bright); border-color: var(--vela-fg-muted); background: var(--vela-hover); }
+.vela-lp-linkdot[data-tag='none'] { color: var(--vela-fg-faint); }
 .vela-lp-pool {
     display: block;
     width: 100%;
@@ -282,7 +314,8 @@ const CSS = `
 .vela-lp-pool:hover { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); }
 .vela-lp-pool[data-armed='1'] { color: var(--vela-danger); border-color: var(--vela-danger); }
 .vela-lp-undo { color: var(--vela-fg-muted); }
-.vela-lp-linkdot[data-on='1'] { outline: 2px solid var(--vela-fg-bright); outline-offset: 1px; }
+.vela-lp-linkdot[data-on='1'] { color: var(--vela-fg-bright); border-color: var(--vela-accent); background: var(--vela-focus-soft); }
+.vela-lp-linkdot:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: 1px; }
 .vela-lp-sync-row { all: unset; display: flex; align-items: center; gap: 14px; padding: 6px 8px; border-radius: 5px; cursor: pointer; }
 .vela-lp-sync-row:hover { background: var(--vela-hover); }
 .vela-lp-sync-row .vela-lp-label { flex: 1 1 auto; }
@@ -405,6 +438,11 @@ export interface LayoutPickerOptions {
     onImportTemplate?: (json: string) => string | null;
     /** The groups in use, with the user's names — the legend under the table. */
     legend?: () => Array<{ id: string; mark: string; color?: string; name: string; count: number }>;
+    /** Repaint one group's glyph (`null` = back to the palette's mark). Optional: without
+     *  it the legend still names groups, it just cannot change their mark. */
+    onSetGroupMark?: (id: string, glyph: string | null) => void;
+    /** The user's name for a group id — the matrix palette shows it beside the mark. */
+    groupName?: (id: string) => string | undefined;
     onRenameGroup?: (id: string, name: string | null) => void;
     /** Dormant (pooled) charts — the smaller layouts the workspace has visited. Their
      *  state is kept so the slot restores; the row below offers to drop them. */
@@ -548,6 +586,7 @@ export class LayoutPicker {
             ...(opts.onCycleCellGroup ? { onCycleCellGroup: (kind: string, id: string) => opts.onCycleCellGroup?.(kind, id) } : {}),
             ...(opts.onSetCellGroup ? { onSetCellGroup: (kind: string, id: string, mark: string | null) => opts.onSetCellGroup?.(kind, id, mark) } : {}),
             ...(opts.onAllInOneGroup ? { onAllInOneGroup: (kind: string) => opts.onAllInOneGroup?.(kind) } : {}),
+            ...(opts.groupName ? { groupName: (id: string) => opts.groupName?.(id) } : {}),
             onChange: () => this.renderSyncs(),
         });
         chartsScroll.append(this.matrix.el);
@@ -889,7 +928,7 @@ export class LayoutPicker {
      */
     private renderLegend(doc: Document): void {
         const legend = this.opts.legend?.();
-        if (!legend || legend.length === 0 || !this.opts.onRenameGroup) return;
+        if (!legend || legend.length === 0 || (!this.opts.onRenameGroup && !this.opts.onSetGroupMark)) return;
         const wrap = doc.createElement('div');
         wrap.className = 'vela-lp-legend';
         wrap.setAttribute('aria-label', 'Sync groups');
@@ -897,10 +936,44 @@ export class LayoutPicker {
             const chip = doc.createElement('span');
             chip.className = 'vela-lp-leg';
             chip.dataset.group = item.id;
-            const mark = doc.createElement('span');
+            const mark = doc.createElement('button');
+            mark.type = 'button';
             mark.className = 'vela-lp-legmark';
             mark.textContent = item.mark;
             if (item.color) mark.style.color = item.color;
+            // The mark is the OTHER editable half of a legend row: names say what a group
+            // is for, the glyph is what the chart wears. Two graphemes max (a chip is
+            // 14px), Enter commits, Escape/blur leaves it alone.
+            if (this.opts.onSetGroupMark) {
+                mark.title = `Click to change the mark for ${item.name}`;
+                mark.setAttribute('aria-label', `Mark for group ${item.name} is ${item.mark}. Change mark`);
+                mark.addEventListener('click', () => {
+                    const input = doc.createElement('input');
+                    input.type = 'text';
+                    input.value = item.mark;
+                    input.maxLength = 4;
+                    input.className = 'vela-lp-legmarkinput';
+                    input.setAttribute('aria-label', `New mark for group ${item.name}`);
+                    input.addEventListener('keydown', (e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Enter') {
+                            this.opts.onSetGroupMark?.(item.id, input.value.trim() || null);
+                            this.renderSyncs();
+                        } else if (e.key === 'Escape') {
+                            this.renderSyncs();
+                        }
+                    });
+                    input.addEventListener('blur', () => {
+                        if (input.isConnected) this.renderSyncs();
+                    });
+                    mark.replaceWith(input);
+                    input.focus();
+                    input.select();
+                });
+            } else {
+                mark.disabled = true;
+                mark.style.cursor = 'default';
+            }
             const label = doc.createElement('button');
             label.type = 'button';
             label.className = 'vela-lp-legname';
@@ -1184,13 +1257,18 @@ export class LayoutPicker {
             caption.textContent = 'Link tabs';
             links.appendChild(caption);
             const current = this.opts.linkGroup?.() ?? null;
-            for (const tag of [null, 'red', 'green', 'blue', 'amber']) {
+            // NEUTRAL by design: four identity-coloured dots competed with the sync marks
+            // two rows above them and meant nothing to anyone who had not read the TV
+            // desktop docs. The tag is a NUMBER now, colour is reserved for groups, and
+            // the selected set is an outline — information no longer depends on hue.
+            for (const [i, tag] of ([null, 'red', 'green', 'blue', 'amber'] as const).entries()) {
                 const dot = doc.createElement('button');
                 dot.type = 'button';
                 dot.className = 'vela-lp-linkdot';
                 dot.dataset.tag = tag ?? 'none';
                 if ((current ?? null) === tag) dot.dataset.on = '1';
-                dot.title = tag ? `Link to other tabs tagged ${tag}` : 'Unlink tabs';
+                dot.textContent = tag ? String(i) : '—';
+                dot.title = tag ? `Link to other tabs in set ${i}` : 'Unlink tabs';
                 dot.setAttribute('aria-label', dot.title);
                 dot.addEventListener('click', () => {
                     this.opts.onLinkGroup?.(tag);

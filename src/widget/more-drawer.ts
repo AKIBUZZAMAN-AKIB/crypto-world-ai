@@ -523,6 +523,22 @@ const CSS = `
 .vela-md-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 2px 2px 6px; }
 .vela-md-leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--vela-fg-muted); min-height: 26px; }
 .vela-md-leg button { all: unset; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+/* The glyph is a BUTTON (it opens a two-character editor), 26px because a phone finger
+   needs a target and because the legend is the only place a custom mark is set. */
+.vela-md-leg button.vela-md-legmark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    min-height: 26px;
+    max-width: none;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background var(--vela-dur-fast) var(--vela-ease);
+}
+.vela-md-leg button.vela-md-legmark:active { background: var(--vela-hover-strong); }
+.vela-md-leg button.vela-md-legmark:disabled { cursor: default; }
 .vela-md-leg input { width: 90px; height: 26px; padding: 0 6px; border: 1px solid var(--vela-selected-bg); border-radius: 6px; background: var(--vela-hover); color: var(--vela-fg-bright); font: inherit; font-size: 11.5px; }
 .vela-md-saveas input {
     flex: 1 1 auto;
@@ -661,6 +677,11 @@ export interface MoreDrawerOptions {
         /** Groups in use with the user's names (the legend). */
         legend?: () => Array<{ id: string; mark: string; color?: string; name: string; count: number }>;
         onRenameGroup?: (id: string, name: string | null) => void;
+        /** Repaint a group's glyph (null = palette mark). Optional: without it the phone
+         *  legend still shows and renames groups, it just cannot change their mark. */
+        onSetGroupMark?: (id: string, glyph: string | null) => void;
+        /** The user's name for a group id (matrix palette). */
+        groupName?: (id: string) => string | undefined;
         linkGroup?: () => string | null;
         onLinkGroup?: (tag: string | null) => void;
         /** The current layout's 16px glyph (`<svg>` markup) for the Layout row. Omitted
@@ -1130,6 +1151,7 @@ export class MoreDrawer {
                     ...(layout.onCycleCellGroup ? { onCycleCellGroup: (kind: string, id: string) => layout.onCycleCellGroup?.(kind, id) } : {}),
                     ...(layout.onSetCellGroup ? { onSetCellGroup: (kind: string, id: string, mark: string | null) => layout.onSetCellGroup?.(kind, id, mark) } : {}),
                     ...(layout.onAllInOneGroup ? { onAllInOneGroup: (kind: string) => layout.onAllInOneGroup?.(kind) } : {}),
+                    ...(layout.groupName ? { groupName: (id: string) => layout.groupName?.(id) } : {}),
                     onChange: () => repaint(),
                 });
                 matrix.update(charts, syncsOf());
@@ -1152,9 +1174,38 @@ export class MoreDrawer {
                     const chip = doc.createElement('span');
                     chip.className = 'vela-md-leg';
                     chip.dataset.group = g.id;
-                    const mark = doc.createElement('span');
+                    const mark = doc.createElement('button');
+                    mark.type = 'button';
+                    mark.className = 'vela-md-legmark';
                     mark.textContent = g.mark;
                     if (g.color) mark.style.color = g.color;
+                    if (layout.onSetGroupMark) {
+                        mark.title = `Change the mark for ${g.name}`;
+                        mark.setAttribute('aria-label', `Mark for group ${g.name} is ${g.mark}. Change mark`);
+                        mark.addEventListener('click', () => {
+                            const input = doc.createElement('input');
+                            input.type = 'text';
+                            input.value = g.mark;
+                            input.maxLength = 4;
+                            input.setAttribute('aria-label', `New mark for group ${g.name}`);
+                            const commit = (keep: boolean): void => {
+                                if (!input.isConnected) return;
+                                if (keep) layout.onSetGroupMark?.(g.id, input.value.trim() || null);
+                                this.render();
+                            };
+                            input.addEventListener('keydown', (e) => {
+                                if (e.key === 'Enter') commit(true);
+                                else if (e.key === 'Escape') commit(false);
+                                e.stopPropagation();
+                            });
+                            input.addEventListener('blur', () => commit(true));
+                            mark.replaceWith(input);
+                            input.focus();
+                            input.select();
+                        });
+                    } else {
+                        mark.disabled = true;
+                    }
                     const nameBtn = doc.createElement('button');
                     nameBtn.type = 'button';
                     nameBtn.textContent = g.name;

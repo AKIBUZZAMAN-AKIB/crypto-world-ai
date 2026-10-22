@@ -19,7 +19,7 @@ import { injectStyles } from '../ui/styles';
 import { attachLongPress, isRtl } from '../ui/gesture';
 import { Menu, type MenuItemDescriptor } from '../ui/components/menu';
 import { IMPLICIT_GROUP } from '../state/document';
-import { SYNC_GROUP_MARKS, groupMarkColor } from '../workspace/sync-marks';
+import { groupsForCount, groupIdOf, groupMarkColor, groupMarkOf } from '../workspace/sync-marks';
 
 const STYLE_ID = 'vela-sync-matrix';
 
@@ -276,6 +276,8 @@ export interface SyncMatrixOptions {
     /** Pick one group DIRECTLY. Tapping cycles, which is seven taps to reach the eighth
      *  group; right-click / long-press opens the whole palette instead. */
     onSetCellGroup?: (kind: string, cellId: string, mark: string | null) => void;
+    /** The user's name for a group id — shown beside the mark in the picker's palette. */
+    groupName?: (id: string) => string | undefined;
     /** Tapping the ALL cell drops every chart into one group for that link. */
     onAllInOneGroup?: (kind: string) => void;
     /** Re-read the owner's markup after a tap (switch rows, hero count, …). */
@@ -441,13 +443,30 @@ export class SyncMatrix {
 
     private paletteItems(): MenuItemDescriptor[] {
         const cur = this.pick?.current;
-        const items: MenuItemDescriptor[] = SYNC_GROUP_MARKS.map((mark, i) => ({
-            id: `mark:${mark}`,
-            // The number is the stable half: a device without an emoji font still reads
-            // "Group 4", and the emoji rides along where it renders.
-            label: `Group ${i + 1} ${mark}`,
-            ...(mark === cur ? { checked: true } : {}),
-        }));
+        const curId = cur ? (groupIdOf(cur) ?? cur) : undefined;
+        // ONE mark per chart in this layout — a 1×1 offers one group, a 4×4 offers sixteen
+        // — plus any group already in use, so a group assigned in a bigger layout stays
+        // reachable after shrinking. The marks themselves can be repainted by the user,
+        // which is why they are read from the registry rather than from the static list.
+        const used = new Set<string>();
+        for (const link of this.lastLinks) {
+            for (const mark of Object.values(link.marks ?? {})) {
+                const id = groupIdOf(mark);
+                if (id) used.add(id);
+            }
+        }
+        const groups = groupsForCount(Math.max(1, this.lastCharts.length), used);
+        const items: MenuItemDescriptor[] = groups.map((def, i) => {
+            const mark = groupMarkOf(def.id) ?? def.mark;
+            const name = this.opts.groupName?.(def.id);
+            return {
+                id: `mark:${def.id}`,
+                // The number is the stable half: a device without an emoji font still reads
+                // "Group 4", and the glyph (palette or the user's own) rides along.
+                label: name ? `Group ${i + 1} ${mark} · ${name}` : `Group ${i + 1} ${mark}`,
+                ...(def.id === curId ? { checked: true } : {}),
+            };
+        });
         items.push({ id: 'none', label: 'No group — leave it', separatorBefore: true, ...(cur ? {} : { checked: true }) });
         return items;
     }

@@ -35,9 +35,11 @@ const CSS = `
     max-width: 264px;
     padding: 10px 12px;
     border-radius: 10px;
-    background: var(--vela-surface-2);
-    color: var(--vela-text);
-    border: 1px solid var(--vela-border);
+    /* Theme tokens that EXIST (an undefined custom property is not a fallback — the
+       declaration is dropped and the card renders as a white box on a dark chart). */
+    background: var(--vela-surface-elev);
+    color: var(--vela-fg);
+    border: 1px solid var(--vela-border-strong);
     box-shadow: 0 10px 28px -8px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.3);
     font: 500 12px/1.45 var(--vela-font, system-ui, -apple-system, 'Segoe UI', sans-serif);
     display: grid;
@@ -55,8 +57,8 @@ const CSS = `
     z-index: 2147481999;
     width: 9px;
     height: 9px;
-    background: var(--vela-surface-2);
-    border-right: 1px solid var(--vela-border);
+    background: var(--vela-surface-elev);
+    border-right: 1px solid var(--vela-border-strong);
     border-bottom: 1px solid var(--vela-border);
     transform: rotate(45deg);
     opacity: 0;
@@ -69,7 +71,7 @@ const CSS = `
     margin: 0 2px;
     padding: 0 4px;
     border-radius: 4px;
-    background: var(--vela-surface-3);
+    background: var(--vela-surface-sunken);
     border: 1px solid var(--vela-border);
     font-weight: 600;
 }
@@ -81,11 +83,11 @@ const CSS = `
     display: grid;
     place-items: center;
     border-radius: 6px;
-    color: var(--vela-text-dim);
+    color: var(--vela-fg-muted);
     cursor: pointer;
     margin: -2px -4px 0 0;
 }
-.vela-tip-x:hover { background: var(--vela-hover); color: var(--vela-text); }
+.vela-tip-x:hover { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
 .vela-tip-x:focus-visible { outline: 2px solid var(--vela-focus); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) {
     .vela-tip, .vela-tip-arrow { transition: none; transform: none; }

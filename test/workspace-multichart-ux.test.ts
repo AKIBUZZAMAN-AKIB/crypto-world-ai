@@ -113,9 +113,10 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         expect(chip().textContent).toBe('🔴');
         // …and the chart's OWN status line wears the same emoji (TV's placement).
         expect(ws.cell('btc')!.host.querySelector('.vela-sl-marks')?.textContent).toBe('🔴');
-        // The palette is ten marks deep: the cell walks it in order, and the last tap
-        // unlinks the chart — TV's "uncheck the emoji to leave the group".
-        for (let i = 1; i < 10; i += 1) {
+        // The palette is as deep as the LAYOUT: four charts, four marks. The cell walks
+        // them in order, and the tap after the last one unlinks the chart — TV's
+        // "uncheck the emoji to leave the group".
+        for (let i = 1; i < 4; i += 1) {
             chip().click();
             expect(ws.sync.groupOf('symbol', 'btc')).toBe(SYNC_GROUP_IDS[i]);
         }
@@ -192,15 +193,16 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         const palette = document.querySelector<HTMLElement>('.vela-menu-item[data-vei-id^="mark:"]')?.closest('.vela-menu');
         expect(palette).not.toBeNull();
         const rows = [...palette!.querySelectorAll<HTMLElement>('.vela-menu-item')];
+        // FOUR charts in this layout, so FOUR groups are offered — the same slice the
+        // chip cycles. A 4×4 would offer sixteen; the palette is not a fixed ten.
         expect(rows.map((r) => r.textContent?.trim().split(' ').slice(0, 2).join(' '))).toEqual([
-            'Group 1', 'Group 2', 'Group 3', 'Group 4', 'Group 5',
-            'Group 6', 'Group 7', 'Group 8', 'Group 9', 'Group 10',
+            'Group 1', 'Group 2', 'Group 3', 'Group 4',
             'No group',
         ]);
-        // The rows carry the whole palette, in order, with the emoji alongside the
-        // number (a font-less device still reads "Group 8").
-        expect(rows[7]!.textContent).toContain('⚫');
-        expect(rows[10]!.textContent).toContain('No group');
+        // The rows carry the palette in order, with the emoji alongside the number (a
+        // font-less device still reads "Group 4").
+        expect(rows[2]!.textContent).toContain('🟡');
+        expect(rows[4]!.textContent).toContain('No group');
         // The pick itself goes through the workspace's direct setter. (Zag menus select
         // on real pointer events, which jsdom does not synthesise — the click path is
         // covered by the browser probe, `test/browser/sync-doors.mjs`.)
