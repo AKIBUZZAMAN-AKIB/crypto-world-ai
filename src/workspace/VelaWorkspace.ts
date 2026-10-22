@@ -233,8 +233,24 @@ const ALERT_CAP = 50;
 const REPLAY_JUMP_PANS = 8;
 
 const STYLE_ID = 'vela-workspace';
+/** Distinct ids for the main landmark when several workspaces share a document. */
+let workspaceSeq = 0;
 const CSS = `
 .vela-workspace { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--vela-bg); }
+/* Two landmarks and a way past the chrome. The shell is one big div tree: without a
+   main region a screen reader announces no structure at all, and without the skip link
+   every keyboard user walks the whole topbar (about ten stops) before the first chart.
+   The link is out of flow until it takes focus, so it costs no pixels. */
+.vela-ws-skip {
+    position: absolute; z-index: 2147483000; left: 10px; top: -60px;
+    padding: 8px 12px; border-radius: 8px; border: 1px solid var(--vela-border);
+    background: var(--vela-surface-elev); color: var(--vela-fg);
+    font: 600 12px/1.6 system-ui, -apple-system, 'Segoe UI', sans-serif; text-decoration: none;
+}
+.vela-ws-skip:focus { top: 10px; outline: 2px solid var(--vela-accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: no-preference) { .vela-ws-skip { transition: top 120ms cubic-bezier(.2,.7,.3,1); } }
+.vela-ws-main:focus { outline: none; }
+.vela-ws-main:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: -2px; }
 .vela-ws-main { position: relative; display: flex; flex-direction: row; flex: 1 1 auto; min-height: 0; }
 .vela-ws-toolbar { position: relative; flex: none; }
 .vela-ws-strips { position: relative; flex: none; display: flex; flex-direction: column; min-width: 0; }
@@ -354,6 +370,8 @@ export class VelaWorkspace {
     private pendingReplayAnchor: HTMLElement | null = null;
 
     private readonly gridEl: HTMLElement;
+    /** Id of the main landmark — the skip link's target. */
+    private readonly mainId: string;
     private readonly stripsEl: HTMLElement;
     private readonly events = new TypedEventBus<WorkspaceEventMap>();
     private readonly feed = new MultiProviderFeed();
@@ -662,6 +680,13 @@ export class VelaWorkspace {
         injectStyles('vela-reduced-motion', REDUCED_MOTION_CSS, doc);
         this.root = doc.createElement('div');
         this.root.className = 'vela-workspace';
+        // First child on purpose: it must be the FIRST stop in the document.
+        this.mainId = `vela-ws-main-${(workspaceSeq += 1)}`;
+        const skip = doc.createElement('a');
+        skip.className = 'vela-ws-skip';
+        skip.href = `#${this.mainId}`;
+        skip.textContent = 'Skip to charts';
+        this.root.appendChild(skip);
         ensureUIHost(this.root, resolveTheme(opts.theme));
 
         // ONE shared feed: providers registered once; every cell's `chart.data` operates
@@ -808,6 +833,12 @@ export class VelaWorkspace {
         // ── main row: the shared drawing toolbar + the grid + the docked side panels ──
         const main = doc.createElement('div');
         main.className = 'vela-ws-main';
+        main.id = this.mainId;
+        main.setAttribute('role', 'main');
+        main.setAttribute('aria-label', 'Chart workspace');
+        // Focusable as a TARGET only (the skip link lands here); never rebuilt, so the id
+        // stays valid for the life of the workspace.
+        main.tabIndex = -1;
         // The `drawings` option drives the SHARED drawing surface the way it drives a
         // lone chart's own bar: `false` removes the whole feature (the headless
         // `chart.drawings` API stays), `{ toolbar: false }` hides the bar,
