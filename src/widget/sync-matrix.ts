@@ -21,8 +21,137 @@ import { groupMarkColor } from '../workspace/sync-marks';
 
 const STYLE_ID = 'vela-sync-matrix';
 
-/** The chip, the table and the scroller — shared by both shells. */
+/** The chip, the table and the scroller — shared by both shells.
+ *  Sizes live in custom properties so the phone (320px) and the desktop side pane
+ *  (302px) share one stylesheet: only the tokens move. */
 export const SYNC_MATRIX_CSS = `
+.vela-md-matrixwrap {
+    --sx-label: 78px;
+    --sx-cell: 34px;
+    --sx-all: 42px;
+    --sx-head: 26px;
+    --sx-gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    /* No horizontal padding: the pinned column must cover the scrollport edge to the
+       pixel, or the chart columns show through a 2px sliver as they scroll under it. */
+    margin: 0;
+    padding: 0 0 3px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--vela-border-strong) transparent;
+    container-type: inline-size;
+}
+.vela-md-matrixwrap::-webkit-scrollbar { height: 8px; }
+.vela-md-matrixwrap::-webkit-scrollbar-thumb {
+    background: var(--vela-border-strong);
+    border-radius: 8px;
+}
+.vela-md-matrixwrap::-webkit-scrollbar-track { background: transparent; }
+/* Only while there IS more table to the right (set from JS after layout). */
+.vela-md-matrixwrap[data-more] {
+    mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent);
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent);
+}
+.vela-md-matrix {
+    display: grid;
+    grid-template-columns: var(--sx-label) repeat(var(--vela-md-cols, 4), minmax(var(--sx-cell), 1fr)) var(--sx-all);
+    gap: var(--sx-gap) 2px;
+    align-items: center;
+    min-width: max-content;
+}
+/* Rows are wrappers with \`display: contents\` — the grid still lays them out, but a
+   :hover on the row can light the whole link across every chart. */
+.vela-md-matrix-row { display: contents; }
+.vela-md-matrix-row:hover .vela-md-matrix-chip[data-on] { filter: brightness(1.12); }
+.vela-md-matrix-row:hover .vela-md-matrix-label { color: var(--vela-fg-bright); }
+
+/* ── the header row ─────────────────────────────────────────────────────────── */
+.vela-md-matrix-corner {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    height: var(--sx-head);
+    padding-right: 6px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--vela-fg-faint, var(--vela-fg-muted));
+    background: var(--vela-surface-elev);
+}
+.vela-md-matrix-head {
+    all: unset;
+    box-sizing: border-box;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: var(--sx-head);
+    border-radius: 7px;
+    font-size: 10.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+.vela-md-matrix-head::after {
+    content: '';
+    display: none;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--sx-head-mark, var(--vela-accent, var(--vela-selected-bg)));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--sx-head-mark, transparent) 45%, transparent);
+}
+.vela-md-matrix-head[data-linked]::after { display: block; }
+.vela-md-matrix-head:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-md-matrix-head:active { background: var(--vela-hover-strong); }
+.vela-md-matrix-head[data-active] {
+    color: var(--vela-fg-bright);
+    background: var(--vela-hover);
+    box-shadow: inset 0 -2px 0 var(--vela-accent, var(--vela-selected-bg));
+}
+.vela-md-matrix-head[data-focus] { box-shadow: inset 0 0 0 1.5px var(--vela-accent, var(--vela-selected-bg)); }
+.vela-md-matrix-head:focus-visible,
+.vela-md-matrix-chip:focus-visible {
+    outline: 2px solid var(--vela-accent, var(--vela-selected-bg));
+    outline-offset: 1px;
+}
+.vela-md-matrix-allhead { color: var(--vela-fg-faint, var(--vela-fg-muted)); font-size: 9px; letter-spacing: 0.5px; }
+
+/* ── the link column ────────────────────────────────────────────────────────── */
+.vela-md-matrix-label {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    height: var(--sx-cell);
+    padding-right: 6px;
+    font-size: 11.5px;
+    line-height: 1.2;
+    color: var(--vela-fg);
+    background: var(--vela-surface-elev);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: color 0.12s ease;
+}
+/* The pinned column casts a shadow only once the table has really been scrolled —
+   before that it is just a column, not a floating one. */
+.vela-md-matrixwrap[data-scrolled] .vela-md-matrix-label,
+.vela-md-matrixwrap[data-scrolled] .vela-md-matrix-corner {
+    box-shadow: 10px 0 14px -10px rgba(0, 0, 0, 0.75);
+}
+
+/* ── the chips ──────────────────────────────────────────────────────────────── */
 .vela-md-chip {
     all: unset;
     flex: none;
@@ -40,94 +169,60 @@ export const SYNC_MATRIX_CSS = `
     color: var(--vela-fg-muted);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
 }
 .vela-md-chip[data-on='1'] {
     color: var(--vela-fg-bright);
-    border-color: color-mix(in srgb, var(--vela-md-mark, var(--vela-accent, var(--vela-selected-bg))) 70%, transparent);
+    border-color: color-mix(in srgb, var(--vela-md-mark, var(--vela-accent, var(--vela-selected-bg))) 72%, transparent);
     background: color-mix(in srgb, var(--vela-md-mark, var(--vela-accent, var(--vela-selected-bg))) 20%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-md-mark, transparent) 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-md-mark, transparent) 24%, transparent);
 }
 .vela-md-chip[data-implicit='1'] { border-style: dashed; }
-.vela-md-matrixwrap {
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-x: contain;
-    -webkit-overflow-scrolling: touch;
-    margin: 0 -2px;
-    padding: 0 2px 2px;
-}
-.vela-md-matrixwrap[data-more] {
-    mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
-}
-.vela-md-matrix {
-    display: grid;
-    grid-template-columns: 78px repeat(var(--vela-md-cols, 4), minmax(38px, 1fr)) 44px;
-    gap: 3px 2px;
-    align-items: center;
-    min-width: max-content;
-}
-.vela-md-matrix-corner {
-    position: sticky;
-    left: 0;
-    z-index: 1;
-    padding-right: 6px;
-    font-size: 9.5px;
-    font-weight: 600;
-    letter-spacing: 0.4px;
-    text-transform: uppercase;
-    color: var(--vela-fg-faint, var(--vela-fg-muted));
-    background: var(--vela-surface-elev);
-}
-.vela-md-matrix-head {
-    all: unset;
-    box-sizing: border-box;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    min-height: 26px;
-    padding: 0 2px;
-    border-radius: 6px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
-    color: var(--vela-fg-muted);
-    cursor: pointer;
-    white-space: nowrap;
-}
-.vela-md-matrix-head::after {
-    content: attr(data-marks);
-    font-size: 9px;
-    font-weight: 400;
-    letter-spacing: 0;
-    opacity: 0.9;
-}
-.vela-md-matrix-head[data-active] { color: var(--vela-fg-bright); background: var(--vela-hover); }
-.vela-md-matrix-head[data-focus] { box-shadow: inset 0 0 0 1px var(--vela-accent, var(--vela-selected-bg)); }
-.vela-md-matrix-head:active { background: var(--vela-hover-strong); }
-.vela-md-matrix-allhead { color: var(--vela-fg-muted); font-size: 9.5px; }
-.vela-md-matrix-label {
-    position: sticky;
-    left: 0;
-    z-index: 1;
-    padding-right: 4px;
-    font-size: 11.5px;
-    color: var(--vela-fg);
-    background: var(--vela-surface-elev);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
+.vela-md-chip:active { transform: scale(0.94); }
+
 .vela-md-matrix-chip {
     width: 100%;
+    height: var(--sx-cell);
     min-width: 0;
-    height: 34px;
-    border-radius: 9px;
-    font-size: 15px;
+    border-radius: 10px;
+    font-size: 16px;
 }
-.vela-md-chip-all { font-size: 9px; font-weight: 700; letter-spacing: 0.3px; color: var(--vela-fg-muted); }
+/* An empty cell has to read as “tap me”, not as a hole: the dash is dim, and hover
+   lifts it to a real outline. */
+.vela-md-matrix-chip:not([data-on]) { color: color-mix(in srgb, var(--vela-fg-muted) 62%, transparent); }
+.vela-md-matrix-chip:not([data-on]):hover {
+    color: var(--vela-fg-muted);
+    border-color: var(--vela-border-strong);
+    background: var(--vela-hover);
+}
+.vela-md-chip-all {
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: var(--vela-fg-faint, var(--vela-fg-muted));
+}
 .vela-md-chip-all[data-on='1'] { color: var(--vela-fg-bright); border-style: solid; }
+
+/* A WIDE table must not stretch its cells into slabs: past this width the columns
+   keep their size and the table sits left, like a real table rather than a grid of
+   banners. (Landscape phone: 8 columns used to become 85px each.) */
+@container (min-width: 560px) {
+    .vela-md-matrix {
+        grid-template-columns: var(--sx-label) repeat(var(--vela-md-cols, 4), var(--sx-cell)) var(--sx-all);
+        justify-content: start;
+    }
+    .vela-md-matrix-wrap { max-width: none; }
+}
+/* ── phone: tighter cells, never a sideways page ────────────────────────────── */
+@media (max-width: 380px) {
+    .vela-md-matrixwrap { --sx-label: 70px; --sx-cell: 32px; --sx-all: 38px; --sx-head: 24px; --sx-gap: 3px; }
+    .vela-md-matrix-label { font-size: 11px; }
+}
+/* Landscape phones and short windows: keep the whole table reachable without the
+   sheet eating the chart. */
+@media (max-height: 520px) {
+    .vela-md-matrixwrap { --sx-cell: 30px; --sx-head: 24px; }
+}
 `;
 
 export interface SyncMatrixChart {
@@ -191,6 +286,8 @@ export class SyncMatrix {
         injectStyles(STYLE_ID, SYNC_MATRIX_CSS, doc);
         this.el = doc.createElement('div');
         this.el.className = 'vela-md-matrixwrap';
+        this.el.setAttribute('role', 'group');
+        this.el.setAttribute('aria-label', 'Chart syncing: one row per link, one column per chart');
         if (opts.shell) this.el.dataset.shell = opts.shell;
         this.grid = doc.createElement('div');
         this.grid.className = 'vela-md-matrix';
@@ -203,6 +300,8 @@ export class SyncMatrix {
         const atEnd = this.el.scrollLeft + this.el.clientWidth >= this.el.scrollWidth - 2;
         if (atEnd) delete this.el.dataset.more;
         else this.el.dataset.more = '1';
+        if (this.el.scrollLeft > 0) this.el.dataset.scrolled = '1';
+        else delete this.el.dataset.scrolled;
     };
 
     /**
@@ -243,10 +342,12 @@ export class SyncMatrix {
         this.allChips.clear();
         this.grid.style.setProperty('--vela-md-cols', String(Math.max(1, charts.length)));
 
+        const headRow = doc.createElement('div');
+        headRow.className = 'vela-md-matrix-row';
         const corner = doc.createElement('span');
         corner.className = 'vela-md-matrix-corner';
         corner.textContent = 'Link';
-        this.grid.append(corner);
+        headRow.append(corner);
 
         for (const c of charts) {
             const head = doc.createElement('button');
@@ -261,21 +362,25 @@ export class SyncMatrix {
                 this.opts.onSelectChart?.(c.id);
                 this.opts.onChange?.();
             });
-            this.grid.append(head);
+            headRow.append(head);
             this.heads.set(c.id, head);
         }
         if (this.opts.onAllInOneGroup) {
             const allHead = doc.createElement('span');
             allHead.className = 'vela-md-matrix-head vela-md-matrix-allhead';
             allHead.textContent = 'ALL';
-            this.grid.append(allHead);
+            headRow.append(allHead);
         }
+        this.grid.append(headRow);
 
         for (const link of links) {
+            const row = doc.createElement('div');
+            row.className = 'vela-md-matrix-row';
+            row.dataset.link = link.id;
             const label = doc.createElement('span');
             label.className = 'vela-md-matrix-label';
             label.textContent = link.label;
-            this.grid.append(label);
+            row.append(label);
             for (const c of charts) {
                 const chip = doc.createElement('button');
                 chip.type = 'button';
@@ -286,7 +391,7 @@ export class SyncMatrix {
                     this.opts.onCycleCellGroup?.(link.id, c.id);
                     this.opts.onChange?.();
                 });
-                this.grid.append(chip);
+                row.append(chip);
                 this.chips.set(`${link.id}\u0000${c.id}`, chip);
             }
             if (this.opts.onAllInOneGroup) {
@@ -301,9 +406,10 @@ export class SyncMatrix {
                     this.opts.onAllInOneGroup?.(link.id);
                     this.opts.onChange?.();
                 });
-                this.grid.append(all);
+                row.append(all);
                 this.allChips.set(link.id, all);
             }
+            this.grid.append(row);
         }
         this.measure();
     }
@@ -328,6 +434,11 @@ export class SyncMatrix {
             if (marks.length) head.dataset.marks = marks.slice(0, 2).join('');
             else delete head.dataset.marks;
             head.toggleAttribute('data-linked', marks.length > 0);
+            // A dot in the group's own hue, not the emoji: two glyphs in a 34px header
+            // pushed the number out of the column ("BT…" all over again).
+            const hue = groupMarkColor(marks[0]);
+            if (hue) head.style.setProperty('--sx-head-mark', hue);
+            else head.style.removeProperty('--sx-head-mark');
         }
         for (const link of links) {
             for (const c of charts) {

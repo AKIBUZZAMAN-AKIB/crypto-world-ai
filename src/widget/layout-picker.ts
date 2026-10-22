@@ -32,6 +32,10 @@ const CSS = `
     user-select: none;
     transform-origin: top;
     animation: vela-lp-in var(--vela-dur-fast) var(--vela-ease);
+    /* A short window must not clip the footer off the bottom of the screen. */
+    max-height: calc(100vh - 20px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 @keyframes vela-lp-in {
     from { opacity: 0; transform: translateY(-4px) scale(0.98); }
@@ -104,14 +108,21 @@ const CSS = `
 }
 .vela-lp-charts[hidden], .vela-lp-vsep[hidden] { display: none !important; }
 .vela-lp-charthint { margin: -4px 0 6px; font-size: 10.5px; line-height: 1.35; color: var(--vela-fg-muted); }
+.vela-lp-charts .vela-md-matrixwrap { --sx-cell: 36px; --sx-head: 28px; }
 .vela-lp-chartscroll {
     overflow-y: auto;
     overflow-x: hidden;
-    max-height: 286px;
+    /* Seven links at 36px + the header + the gaps — the whole table, no clipping. */
+    max-height: 320px;
     margin-right: -6px;
     padding-right: 6px;
     overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--vela-border-strong) transparent;
 }
+.vela-lp-chartscroll::-webkit-scrollbar { width: 8px; }
+.vela-lp-chartscroll::-webkit-scrollbar-thumb { background: var(--vela-border-strong); border-radius: 8px; }
+.vela-lp-chartscroll::-webkit-scrollbar-track { background: transparent; }
 .vela-lp-charts .vela-md-matrix-label,
 .vela-lp-charts .vela-md-matrix-corner { background: var(--vela-surface); }
 /* Preset glyphs: a compact 4-up grid of icon buttons (the canvas cannot draw them). */
