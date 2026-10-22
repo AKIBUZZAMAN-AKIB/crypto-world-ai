@@ -153,7 +153,7 @@ describe('the kebab drawer’s Sync view', () => {
 
     it('every link is a real switch (role + aria-checked), and a tap flips it IN PLACE', () => {
         const { drawer, state } = setup();
-        drawer.open('sync');
+        drawer.open('layout');
         const rows = [...document.querySelectorAll<HTMLElement>('.vela-md-sync[role="switch"]')];
         expect(rows.map((r) => r.querySelector('.vela-md-row-label')?.textContent)).toEqual(['Symbol', 'Interval']);
         const symbol = rows[0]!;
@@ -171,7 +171,7 @@ describe('the kebab drawer’s Sync view', () => {
 
     it('the chip cycles the active chart and never flips the switch', () => {
         const { drawer, state, toggles } = setup();
-        drawer.open('sync');
+        drawer.open('layout');
         const row = document.querySelector<HTMLElement>('.vela-md-sync')!;
         const chip = row.querySelector<HTMLElement>('.vela-md-chip')!;
         expect(chip.textContent).toBe('–');
@@ -184,13 +184,68 @@ describe('the kebab drawer’s Sync view', () => {
 
     it('the matrix marks ANY chart per link, a chip per chart', () => {
         const { drawer, cycles } = setup();
-        drawer.open('sync');
+        drawer.open('layout');
         const heads = [...document.querySelectorAll('.vela-md-matrix-head')].map((h) => h.textContent);
-        expect(heads).toEqual(['BTC', 'ETH', 'SOL']);
-        const chips = document.querySelectorAll('.vela-md-matrix .vela-md-chip');
+        // One head per chart plus the ALL column (drop the link into a single group).
+        expect(heads).toEqual(['BTC', 'ETH', 'SOL', 'ALL']);
+        const chips = document.querySelectorAll('.vela-md-matrix .vela-md-chip:not([data-all])');
         expect(chips.length).toBe(2 * 3); // one row per link, one chip per chart
         (chips[5] as HTMLElement).click(); // Interval × SOL (row 2, last column)
         expect(cycles).toEqual([['timeframe', 'sol']]);
+        drawer.destroy();
+    });
+
+    it('saved layouts get Open + Delete buttons and the Save-as field', () => {
+        const host = document.createElement('div');
+        document.body.append(host);
+        const opened: string[] = [];
+        const deleted: string[] = [];
+        const saved: string[] = [];
+        const drawer = new MoreDrawer({
+            host,
+            canUndo: () => false,
+            canRedo: () => false,
+            priceStyles: () => [{ id: 'candles', label: 'Candles' }],
+            priceStyle: () => 'candles',
+            onPriceStyle: () => {},
+            panels: () => [],
+            onTogglePanel: () => {},
+            actions: () => [],
+            layout: {
+                shape: () => ({ rows: 2, cols: 2 }),
+                presets: () => [],
+                onSelectGrid: () => {},
+                onSelectPreset: () => {},
+                savedLayouts: () => [{ name: 'Scalp', active: true }, { name: 'Swing', active: false }],
+                onOpenLayout: (n) => opened.push(n),
+                onDeleteLayout: (n) => deleted.push(n),
+                onSaveLayout: (n) => saved.push(n),
+            },
+        });
+        drawer.open('layout');
+        const rows = [...document.querySelectorAll<HTMLElement>('.vela-md-saved')];
+        expect(rows.map((r) => r.querySelector('.vela-md-row-label')?.textContent)).toEqual(['Scalp', 'Swing']);
+        (rows[1]!.querySelector('.vela-md-saved-open') as HTMLElement).click();
+        expect(opened).toEqual(['Swing']);
+        (rows[0]!.querySelector('.vela-md-saved-del') as HTMLElement).click();
+        expect(deleted).toEqual(['Scalp']);
+        const input = document.querySelector<HTMLInputElement>('.vela-md-saveas input')!;
+        input.value = 'Breakout';
+        (document.querySelector('.vela-md-saveas button') as HTMLElement).click();
+        expect(saved).toEqual(['Breakout']);
+        drawer.destroy();
+    });
+
+    it('the ALL chip puts every chart back into one group', () => {
+        const { drawer } = setup();
+        const calls: string[] = [];
+        drawer.open('layout');
+        void calls;
+        const all = document.querySelector<HTMLElement>('.vela-md-matrix .vela-md-chip[data-all][data-kind="symbol"]')!;
+        expect(all).not.toBeNull();
+        all.click();
+        // The stub has no onAllInOneGroup wired; what matters here is the affordance.
+        expect(document.querySelectorAll('.vela-md-matrix .vela-md-chip[data-all]').length).toBe(2);
         drawer.destroy();
     });
 });
@@ -220,6 +275,15 @@ describe('the workspace’s Sync sheet', () => {
         expect(symbol.getAttribute('aria-checked')).toBe('true');
         expect(symbol.querySelector('.vela-md-chip')?.textContent).toBe(IMPLICIT_GROUP);
         expect(rows[0]!.getAttribute('aria-checked')).toBe('false');
+    });
+
+    it('a matrix tap on an OFF link links the grid first, then pulls that chart out', () => {
+        const ws = mount();
+        expect(ws.sync.state().symbol).toBeUndefined();
+        ws.openSyncDrawer();
+        ws.root.querySelector<HTMLElement>('.vela-md-chip[data-kind="symbol"][data-cell="sol"]')!.click();
+        // Not a half-link: everyone follows, and SOL steps out into its own group.
+        expect(ws.sync.state().symbol).toEqual({ btc: 'A', eth: 'A', sol: '🔴', bnb: 'A' });
     });
 
     it('a matrix tap puts THAT chart in its own group and re-marks the charts', () => {

@@ -2342,6 +2342,10 @@ export class VelaWorkspace {
      *  making it active (the chip IS the target). */
     cycleGroupFor(kind: SyncKind, cellId: string): void {
         if (!this.cellsById.has(cellId)) return;
+        // A chip tap on an OFF link means "link this chart": the link comes on in its
+        // all-cells form first, then this chart steps out into 🔴 — so the tap never
+        // leaves a half-link behind (one chart in a group, nothing else following).
+        if (!syncEnabled(this.syncOpts[kind])) this.sync.set(kind, true, false);
         const setting = this.syncOpts[kind];
         const current = markOf(setting, cellId);
         // `markOf` reports the implicit group for an all-cells link; `nextGroupMark`
@@ -2352,11 +2356,18 @@ export class VelaWorkspace {
         this.projectGroupMarks();
     }
 
-    /** Open the mobile drawer on its Sync view for ONE chart (the status line's marks are
+    /** Drop a link back into the all-cells form — every chart in one group (the matrix's
+     *  ALL chip). `align` stays false: nothing on screen is rewritten, only what follows. */
+    syncAllInOneGroup(kind: SyncKind): void {
+        this.sync.set(kind, true, false);
+        this.projectGroupMarks();
+    }
+
+    /** Open the layout sheet at its sync block for ONE chart (the status line's marks are
      *  the tap target — you mark the chart you are looking at, not the "active" one). */
     openSyncDrawer(cellId?: string): void {
         if (cellId && this.cellsById.has(cellId) && cellId !== this.activeId) this.setActiveCell(cellId);
-        this.openMoreDrawer('sync');
+        this.openMoreDrawer('layout', 'sync');
     }
 
     /** Re-draw every cell's emoji badge from the live links (cheap; runs on a link edit). */
@@ -3008,7 +3019,7 @@ export class VelaWorkspace {
         this.drawingsDrawer.open();
     }
 
-    private openMoreDrawer(view: 'main' | 'sync' = 'main'): void {
+    private openMoreDrawer(view: 'main' | 'layout' = 'main', focus?: 'sync'): void {
         // The drawer is the mobile counterpart of the topbar's tools — composition-
         // hidden entries lose their drawer rows too (handlers omitted ⇒ rows omitted).
         const has = (id: string): boolean => topbarHas(this.topbarComp, id);
@@ -3049,6 +3060,9 @@ export class VelaWorkspace {
                 onCycleGroup: (id) => this.cycleGroup(id as SyncKind),
                 charts: () => this.syncCharts(),
                 onCycleCellGroup: (kind, cellId) => this.cycleGroupFor(kind as SyncKind, cellId),
+                onAllInOneGroup: (kind) => this.syncAllInOneGroup(kind as SyncKind),
+                onApplySettingsToAll: () => this.applySettingsToAll(),
+                onApplyIndicatorsToAll: () => this.applyIndicatorsToAll(),
                 drawingsScope: () => this.drawingsScope,
                 onToggleDrawingsScope: () => this.setDrawingsScope(this.drawingsScope === 'global' ? 'layout' : 'global'),
                 hiddenCharts: () => this.hiddenChartCount,
@@ -3070,7 +3084,7 @@ export class VelaWorkspace {
                 }
             },
         });
-        this.moreDrawer.open(view);
+        this.moreDrawer.open(view, focus ? { focus } : {});
     }
 
     /** The contributed topbar actions the mobile menu lists, from one cluster. */

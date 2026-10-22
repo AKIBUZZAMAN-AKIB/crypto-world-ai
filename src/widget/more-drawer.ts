@@ -110,7 +110,10 @@ const CSS = `
     -webkit-tap-highlight-color: transparent;
 }
 .vela-md-preset:active { background: var(--vela-hover); }
-.vela-md-preset[data-checked='1'] { border-color: var(--vela-selected-bg); background: var(--vela-hover); }
+.vela-md-preset[data-checked='1'] {
+    border-color: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 65%, transparent);
+    background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 14%, transparent);
+}
 .vela-md-preset-glyph { display: block; width: 40px; height: 30px; color: var(--vela-fg-muted); }
 .vela-md-preset[data-checked='1'] .vela-md-preset-glyph { color: var(--vela-fg-bright); }
 .vela-md-preset-glyph svg { display: block; width: 100%; height: 100%; }
@@ -163,8 +166,8 @@ const CSS = `
     background: var(--vela-fg-muted);
     transition: transform 120ms ease, background 120ms ease;
 }
-.vela-md-sync[aria-checked='true'] .vela-md-switch { background: var(--vela-selected-bg); }
-.vela-md-sync[aria-checked='true'] .vela-md-switch::after { transform: translateX(16px); background: var(--vela-selected-fg); }
+.vela-md-sync[aria-checked='true'] .vela-md-switch { background: var(--vela-accent, var(--vela-selected-bg)); }
+.vela-md-sync[aria-checked='true'] .vela-md-switch::after { transform: translateX(16px); background: #fff; }
 /* The group chip: the ACTIVE chart's mark for this link, and its own tap target. */
 .vela-md-chip {
     all: unset;
@@ -185,7 +188,11 @@ const CSS = `
     -webkit-tap-highlight-color: transparent;
 }
 .vela-md-chip:active { background: var(--vela-hover); }
-.vela-md-chip[data-on='1'] { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); background: var(--vela-hover); }
+.vela-md-chip[data-on='1'] {
+    color: var(--vela-fg-bright);
+    border-color: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 60%, transparent);
+    background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 18%, transparent);
+}
 .vela-md-chip[data-implicit='1'] { border-style: dashed; }
 .vela-md-hint { padding: 2px 2px 8px; font-size: 12px; line-height: 1.4; color: var(--vela-fg-muted); }
 /* The marking MATRIX — one row per link, one chip per chart, so a phone can mark ANY
@@ -193,7 +200,7 @@ const CSS = `
    a phone does not, so the whole grid is the chip). */
 .vela-md-matrix {
     display: grid;
-    grid-template-columns: minmax(64px, 1fr) repeat(var(--vela-md-charts, 4), minmax(26px, 34px));
+    grid-template-columns: minmax(56px, 1fr) repeat(var(--vela-md-matrix-cols, 5), minmax(26px, 34px));
     gap: 4px 2px;
     align-items: center;
     padding: 2px 0 6px;
@@ -211,7 +218,129 @@ const CSS = `
 }
 .vela-md-matrix-head[data-active='1'] { color: var(--vela-fg-bright); }
 .vela-md-matrix-label { font-size: 12px; color: var(--vela-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vela-md-matrix .vela-md-chip { min-width: 26px; width: 28px; height: 28px; padding: 0; font-size: 12px; border-radius: 9px; }
+/* ── Layout setup: the hero card + the sticky two-stop nav ─────────────────────── */
+.vela-md-hero {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 2px 0 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--vela-border);
+    border-radius: 12px;
+    background: var(--vela-surface-elev);
+}
+.vela-md-hero-glyph { flex: none; width: 34px; height: 26px; color: var(--vela-fg-bright); }
+.vela-md-hero-glyph svg { display: block; width: 100%; height: 100%; }
+.vela-md-hero-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vela-md-hero-text b { font-size: 14px; font-weight: 600; color: var(--vela-fg-bright); }
+.vela-md-hero-text small { font-size: 11.5px; color: var(--vela-fg-muted); }
+.vela-md-nav {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    gap: 4px;
+    margin: 0 0 6px;
+    padding: 6px 0;
+    background: var(--vela-surface-elev);
+    border-bottom: 1px solid var(--vela-border);
+}
+.vela-md-navback {
+    all: unset;
+    flex: none;
+    width: 40px;
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-navback:active { background: var(--vela-hover); }
+.vela-md-navback .vela-icon { font-size: 16px; width: 16px; height: 16px; }
+.vela-md-navbtn {
+    all: unset;
+    flex: 1 1 0;
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-navbtn[data-active] {
+    background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 22%, transparent);
+    color: var(--vela-fg-bright);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 55%, transparent);
+}
+.vela-md-sec { display: block; scroll-margin-top: 48px; }
+/* A plain action row (no switch): same rhythm, the value as a pill. */
+.vela-md-sync.vela-md-plain .vela-md-pill {
+    flex: none;
+    padding: 3px 8px;
+    border: 1px solid var(--vela-border);
+    border-radius: 999px;
+    font-size: 11.5px;
+    color: var(--vela-fg-muted);
+}
+/* The ALL column: the one-tap \"every chart in one group\" reset. */
+.vela-md-matrix-all { color: var(--vela-fg); font-weight: 700; }
+.vela-md-chip-all[data-on='1'] { border-style: solid; }
+/* Save-as field (TV's \"Save layout as…\"). */
+.vela-md-saved { gap: 6px; }
+.vela-md-saved-open, .vela-md-saved-del {
+    all: unset;
+    flex: none;
+    height: 32px;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    border: 1px solid var(--vela-border);
+    font-size: 12px;
+    color: var(--vela-fg);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-saved-open:active, .vela-md-saved-del:active { background: var(--vela-hover); }
+.vela-md-saved-del { padding: 0 8px; width: 34px; }
+.vela-md-saved-del .vela-icon { font-size: 15px; width: 15px; height: 15px; color: var(--vela-fg-muted); }
+.vela-md-saveas { display: flex; gap: 8px; padding: 4px 0 8px; }
+.vela-md-saveas input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 38px;
+    padding: 0 10px;
+    border: 1px solid var(--vela-border);
+    border-radius: 8px;
+    background: var(--vela-bg, transparent);
+    color: var(--vela-fg-bright);
+    font-size: 13px;
+    font-family: inherit;
+}
+.vela-md-saveas input::placeholder { color: var(--vela-fg-faint, var(--vela-fg-muted)); }
+.vela-md-saveas button {
+    all: unset;
+    flex: none;
+    padding: 0 14px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 8px;
+    background: var(--vela-accent, var(--vela-selected-bg));
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.vela-md-saveas button:disabled { opacity: 0.4; }
 `;
 
 /** Paint a group chip: its mark, lit when it is in a group, dashed while it is the
@@ -281,6 +410,12 @@ export interface MoreDrawerOptions {
         charts?: () => Array<{ id: string; label: string; active: boolean }>;
         /** Cycle ONE chart through a link's groups (a matrix tap) — no active-cell detour. */
         onCycleCellGroup?: (id: string, cellId: string) => void;
+        /** Put EVERY chart in one group for this link (the matrix's ALL chip). */
+        onAllInOneGroup?: (id: string) => void;
+        /** "Apply settings to all charts" (TV's Chart Settings → Apply to all). */
+        onApplySettingsToAll?: () => void;
+        /** "Apply indicators to all charts" (TV's Apply these indicators to entire layout). */
+        onApplyIndicatorsToAll?: () => void;
         drawingsScope?: () => 'layout' | 'global';
         onToggleDrawingsScope?: () => void;
         hiddenCharts?: () => number;
@@ -298,21 +433,25 @@ export interface MoreDrawerOptions {
     onOpenChange?: (open: boolean) => void;
 }
 
-type MoreView = 'main' | 'style' | 'layout' | 'sync' | 'alerts';
+type MoreView = 'main' | 'style' | 'layout' | 'alerts';
 
 export class MoreDrawer {
     private readonly drawer: Drawer;
     private view: MoreView = 'main';
+    /** Scroll the layout sheet to its sync block on the next paint. */
+    private focus: 'sync' | undefined;
 
     constructor(private readonly opts: MoreDrawerOptions) {
         injectStyles(STYLE_ID, CSS, opts.host.ownerDocument);
         this.drawer = new Drawer({ host: opts.host, onOpenChange: opts.onOpenChange });
     }
 
-    /** Show the sheet. `view` opens straight into a sub-view — the status line's marks
-     *  and the main list's Sync row land on `'sync'`. */
-    open(view: MoreView = 'main'): void {
+    /** Show the sheet. `focus: 'sync'` opens the layout sheet scrolled to its sync
+     *  block (the status line's marks land there) — one surface, TV's Layout setup, not
+     *  a second tab. */
+    open(view: MoreView = 'main', opts: { focus?: 'sync' } = {}): void {
         this.view = view;
+        this.focus = opts.focus;
         this.render();
         this.drawer.show();
     }
@@ -327,6 +466,7 @@ export class MoreDrawer {
 
     private show(view: MoreView): void {
         this.view = view;
+        this.focus = undefined;
         this.render();
     }
 
@@ -334,11 +474,13 @@ export class MoreDrawer {
         const doc = this.drawer.body.ownerDocument;
         this.drawer.body.replaceChildren();
 
-        if (this.view !== 'main') {
+        // The layout sheet carries its own back button INSIDE its sticky nav (a header
+        // that scrolls away leaves the sheet looking like a dead end).
+        if (this.view !== 'main' && this.view !== 'layout') {
             const back = doc.createElement('button');
             back.className = 'vela-md-back';
             back.appendChild(iconEl('chevron-left', doc));
-            const backLabel = this.view === 'style' ? 'Chart type' : this.view === 'layout' ? 'Layout' : this.view === 'sync' ? 'Sync' : 'Alerts';
+            const backLabel = this.view === 'style' ? 'Chart type' : 'Alerts';
             back.appendChild(doc.createTextNode(backLabel));
             back.addEventListener('click', () => this.show('main'));
             this.drawer.body.appendChild(back);
@@ -346,9 +488,9 @@ export class MoreDrawer {
 
         if (this.view === 'main') this.renderMain(doc);
         else if (this.view === 'style') this.renderStyle(doc);
-        else if (this.view === 'layout') this.renderLayout(doc);
-        else if (this.view === 'sync') this.renderSync(doc);
+        else if (this.view === 'layout') this.renderLayout(doc, this.focus);
         else this.renderAlerts(doc);
+        this.focus = undefined;
     }
 
     private row(doc: Document, label: string, opts: { icon?: string; glyph?: string; value?: string; chevron?: boolean; checked?: boolean; onClick: () => void }): HTMLElement {
@@ -404,18 +546,22 @@ export class MoreDrawer {
             const shape = this.opts.layout.shape();
             const value = shape ? `${shape.cols} × ${shape.rows}` : this.opts.layout.presets().find((p) => p.checked)?.label;
             list.appendChild(this.row(doc, 'Layout', { icon: 'layout', glyph: this.opts.layout.glyph?.(), value, chevron: true, onClick: () => this.show('layout') }));
-            // Sync is its own view: on a phone the layout view is a wall of preset tiles,
-            // so burying the seven link switches under it meant scrolling past every
-            // layout to reach a toggle (they were, and it read as "the switch is dead").
+            // TV keeps sync INSIDE the layout menu; a phone cannot show its two columns,
+            // so the same sheet is one scroll. This second row is a shortcut that opens
+            // that sheet already at its sync block — not a second screen.
             const links = this.opts.layout.syncs?.() ?? [];
             if (links.length > 0) {
                 const on = links.filter((l) => l.checked).length;
                 list.appendChild(
-                    this.row(doc, 'Sync', {
+                    this.row(doc, 'Sync in layout', {
                         icon: 'group',
                         value: on > 0 ? `${on}/${links.length}` : 'off',
                         chevron: true,
-                        onClick: () => this.show('sync'),
+                        onClick: () => {
+                            this.view = 'layout';
+                            this.focus = 'sync';
+                            this.render();
+                        },
                     }),
                 );
             }
@@ -470,17 +616,98 @@ export class MoreDrawer {
         this.drawer.body.appendChild(list);
     }
 
-    private renderLayout(doc: Document): void {
+    /**
+     * TradingView's LAYOUT SETUP, as one sheet. The desktop app splits it into a wide
+     * popover with a layouts column and a sync column; a phone has one column, so the
+     * same surface becomes one scroll with a sticky two-stop nav (Layouts · Sync) — the
+     * pairing TV keeps is intact, and nothing is hidden behind a second tab. (TV's own
+     * guide for the menu: pick a layout, then "scroll down to Sync in Layout".)
+     *
+     *   • the grid canvas + the asymmetric presets, grouped by chart count;
+     *   • "Sync in layout": seven real switches (role=switch + aria-checked + a thumb —
+     *     the rows here used to be inert divs whose only ON cue was a background tint),
+     *     each with the ACTIVE chart's group chip beside it;
+     *   • "Chart syncing": the per-chart emoji matrix — any chart into any group in one
+     *     tap, plus an ALL chip per link that drops the whole grid back into one group;
+     *   • the layout actions TV puts in the same menu (apply settings / indicators to
+     *     every chart, drawing scope, dormant charts);
+     *   • saved layouts, with TV's "Save layout as…" field.
+     *
+     * Switch and chip taps repaint in place (values, aria-checked, marks) — the sheet is
+     * never rebuilt under the finger, so the list does not jump to the top mid-edit.
+     */
+    private renderLayout(doc: Document, focus?: 'sync'): void {
         const layout = this.opts.layout;
         if (!layout) return;
+        type LayoutOpts = NonNullable<MoreDrawerOptions['layout']>;
+        type SyncRowData = NonNullable<LayoutOpts['syncs']> extends () => Array<infer T> ? T : never;
+        // Narrowed once, outside the closures: TS drops captured narrowing inside a
+        // nested function, and every chip handler re-reads the live state.
+        const syncsOf: (() => SyncRowData[]) | null = layout.syncs ?? null;
+
         const list = doc.createElement('div');
         list.className = 'vela-md-list';
-        // The desktop dropdown's grid canvas, touch-sized: the current rows×cols
-        // rectangle is lit, a tap applies that grid immediately (no hover preview).
+
+        // ── the summary card: what this layout IS, at a glance ─────────────────
+        const shape = layout.shape();
+        const charts = layout.charts?.() ?? [];
+        const on = (syncsOf?.() ?? []).filter((s) => s.checked).length;
+        const hero = doc.createElement('div');
+        hero.className = 'vela-md-hero';
+        const heroGlyph = doc.createElement('span');
+        heroGlyph.className = 'vela-md-hero-glyph';
+        if (layout.glyph) heroGlyph.innerHTML = layout.glyph();
+        const heroText = doc.createElement('span');
+        heroText.className = 'vela-md-hero-text';
+        const heroTitle = doc.createElement('b');
+        heroTitle.textContent = shape ? `${shape.cols} × ${shape.rows} grid` : (layout.presets().find((p) => p.checked)?.label ?? 'Layout');
+        const heroSub = doc.createElement('small');
+        heroSub.textContent = `${charts.length || '?'} chart${charts.length === 1 ? '' : 's'} · ${on} link${on === 1 ? '' : 's'} on`;
+        heroText.append(heroTitle, heroSub);
+        hero.append(heroGlyph, heroText);
+        list.append(hero);
+
+        // ── sticky nav ─────────────────────────────────────────────────────────
+        const nav = doc.createElement('div');
+        nav.className = 'vela-md-nav';
+        const navButtons: HTMLElement[] = [];
+        const navBack = doc.createElement('button');
+        navBack.type = 'button';
+        navBack.className = 'vela-md-navback';
+        navBack.setAttribute('aria-label', 'Back to menu');
+        navBack.appendChild(iconEl('chevron-left', doc));
+        navBack.addEventListener('click', () => this.show('main'));
+        nav.append(navBack);
+        const goTo = (key: 'layouts' | 'sync'): void => {
+            for (const b of navButtons) b.toggleAttribute('data-active', b.dataset.tab === key);
+            const target = key === 'layouts' ? layoutsSec : syncSec;
+            // jsdom has no scrollIntoView — the sheet still renders, it just stays put.
+            try {
+                target.scrollIntoView?.({ block: 'start' });
+            } catch {
+                /* no scroller in this environment */
+            }
+        };
+        for (const [key, label] of [['layouts', 'Layouts'], ['sync', 'Sync']] as const) {
+            const b = doc.createElement('button');
+            b.type = 'button';
+            b.className = 'vela-md-navbtn';
+            b.dataset.tab = key;
+            b.textContent = label;
+            b.addEventListener('click', () => goTo(key));
+            nav.append(b);
+            navButtons.push(b);
+        }
+        list.append(nav);
+
+        // ── layouts ────────────────────────────────────────────────────────────
+        const layoutsSec = doc.createElement('section');
+        layoutsSec.className = 'vela-md-sec';
+
         const caption = doc.createElement('div');
         caption.className = 'vela-md-section';
         caption.textContent = 'Custom grid';
-        list.appendChild(caption);
+        layoutsSec.append(caption);
         const wrap = doc.createElement('div');
         wrap.className = 'vela-md-gridwrap';
         const { el: grid, squares } = layoutGridCanvas(doc);
@@ -491,11 +718,12 @@ export class MoreDrawer {
             layout.onSelectGrid(Number(sq.dataset.r) + 1, Number(sq.dataset.c) + 1);
             this.drawer.hide();
         });
-        wrap.appendChild(grid);
-        list.appendChild(wrap);
-        // The layouts TradingView calls "asymmetric" are the interesting ones — each gets a
-        // GLYPH TILE (the same mini-diagram the desktop dropdown draws) grouped by chart
-        // count, so a phone shows the shape of a layout instead of a wall of text rows.
+        wrap.append(grid);
+        layoutsSec.append(wrap);
+
+        // The layouts TradingView calls "asymmetric" are the interesting ones — each gets
+        // a GLYPH TILE (the same mini-diagram the desktop dropdown draws) grouped by
+        // chart count, so a phone shows the shape instead of a wall of text rows.
         const presets = layout.presets();
         const byCount = new Map<number, typeof presets>();
         for (const preset of presets) {
@@ -509,7 +737,7 @@ export class MoreDrawer {
             const heading = doc.createElement('div');
             heading.className = 'vela-md-section';
             heading.textContent = n > 0 ? `${n} chart${n === 1 ? '' : 's'}` : 'Layouts';
-            list.appendChild(heading);
+            layoutsSec.append(heading);
             const tiles = doc.createElement('div');
             tiles.className = 'vela-md-presets';
             for (const preset of group) {
@@ -524,197 +752,236 @@ export class MoreDrawer {
                 const glyph = doc.createElement('span');
                 glyph.className = 'vela-md-preset-glyph';
                 if (preset.icon) glyph.innerHTML = preset.icon;
-                const caption = doc.createElement('span');
-                caption.className = 'vela-md-preset-label';
-                caption.textContent = preset.label;
-                tile.append(glyph, caption);
+                const label = doc.createElement('span');
+                label.className = 'vela-md-preset-label';
+                label.textContent = preset.label;
+                tile.append(glyph, label);
                 tile.addEventListener('click', () => {
                     layout.onSelectPreset(preset.id);
                     this.drawer.hide();
                 });
-                tiles.appendChild(tile);
+                tiles.append(tile);
             }
-            list.appendChild(tiles);
+            layoutsSec.append(tiles);
         }
-        // The sync switches + the marking matrix live in their OWN view (renderSync) —
-        // see the main list's Sync row for why they no longer ride under the presets.
-        this.renderSavedLayouts(doc, list, layout);
-        this.drawer.body.appendChild(list);
-    }
+        list.append(layoutsSec);
 
-    /**
-     * The SYNC view — TradingView's link switches and its per-chart "Chart Syncing"
-     * chips, built for a thumb:
-     *
-     *   • one row per link with a real switch (role="switch" + aria-checked — the row
-     *     used to be an inert div, so the only ON cue was a background tint) and the
-     *     ACTIVE chart's mark as a chip beside it;
-     *   • a marking MATRIX under it: one chip per chart × link, so ANY chart can be put
-     *     in a group without first making it active (the desktop chip can only mark the
-     *     active cell — a phone has no hover to pick one with);
-     *   • the drawing scope + hidden charts rows.
-     *
-     * Every tap refreshes in place (values, aria-checked, chip marks) — the view is
-     * never rebuilt, so the list does not jump to the top mid-edit.
-     */
-    private renderSync(doc: Document): void {
-        const layout = this.opts.layout;
-        const readSyncs = layout?.syncs;
-        if (!layout || !readSyncs) return;
-        // Narrow once, outside the closures below (TS drops captured narrowing inside a
-        // nested function, and every chip handler re-reads the live state).
-        type SyncRowData = ReturnType<typeof readSyncs>[number];
-        const syncsOf: () => SyncRowData[] = readSyncs;
-        const list = doc.createElement('div');
-        list.className = 'vela-md-list';
+        // ── sync ───────────────────────────────────────────────────────────────
+        const syncSec = doc.createElement('section');
+        syncSec.className = 'vela-md-sec';
 
-        const heading = doc.createElement('div');
-        heading.className = 'vela-md-section';
-        heading.textContent = 'Sync';
-        list.appendChild(heading);
+        type SwitchRow = { id: string; el: HTMLElement; chip: HTMLButtonElement | null };
+        const switchRows: SwitchRow[] = [];
+        const matrixChips = new Map<string, HTMLButtonElement>();
 
-        type SyncRow = { id: string; switchEl: HTMLElement; chip: HTMLElement | null };
-        const rows: SyncRow[] = [];
-        // The chips in the matrix, keyed `kind\0cellId` — refreshed on every tap.
-        const matrixChips = new Map<string, HTMLElement>();
+        if (syncsOf) {
+            const head = doc.createElement('div');
+            head.className = 'vela-md-section';
+            head.textContent = 'Sync in layout';
+            syncSec.append(head);
 
-        for (const s of syncsOf()) {
-            const row = doc.createElement('button');
-            row.type = 'button';
-            row.className = 'vela-md-sync';
-            row.setAttribute('role', 'switch');
-            row.setAttribute('aria-checked', String(s.checked));
-            row.setAttribute('aria-label', `${s.label} sync`);
-            const label = doc.createElement('span');
-            label.className = 'vela-md-row-label';
-            label.textContent = s.label;
-            row.appendChild(label);
-
-            // The chip: the ACTIVE chart's mark for this link. Its own tap target, and it
-            // never flips the switch (stopPropagation — the desktop row's bug source).
-            let chip: HTMLButtonElement | null = null;
-            if (layout.onCycleGroup) {
-                chip = doc.createElement('button');
-                chip.type = 'button';
-                chip.className = 'vela-md-chip';
-                chip.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    layout.onCycleGroup?.(s.id);
-                    refresh();
-                });
-                row.appendChild(chip);
-            }
-
-            const track = doc.createElement('span');
-            track.className = 'vela-md-switch';
-            track.setAttribute('aria-hidden', 'true');
-            row.appendChild(track);
-            row.addEventListener('click', () => {
-                layout.onToggleSync?.(s.id);
-                refresh();
-            });
-            list.appendChild(row);
-            rows.push({ id: s.id, switchEl: row, chip });
-        }
-
-        // ── the marking matrix ──────────────────────────────────────────────────
-        const charts = layout.charts?.() ?? [];
-        if (charts.length > 1 && layout.onCycleCellGroup) {
-            const caption = doc.createElement('div');
-            caption.className = 'vela-md-section';
-            caption.textContent = 'Chart marks';
-            list.appendChild(caption);
-            const hint = doc.createElement('div');
-            hint.className = 'vela-md-hint';
-            hint.textContent = 'Tap a chart\'s mark to change the group it follows. Charts sharing a mark follow each other.';
-            list.appendChild(hint);
-
-            const grid = doc.createElement('div');
-            grid.className = 'vela-md-matrix';
-            grid.style.setProperty('--vela-md-charts', String(charts.length));
-            grid.appendChild(doc.createElement('span')); // empty corner
-            for (const c of charts) {
-                const head = doc.createElement('span');
-                head.className = 'vela-md-matrix-head';
-                head.textContent = c.label;
-                head.title = c.id;
-                if (c.active) head.dataset.active = '1';
-                grid.appendChild(head);
-            }
-            const syncs = syncsOf();
-            for (const s of syncs) {
+            for (const s of syncsOf()) {
+                const row = doc.createElement('button');
+                row.type = 'button';
+                row.className = 'vela-md-sync';
+                row.setAttribute('role', 'switch');
+                row.setAttribute('aria-checked', String(s.checked));
+                row.setAttribute('aria-label', `${s.label} sync`);
                 const label = doc.createElement('span');
-                label.className = 'vela-md-matrix-label';
+                label.className = 'vela-md-row-label';
                 label.textContent = s.label;
-                grid.appendChild(label);
-                for (const c of charts) {
-                    const cell = doc.createElement('button');
-                    cell.type = 'button';
-                    cell.className = 'vela-md-chip';
-                    cell.dataset.kind = s.id;
-                    cell.dataset.cell = c.id;
-                    cell.addEventListener('click', () => {
-                        layout.onCycleCellGroup?.(s.id, c.id);
+                row.append(label);
+                // The chip: the ACTIVE chart's mark for this link. Its own tap target, and
+                // it never flips the switch (stopPropagation).
+                let chip: HTMLButtonElement | null = null;
+                if (layout.onCycleGroup) {
+                    chip = doc.createElement('button');
+                    chip.type = 'button';
+                    chip.className = 'vela-md-chip';
+                    chip.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        layout.onCycleGroup?.(s.id);
                         refresh();
                     });
-                    grid.appendChild(cell);
-                    matrixChips.set(`${s.id}\u0000${c.id}`, cell);
+                    row.append(chip);
                 }
+                const track = doc.createElement('span');
+                track.className = 'vela-md-switch';
+                track.setAttribute('aria-hidden', 'true');
+                row.append(track);
+                row.addEventListener('click', () => {
+                    layout.onToggleSync?.(s.id);
+                    refresh();
+                });
+                syncSec.append(row);
+                switchRows.push({ id: s.id, el: row, chip });
             }
-            list.appendChild(grid);
-        }
 
-        if (layout.drawingsScope) {
-            const scopeRow = doc.createElement('button');
-            scopeRow.type = 'button';
-            scopeRow.className = 'vela-md-sync';
-            const scopeLabel = doc.createElement('span');
-            scopeLabel.className = 'vela-md-row-label';
-            scopeLabel.textContent = 'Drawing scope';
-            const scopeValue = doc.createElement('span');
-            scopeValue.className = 'vela-md-row-value';
-            scopeRow.append(scopeLabel, scopeValue);
-            scopeRow.addEventListener('click', () => {
-                layout.onToggleDrawingsScope?.();
-                scopeValue.textContent = layout.drawingsScope?.() ?? 'layout';
-                refresh();
-            });
-            list.appendChild(scopeRow);
-            scopeValue.textContent = layout.drawingsScope() ?? 'layout';
-        }
-        const hidden = layout.hiddenCharts?.() ?? 0;
-        if (hidden > 0 && layout.onClearPooled) {
-            list.appendChild(
-                this.row(doc, 'Hidden charts', {
-                    value: `remove ${hidden}`,
-                    onClick: () => {
-                        layout.onClearPooled?.();
-                        this.render();
-                    },
-                }),
-            );
-        }
-        this.drawer.body.appendChild(list);
+            if (layout.drawingsScope) {
+                const scopeRow = doc.createElement('button');
+                scopeRow.type = 'button';
+                scopeRow.className = 'vela-md-sync vela-md-plain';
+                const scopeLabel = doc.createElement('span');
+                scopeLabel.className = 'vela-md-row-label';
+                scopeLabel.textContent = 'Drawing scope';
+                const scopeValue = doc.createElement('span');
+                scopeValue.className = 'vela-md-pill';
+                scopeRow.append(scopeLabel, scopeValue);
+                scopeRow.addEventListener('click', () => {
+                    layout.onToggleDrawingsScope?.();
+                    scopeValue.textContent = layout.drawingsScope?.() ?? 'layout';
+                });
+                scopeValue.textContent = layout.drawingsScope() ?? 'layout';
+                syncSec.append(scopeRow);
+            }
 
-        // Re-read the live state and paint it into the nodes that already exist.
-        function refresh(): void {
+            // ── chart syncing (the emoji matrix) ────────────────────────────────
+            if (charts.length > 1 && layout.onCycleCellGroup) {
+                const heading = doc.createElement('div');
+                heading.className = 'vela-md-section';
+                heading.textContent = 'Chart syncing';
+                syncSec.append(heading);
+                const hint = doc.createElement('div');
+                hint.className = 'vela-md-hint';
+                hint.textContent = 'Tap a chart’s emoji to pick the group it follows — charts wearing the same emoji follow each other. ALL drops the link back into one group.';
+                syncSec.append(hint);
+
+                const gridEl = doc.createElement('div');
+                gridEl.className = 'vela-md-matrix';
+                gridEl.style.setProperty('--vela-md-charts', String(charts.length));
+                gridEl.style.setProperty('--vela-md-matrix-cols', String(charts.length + 1)); // + ALL
+                gridEl.append(doc.createElement('span')); // empty corner
+                for (const c of charts) {
+                    const head2 = doc.createElement('span');
+                    head2.className = 'vela-md-matrix-head';
+                    head2.textContent = c.label;
+                    head2.title = c.active ? `${c.label} (active)` : c.label;
+                    if (c.active) head2.dataset.active = '1';
+                    gridEl.append(head2);
+                }
+                const allHead = doc.createElement('span');
+                allHead.className = 'vela-md-matrix-head vela-md-matrix-all';
+                allHead.textContent = 'ALL';
+                gridEl.append(allHead);
+
+                for (const s of syncsOf()) {
+                    const label = doc.createElement('span');
+                    label.className = 'vela-md-matrix-label';
+                    label.textContent = s.label;
+                    gridEl.append(label);
+                    for (const c of charts) {
+                        const cell = doc.createElement('button');
+                        cell.type = 'button';
+                        cell.className = 'vela-md-chip';
+                        cell.dataset.kind = s.id;
+                        cell.dataset.cell = c.id;
+                        cell.addEventListener('click', () => {
+                            layout.onCycleCellGroup?.(s.id, c.id);
+                            refresh();
+                        });
+                        gridEl.append(cell);
+                        matrixChips.set(`${s.id}\u0000${c.id}`, cell);
+                    }
+                    // ALL: one group for every chart (TV's all-cells form) — the fast way
+                    // out of a split grid.
+                    const all = doc.createElement('button');
+                    all.type = 'button';
+                    all.className = 'vela-md-chip vela-md-chip-all';
+                    all.dataset.kind = s.id;
+                    all.dataset.all = '1';
+                    all.addEventListener('click', () => {
+                        layout.onAllInOneGroup?.(s.id);
+                        refresh();
+                    });
+                    gridEl.append(all);
+                    matrixChips.set(`${s.id}\u0000all`, all);
+                }
+                syncSec.append(gridEl);
+            }
+
+            // ── the layout-wide actions TV keeps in the same menu ──────────────
+            if (layout.onApplySettingsToAll || layout.onApplyIndicatorsToAll) {
+                const heading = doc.createElement('div');
+                heading.className = 'vela-md-section';
+                heading.textContent = 'This layout';
+                syncSec.append(heading);
+            }
+            if (layout.onApplySettingsToAll) {
+                syncSec.append(
+                    this.row(doc, 'Apply settings to all charts', {
+                        icon: 'style-line',
+                        onClick: () => {
+                            layout.onApplySettingsToAll?.();
+                            this.drawer.hide();
+                        },
+                    }),
+                );
+            }
+            if (layout.onApplyIndicatorsToAll) {
+                syncSec.append(
+                    this.row(doc, 'Apply indicators to all charts', {
+                        icon: 'indicators',
+                        onClick: () => {
+                            layout.onApplyIndicatorsToAll?.();
+                            this.drawer.hide();
+                        },
+                    }),
+                );
+            }
+            const hidden = layout.hiddenCharts?.() ?? 0;
+            if (hidden > 0 && layout.onClearPooled) {
+                syncSec.append(
+                    this.row(doc, 'Hidden charts', {
+                        value: `remove ${hidden}`,
+                        onClick: () => {
+                            layout.onClearPooled?.();
+                            this.render();
+                        },
+                    }),
+                );
+            }
+        }
+        list.append(syncSec);
+
+        this.renderSavedLayouts(doc, list, layout);
+        this.drawer.body.append(list);
+
+        // Re-read the live state and repaint the nodes that already exist.
+        const refresh = (): void => {
+            if (!syncsOf) return;
             const live = syncsOf();
             const activeId = charts.find((c) => c.active)?.id;
             const byId = new Map(live.map((l) => [l.id, l]));
-            for (const r of rows) {
+            for (const r of switchRows) {
                 const s = byId.get(r.id);
                 if (!s) continue;
-                r.switchEl.setAttribute('aria-checked', String(s.checked));
-                if (r.chip) syncChipState(r.chip, s.marks?.[activeId ?? ''] ?? undefined);
+                r.el.setAttribute('aria-checked', String(s.checked));
+                if (r.chip) syncChipState(r.chip, s.marks?.[activeId ?? '']);
+                if (r.id === 'drawings') {
+                    /* the scope pill is its own row */
+                }
             }
             for (const [key, chip] of matrixChips) {
                 const [kind, cellId] = key.split('\u0000');
                 const s = byId.get(kind ?? '');
-                syncChipState(chip, s?.marks?.[cellId ?? ''] ?? undefined);
-                chip.setAttribute('aria-label', `${s?.label ?? kind} — ${cellId}: ${s?.marks?.[cellId ?? ''] ?? 'not linked'}`);
+                const mark = cellId === 'all' ? (s?.checked ? IMPLICIT_GROUP : undefined) : s?.marks?.[cellId ?? ''];
+                syncChipState(chip, mark);
+                chip.setAttribute('aria-label', cellId === 'all'
+                    ? `All charts into one ${s?.label ?? ''} group`
+                    : `${s?.label ?? kind} — ${cellId}: ${mark ?? 'not linked'}`);
             }
-        }
+            // The hero's link count follows the switches.
+            const liveOn = live.filter((l) => l.checked).length;
+            heroSub.textContent = `${charts.length || '?'} chart${charts.length === 1 ? '' : 's'} · ${liveOn} link${liveOn === 1 ? '' : 's'} on`;
+        };
         refresh();
+        // A plain open starts at the top (hero, grid, presets) with the nav reading
+        // "Layouts"; only an explicit `focus` scrolls straight to the sync block.
+        for (const b of navButtons) b.toggleAttribute('data-active', b.dataset.tab === (focus ?? 'layouts'));
+        if (focus) {
+            // The scroll runs after layout, once the sheet has its height.
+            doc.defaultView?.requestAnimationFrame(() => goTo(focus));
+        }
     }
 
     /** Saved snapshots: open on tap, plus a one-tap save (auto-named). */
@@ -730,26 +997,58 @@ export class MoreDrawer {
         heading.textContent = 'Saved layouts';
         list.appendChild(heading);
         for (const l of rows) {
-            list.appendChild(
-                this.row(doc, l.name, {
-                    ...(l.active ? { checked: true } : {}),
-                    onClick: () => {
-                        layout.onOpenLayout?.(l.name);
-                        this.drawer.hide();
-                    },
-                }),
-            );
+            const rowEl = doc.createElement('div');
+            rowEl.className = 'vela-md-row vela-md-saved';
+            if (l.active) rowEl.dataset.checked = '1';
+            const label = doc.createElement('span');
+            label.className = 'vela-md-row-label';
+            label.textContent = l.name;
+            rowEl.append(label);
+            const open = doc.createElement('button');
+            open.type = 'button';
+            open.className = 'vela-md-saved-open';
+            open.textContent = 'Open';
+            open.addEventListener('click', () => {
+                layout.onOpenLayout?.(l.name);
+                this.drawer.hide();
+            });
+            rowEl.append(open);
+            if (layout.onDeleteLayout) {
+                const del = doc.createElement('button');
+                del.type = 'button';
+                del.className = 'vela-md-saved-del';
+                del.setAttribute('aria-label', `Delete layout ${l.name}`);
+                del.appendChild(iconEl('trash', doc));
+                del.addEventListener('click', () => {
+                    layout.onDeleteLayout?.(l.name);
+                    this.render();
+                });
+                rowEl.append(del);
+            }
+            list.appendChild(rowEl);
         }
         if (layout.onSaveLayout) {
-            list.appendChild(
-                this.row(doc, 'Save current layout', {
-                    value: `#${rows.length + 1}`,
-                    onClick: () => {
-                        layout.onSaveLayout?.(`Layout ${rows.length + 1}`);
-                        this.render();
-                    },
-                }),
-            );
+            // TV's "Save layout as…": a name field, not a numbered default — the layout
+            // list IS the name picker when you come back to it.
+            const save = doc.createElement('div');
+            save.className = 'vela-md-saveas';
+            const input = doc.createElement('input');
+            input.type = 'text';
+            input.placeholder = `Save layout as… (Layout ${rows.length + 1})`;
+            input.setAttribute('aria-label', 'Save layout as');
+            const button = doc.createElement('button');
+            button.type = 'button';
+            button.textContent = 'Save';
+            button.addEventListener('click', () => {
+                const name = input.value.trim() || `Layout ${rows.length + 1}`;
+                layout.onSaveLayout?.(name);
+                this.render();
+            });
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') button.click();
+            });
+            save.append(input, button);
+            list.appendChild(save);
         }
     }
 
