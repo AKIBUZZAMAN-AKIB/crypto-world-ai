@@ -244,6 +244,11 @@ describe('the kebab drawer’s Sync view', () => {
         // for everyone, so a chart is never left looking unlinked while it actually follows.
         const sol = document.querySelector<HTMLElement>('.vela-md-matrix-head[data-cell="sol"]')!;
         expect(sol.dataset.marks).toBe('A');
+        // …and a header PAINTS that fact as a colour dot: an emoji glyph is not
+        // guaranteed to exist on the device, a dot always does.
+        const dot = sol.querySelector<HTMLElement>('.vela-md-matrix-dots i');
+        expect(dot).not.toBeNull();
+        expect(dot!.style.background).not.toBe('');
         drawer.close();
         // With no link on, the columns stay bare — an empty column is information too.
         state.symbol!.checked = false;

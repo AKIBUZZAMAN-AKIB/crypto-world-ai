@@ -22,6 +22,11 @@ const STYLE_ID = 'vela-widget-layout-picker-v15';
 const CSS = `
 .vela-lp-layer { position: absolute; z-index: var(--vela-z-menu); }
 .vela-lp {
+    /* Responsive by construction: the popover never grows past the window, and when the
+       three columns cannot share one line the table column wraps under them. */
+    max-width: min(900px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    overflow: auto;
     background: var(--vela-surface);
     color: var(--vela-fg);
     border: 1px solid var(--vela-border-strong);
@@ -32,16 +37,12 @@ const CSS = `
     user-select: none;
     transform-origin: top;
     animation: vela-lp-in var(--vela-dur-fast) var(--vela-ease);
-    /* A short window must not clip the footer off the bottom of the screen. */
-    max-height: calc(100vh - 20px);
-    overflow-y: auto;
-    overscroll-behavior: contain;
 }
 @keyframes vela-lp-in {
     from { opacity: 0; transform: translateY(-4px) scale(0.98); }
     to { opacity: 1; transform: translateY(0) scale(1); }
 }
-.vela-lp-cols { display: flex; align-items: stretch; gap: 14px; }
+.vela-lp-cols { display: flex; align-items: stretch; gap: 14px; flex-wrap: wrap; }
 .vela-lp-heading {
     display: flex;
     align-items: center;
@@ -97,34 +98,42 @@ const CSS = `
 .vela-lp-preset:active { transform: scale(0.98); }
 .vela-lp-preset[data-checked='1'] { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
 .vela-lp-sync { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
+/* The switch column takes the slack when the table has wrapped under it. */
+.vela-lp-synccol { flex: 1 1 150px; min-width: 150px; display: flex; flex-direction: column; }
 /* The link x chart table: a fixed side pane with its OWN vertical scroll, so the
    popover keeps its shape as charts are added and the footer stays put. The table
    scrolls sideways inside itself; the fade marks the rest of the columns. */
+/* Separator + table are ONE flex item, so a narrow window wraps them together instead
+   of leaving a stray divider at the end of the first line. */
+.vela-lp-chartspane {
+    display: flex;
+    gap: 14px;
+    flex: 1 1 300px;
+    min-width: 0;
+}
+.vela-lp-chartspane[hidden] { display: none !important; }
 .vela-lp-charts {
-    width: 302px;
+    width: clamp(240px, 302px, 34vw);
+    flex: 1 1 240px;
     min-width: 0;
     display: flex;
     flex-direction: column;
 }
 .vela-lp-charts[hidden], .vela-lp-vsep[hidden] { display: none !important; }
 .vela-lp-charthint { margin: -4px 0 6px; font-size: 10.5px; line-height: 1.35; color: var(--vela-fg-muted); }
-.vela-lp-charts .vela-md-matrixwrap { --sx-cell: 36px; --sx-head: 28px; }
 .vela-lp-chartscroll {
     overflow-y: auto;
     overflow-x: hidden;
-    /* Seven links at 36px + the header + the gaps — the whole table, no clipping. */
-    max-height: 320px;
+    max-height: 286px;
     margin-right: -6px;
     padding-right: 6px;
     overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--vela-border-strong) transparent;
 }
-.vela-lp-chartscroll::-webkit-scrollbar { width: 8px; }
-.vela-lp-chartscroll::-webkit-scrollbar-thumb { background: var(--vela-border-strong); border-radius: 8px; }
-.vela-lp-chartscroll::-webkit-scrollbar-track { background: transparent; }
 .vela-lp-charts .vela-md-matrix-label,
 .vela-lp-charts .vela-md-matrix-corner { background: var(--vela-surface); }
+/* Full-width row (narrow window): the table keeps a readable width instead of stretching
+   four columns across the whole popover. */
+.vela-lp-charts .vela-md-matrixwrap { max-width: 430px; }
 /* Preset glyphs: a compact 4-up grid of icon buttons (the canvas cannot draw them). */
 .vela-lp-presets[data-icons='1'] { display: block; max-height: 232px; overflow-y: auto; overflow-x: hidden; margin-right: -4px; padding-right: 4px; }
 .vela-lp-presetcount { margin: 6px 0 2px; font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--vela-fg-muted); opacity: 0.8; }
@@ -324,6 +333,7 @@ export class LayoutPicker {
     private matrix: SyncMatrix | null = null;
     private matrixSec: HTMLElement | null = null;
     private vsep2: HTMLElement | null = null;
+    private chartsPane: HTMLElement | null = null;
 
     private readonly onDocPointerDown = (e: PointerEvent): void => {
         const t = e.target as Node | null;
@@ -385,6 +395,7 @@ export class LayoutPicker {
 
         // ── right column: the SYNC switches ──
         const syncCol = doc.createElement('div');
+        syncCol.className = 'vela-lp-synccol';
         const syncHeading = doc.createElement('div');
         syncHeading.className = 'vela-lp-heading';
         syncHeading.textContent = 'Sync';
@@ -400,10 +411,13 @@ export class LayoutPicker {
         // that scrolls vertically by itself, and sideways inside the table (the fade
         // says there is more). Charts are identified by SLOT NUMBER, never by ticker:
         // the chart you called BTC can be showing XRPUSDT a second later.
+        const chartsPane = doc.createElement('div');
+        chartsPane.className = 'vela-lp-chartspane';
         const vsep2 = doc.createElement('div');
         vsep2.className = 'vela-lp-vsep';
-        cols.appendChild(vsep2);
+        chartsPane.appendChild(vsep2);
         this.vsep2 = vsep2;
+        this.chartsPane = chartsPane;
 
         const chartsCol = doc.createElement('div');
         chartsCol.className = 'vela-lp-charts';
@@ -427,7 +441,8 @@ export class LayoutPicker {
         });
         chartsScroll.append(this.matrix.el);
         chartsCol.append(chartsHeading, chartsHint, chartsScroll);
-        cols.appendChild(chartsCol);
+        chartsPane.appendChild(chartsCol);
+        cols.appendChild(chartsPane);
         this.matrixSec = chartsCol;
 
         // ── footer: named layouts + the tab link (both shell-level, not per cell) ──
@@ -600,6 +615,8 @@ export class LayoutPicker {
         const table = charts.length > 1 && Boolean(this.opts.onCycleCellGroup || this.opts.onAllInOneGroup);
         if (this.matrixSec) this.matrixSec.hidden = !table;
         if (this.vsep2) this.vsep2.hidden = !table;
+        // The pane is the flex item: hiding only its children would leave a gap behind.
+        if (this.chartsPane) this.chartsPane.hidden = !table;
         if (table) this.matrix?.update(charts, syncs);
         for (const s of syncs) {
             const row = doc.createElement('button');
@@ -749,7 +766,12 @@ export class LayoutPicker {
         const top = trigRect.bottom - hostRect.top + 8;
         const width = this.layer.offsetWidth;
         if (left + width > hostRect.width - 8) left = Math.max(8, hostRect.width - 8 - width);
+        // Same clamp vertically: a panel with the table in it can be taller than the
+        // room under the button, and a popover half outside the window is a bug.
+        const height = this.layer.offsetHeight;
+        const topFit = hostRect.height - 8 - height;
+        const placed = top + height > hostRect.height - 8 ? Math.max(8, topFit) : top;
         this.layer.style.left = `${left}px`;
-        this.layer.style.top = `${top}px`;
+        this.layer.style.top = `${placed}px`;
     }
 }
