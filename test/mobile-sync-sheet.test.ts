@@ -323,7 +323,9 @@ describe('the kebab drawer’s Sync view', () => {
                 onSaveLayout: (n) => saved.push(n),
             },
         });
-        drawer.open('layout');
+        // The library lives on the FIRST screen now (TradingView puts its layout verbs
+        // up front too) — the Layout pane is the grid and its links, nothing else.
+        drawer.open('main');
         const rows = [...document.querySelectorAll<HTMLElement>('.vela-md-saved')];
         expect(rows.map((r) => r.querySelector('.vela-md-row-label')?.textContent)).toEqual(['Scalp', 'Swing']);
         (rows[1]!.querySelector('.vela-md-saved-open') as HTMLElement).click();
@@ -334,6 +336,63 @@ describe('the kebab drawer’s Sync view', () => {
         input.value = 'Breakout';
         (document.querySelector('.vela-md-saveas button') as HTMLElement).click();
         expect(saved).toEqual(['Breakout']);
+        // The Layout tab must not repeat the library — two homes for one list is how a
+        // "move it to main" turns into "it is in both places and they disagree".
+        drawer.open('layout');
+        expect(document.querySelectorAll('.vela-md-saved')).toHaveLength(0);
+        drawer.destroy();
+    });
+
+    it('the first screen carries the whole library: autosave, the open strip, the star', () => {
+        const host = document.createElement('div');
+        document.body.append(host);
+        const house: Array<string | null> = [];
+        const drawer = new MoreDrawer({
+            host,
+            canUndo: () => false,
+            canRedo: () => false,
+            priceStyles: () => [{ id: 'candles', label: 'Candles' }],
+            priceStyle: () => 'candles',
+            onPriceStyle: () => {},
+            panels: () => [],
+            onTogglePanel: () => {},
+            actions: () => [],
+            layout: {
+                shape: () => ({ rows: 1, cols: 2 }),
+                presets: () => [],
+                onSelectGrid: () => {},
+                onSelectPreset: () => {},
+                savedLayouts: () => [
+                    { name: 'A', active: true, dirty: true, charts: 2, indicators: 3 },
+                    { name: 'B', active: false, charts: 2, indicators: 3 },
+                    { name: 'C', active: false, charts: 2, indicators: 2 },
+                    { name: 'D', active: false, charts: 1, indicators: 0 },
+                ],
+                activeLayout: () => 'A',
+                onSaveChanges: () => {},
+                autosave: () => false,
+                onToggleAutosave: () => {},
+                templates: () => [{ name: 'Trend', count: 1 }],
+                onSaveTemplate: () => true,
+                onSetDefaultTemplate: (n) => house.push(n),
+                defaultTemplate: () => null,
+            },
+        });
+        drawer.open('main');
+        // The open layout, its drift and its one-tap write.
+        expect(document.querySelector('.vela-md-open')?.textContent).toBe('Aunsaved changesSave');
+        expect(document.querySelector('.vela-md-switchrow')?.getAttribute('aria-checked')).toBe('false');
+        // Three rows, then an honest expander — not a truncated list with no way on.
+        expect(document.querySelectorAll('.vela-md-saved')).toHaveLength(3);
+        const more = document.querySelector<HTMLElement>('.vela-md-showall')!;
+        expect(more.textContent).toContain('Show all 4 layouts');
+        more.click();
+        expect(document.querySelectorAll('.vela-md-saved')).toHaveLength(4);
+        // The house template is a star on this screen too.
+        const star = document.querySelector<HTMLElement>('.vela-md-tplstar')!;
+        expect(star.getAttribute('aria-pressed')).toBe('false');
+        star.click();
+        expect(house).toEqual(['Trend']);
         drawer.destroy();
     });
 
