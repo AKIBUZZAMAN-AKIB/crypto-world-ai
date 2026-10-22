@@ -676,6 +676,7 @@ export class VelaWorkspace {
                 onCycleGroup: (id) => this.cycleGroup(id as SyncKind),
                 charts: () => this.syncCharts(),
                 onCycleCellGroup: (kind, cellId) => this.cycleGroupFor(kind as SyncKind, cellId),
+                onSelectChart: (cellId) => { if (this.cellsById.has(cellId)) this.setActiveCell(cellId); },
                 onAllInOneGroup: (kind) => this.syncAllInOneGroup(kind as SyncKind),
                 drawingsScope: () => this.drawingsScope,
                 onToggleDrawingsScope: () => this.setDrawingsScope(this.drawingsScope === 'global' ? 'layout' : 'global'),

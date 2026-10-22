@@ -8,6 +8,7 @@
 import { Drawer } from '../ui/components/drawer';
 import { iconEl } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
+import { SyncMatrix } from './sync-matrix';
 import { layoutGridCanvas, paintLayoutGrid } from './layout-picker';
 import { IMPLICIT_GROUP } from '../state/document';
 import { groupMarkColor } from '../workspace/sync-marks';
@@ -172,32 +173,7 @@ const CSS = `
 .vela-md-sync[aria-checked='true'] .vela-md-switch { background: var(--vela-accent, var(--vela-selected-bg)); }
 .vela-md-sync[aria-checked='true'] .vela-md-switch::after { transform: translateX(16px); background: #fff; }
 /* The group chip: the ACTIVE chart's mark for this link, and its own tap target. */
-.vela-md-chip {
-    all: unset;
-    flex: none;
-    box-sizing: border-box;
-    min-width: 30px;
-    height: 30px;
-    padding: 0 6px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--vela-border);
-    border-radius: 15px;
-    font-size: 14px;
-    line-height: 1;
-    color: var(--vela-fg-muted);
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-}
 .vela-md-chip:active { background: var(--vela-hover); }
-.vela-md-chip[data-on='1'] {
-    color: var(--vela-fg-bright);
-    border-color: color-mix(in srgb, var(--vela-md-mark, var(--vela-accent, var(--vela-selected-bg))) 70%, transparent);
-    background: color-mix(in srgb, var(--vela-md-mark, var(--vela-accent, var(--vela-selected-bg))) 20%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-md-mark, transparent) 22%, transparent);
-}
-.vela-md-chip[data-implicit='1'] { border-style: dashed; }
 .vela-md-hint { padding: 2px 2px 8px; font-size: 12px; line-height: 1.4; color: var(--vela-fg-muted); }
 /* ── Layout setup: the hero card + the sticky two-stop nav ─────────────────────── */
 .vela-md-hero {
@@ -288,88 +264,7 @@ const CSS = `
 }
 /* The table scrolls SIDEWAYS INSIDE ITSELF — never the page. Four charts fit a 390px
    sheet; the eight-chart layouts scroll a little, with the link column pinned. */
-.vela-md-matrixwrap {
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-x: contain;
-    -webkit-overflow-scrolling: touch;
-    margin: 0 -2px;
-    padding: 0 2px 2px;
-}
 /* Only while there IS more table to the right (set from JS after layout). */
-.vela-md-matrixwrap[data-more] {
-    mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
-}
-.vela-md-matrix {
-    display: grid;
-    grid-template-columns: 78px repeat(var(--vela-md-cols, 4), minmax(38px, 1fr)) 44px;
-    gap: 3px 2px;
-    align-items: center;
-    min-width: max-content;
-}
-.vela-md-matrix-corner {
-    position: sticky;
-    left: 0;
-    z-index: 1;
-    padding-right: 6px;
-    font-size: 9.5px;
-    font-weight: 600;
-    letter-spacing: 0.4px;
-    text-transform: uppercase;
-    color: var(--vela-fg-faint, var(--vela-fg-muted));
-    background: var(--vela-surface-elev);
-}
-.vela-md-matrix-head {
-    all: unset;
-    box-sizing: border-box;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    min-height: 26px;
-    padding: 0 2px;
-    border-radius: 6px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
-    color: var(--vela-fg-muted);
-    cursor: pointer;
-    white-space: nowrap;
-}
-.vela-md-matrix-head::after {
-    content: attr(data-marks);
-    font-size: 9px;
-    font-weight: 400;
-    letter-spacing: 0;
-    opacity: 0.9;
-}
-.vela-md-matrix-head[data-active] { color: var(--vela-fg-bright); background: var(--vela-hover); }
-.vela-md-matrix-head[data-focus] { box-shadow: inset 0 0 0 1px var(--vela-accent, var(--vela-selected-bg)); }
-.vela-md-matrix-head:active { background: var(--vela-hover-strong); }
-.vela-md-matrix-allhead { color: var(--vela-fg-muted); font-size: 9.5px; }
-.vela-md-matrix-label {
-    position: sticky;
-    left: 0;
-    z-index: 1;
-    padding-right: 4px;
-    font-size: 11.5px;
-    color: var(--vela-fg);
-    background: var(--vela-surface-elev);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.vela-md-matrix-chip {
-    width: 100%;
-    min-width: 0;
-    height: 34px;
-    border-radius: 9px;
-    font-size: 15px;
-}
-.vela-md-matrix-chip[data-on='1'] { font-size: 15px; }
-.vela-md-chip-all { font-size: 9px; font-weight: 700; letter-spacing: 0.3px; color: var(--vela-fg-muted); }
-.vela-md-chip-all[data-on='1'] { color: var(--vela-fg-bright); border-style: solid; }
 .vela-md-legend {
     display: flex;
     align-items: center;
@@ -1111,10 +1006,11 @@ export class MoreDrawer {
 
         type SwitchRow = { id: string; el: HTMLElement };
         const switchRows: SwitchRow[] = [];
-        // One chip per (link, chart) cell of the matrix.
-        const cellChips = new Map<string, HTMLButtonElement>();
-        // Column headers, so the sheet can highlight/scroll to a chart.
-        const chartHeads = new Map<string, HTMLElement>();
+        // The shared table (built below when there is more than one chart).
+        let matrix: SyncMatrix | null = null;
+        // The table repaints through `refresh`, which is defined at the end of the build
+        // (it also repaints the switch rows). Calls arrive only after that.
+        let repaint: () => void = () => {};
 
         if (syncsOf) {
             // ONE section. TradingView splits the same idea across two stops ("Sync in
@@ -1132,95 +1028,28 @@ export class MoreDrawer {
             hint.textContent = 'Links decide what follows. Charts decide who follows whom — same emoji, same group.';
             syncSec.append(hint);
 
-            // ── the MATRIX: one row per link, one column per chart ──────────────
-            // The user's call (round 3): TV's chart-syncing is a TABLE — link x chart —
-            // and a table with ten charts is fine as long as IT scrolls, not the page.
-            // So the grid lives in its own horizontal scroller, the link column stays
-            // pinned to the left, and only the chart columns move. Four charts fit
-            // without scrolling at 390px; eight (the largest layout) scroll by ~40px.
+            // ── the TABLE: one row per link, one column per chart ────────────────
+            // TV marks a chart with an emoji, not a table; the table is our synthesis —
+            // every (link, chart) pair one tap away — and a table with ten charts is fine
+            // as long as IT scrolls, not the page. The component is shared with the
+            // desktop popover (sync-matrix.ts), so both shells mark charts the same way:
+            // same ten marks, same colours, same "uncheck to leave" cycle.
             if (charts.length > 1 && (layout.onCycleCellGroup || layout.onAllInOneGroup)) {
                 const chartsLabel = doc.createElement('div');
                 chartsLabel.className = 'vela-md-sublabel';
                 chartsLabel.textContent = 'Charts';
                 syncSec.append(chartsLabel);
 
-                const wrap = doc.createElement('div');
-                wrap.className = 'vela-md-matrixwrap';
-                const grid = doc.createElement('div');
-                grid.className = 'vela-md-matrix';
-                grid.style.setProperty('--vela-md-cols', String(charts.length));
-
-                const corner = doc.createElement('span');
-                corner.className = 'vela-md-matrix-corner';
-                corner.textContent = 'Link';
-                grid.append(corner);
-
-                for (const c of charts) {
-                    const head = doc.createElement('button');
-                    head.type = 'button';
-                    head.className = 'vela-md-matrix-head';
-                    head.dataset.cell = c.id;
-                    if (c.active) head.dataset.active = '1';
-                    head.textContent = c.label;
-                    head.setAttribute('aria-label', `${c.label}${c.active ? ' (active)' : ''} — its group for each link`);
-                    head.addEventListener('click', () => layout.onSelectChart?.(c.id));
-                    grid.append(head);
-                    chartHeads.set(c.id, head);
-                }
-                if (layout.onAllInOneGroup) {
-                    const allHead = doc.createElement('span');
-                    allHead.className = 'vela-md-matrix-head vela-md-matrix-allhead';
-                    allHead.textContent = 'ALL';
-                    grid.append(allHead);
-                }
-
-                for (const link of syncsOf()) {
-                    const label = doc.createElement('span');
-                    label.className = 'vela-md-matrix-label';
-                    label.textContent = link.label;
-                    grid.append(label);
-                    for (const c of charts) {
-                        const chip = doc.createElement('button');
-                        chip.type = 'button';
-                        chip.className = 'vela-md-chip vela-md-matrix-chip';
-                        chip.dataset.kind = link.id;
-                        chip.dataset.cell = c.id;
-                        chip.addEventListener('click', () => {
-                            layout.onCycleCellGroup?.(link.id, c.id);
-                            refresh();
-                        });
-                        grid.append(chip);
-                        cellChips.set(`${link.id}\u0000${c.id}`, chip);
-                    }
-                    if (layout.onAllInOneGroup) {
-                        const all = doc.createElement('button');
-                        all.type = 'button';
-                        all.className = 'vela-md-chip vela-md-matrix-chip vela-md-chip-all';
-                        all.dataset.all = '1';
-                        all.dataset.kind = link.id;
-                        all.textContent = 'ALL';
-                        all.setAttribute('aria-label', `Put every chart in one ${link.label} group`);
-                        all.addEventListener('click', () => {
-                            layout.onAllInOneGroup?.(link.id);
-                            refresh();
-                        });
-                        grid.append(all);
-                    }
-                }
-                wrap.append(grid);
-                syncSec.append(wrap);
-                // Paint the fade only when the table really overflows (measured after
-                // layout — a 4-chart grid fits and must not look cut).
-                const markOverflow = (): void => {
-                    if (wrap.scrollWidth > wrap.clientWidth + 1) wrap.dataset.more = '1';
-                    else delete wrap.dataset.more;
-                };
-                doc.defaultView?.requestAnimationFrame(markOverflow);
-                wrap.addEventListener('scroll', () => {
-                    const atEnd = wrap.scrollLeft + wrap.clientWidth >= wrap.scrollWidth - 2;
-                    if (atEnd) delete wrap.dataset.more;
-                    else wrap.dataset.more = '1';
-                }, { passive: true });
+                matrix = new SyncMatrix({
+                    doc,
+                    shell: 'phone',
+                    ...(layout.onSelectChart ? { onSelectChart: (id: string) => layout.onSelectChart?.(id) } : {}),
+                    ...(layout.onCycleCellGroup ? { onCycleCellGroup: (kind: string, id: string) => layout.onCycleCellGroup?.(kind, id) } : {}),
+                    ...(layout.onAllInOneGroup ? { onAllInOneGroup: (kind: string) => layout.onAllInOneGroup?.(kind) } : {}),
+                    onChange: () => repaint(),
+                });
+                matrix.update(charts, syncsOf());
+                syncSec.append(matrix.el);
 
                 const legend = doc.createElement('div');
                 legend.className = 'vela-md-legend';
@@ -1295,51 +1124,20 @@ export class MoreDrawer {
                 const s = byId.get(r.id);
                 if (s) r.el.setAttribute('aria-checked', String(s.checked));
             }
-            // Per-chart chips: the mark that chart carries for that link.
-            for (const [key, chip] of cellChips) {
-                const [kind, cellId] = key.split('\u0000');
-                const s = byId.get(kind ?? '');
-                const mark = s?.marks?.[cellId ?? ''];
-                syncChipState(chip, mark);
-                chip.setAttribute('aria-label', `${s?.label ?? kind} for ${cellId}: ${mark ?? 'not linked'}`);
-            }
-            // Column headers read the chart's DISTINCT groups at a glance ("A 🔴"), and
-            // the ones that follow nothing dim: an empty column is information too.
-            for (const [cellId, head] of chartHeads) {
-                const marks: string[] = [];
-                for (const l of live) {
-                    const m = l.marks?.[cellId];
-                    if (m && !marks.includes(m)) marks.push(m);
-                }
-                // Two glyphs at most: a header is 38-44px wide, and a chart in four
-                // groups would push the column into a scroll of its own.
-                if (marks.length) head.dataset.marks = marks.slice(0, 2).join('');
-                else delete head.dataset.marks;
-                head.toggleAttribute('data-linked', marks.length > 0);
-            }
+            // The table repaints itself (marks, hues, header glyphs, the ALL cells).
+            matrix?.update(charts, live);
             // The hero's link count follows the switches.
             const liveOn = live.filter((l) => l.checked).length;
             heroSub.textContent = `${charts.length || '?'} chart${charts.length === 1 ? '' : 's'} · ${liveOn} link${liveOn === 1 ? '' : 's'} on`;
         };
         refresh();
+        repaint = refresh;
         // A plain open lands on Layout; the status-line "Chart syncing" entry (and the
         // sheet's own focus option) opens straight on the Sync tab.
         goTo(focus ?? this.tab ?? 'layouts');
         // Opened from a chart's own marks badge: unfold THAT chart's links and bring the
         // row into view, so the tap lands on a chip instead of on a list to hunt through.
-        const wanted = focusCell ? chartHeads.get(focusCell) : undefined;
-        if (wanted) {
-            wanted.toggleAttribute('data-focus', true);
-            doc.defaultView?.requestAnimationFrame(() => {
-                // Horizontal only, and only inside the matrix: `block: 'nearest'` leaves
-                // the sheet's own vertical scroll exactly where the user left it.
-                try {
-                    wanted.scrollIntoView?.({ block: 'nearest', inline: 'center' });
-                } catch {
-                    /* jsdom has no scroller */
-                }
-            });
-        }
+        if (focusCell) matrix?.focus(focusCell);
     }
 
     /** Saved snapshots: open on tap, plus a one-tap save (auto-named). */

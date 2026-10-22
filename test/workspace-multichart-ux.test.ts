@@ -97,64 +97,57 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         expect(syncRow(ws, 'Symbol')!.getAttribute('aria-checked')).toBe('false');
     });
 
-    it('the group chip cycles the ACTIVE cell through the groups', () => {
+    it('the table cycles a chart through all ten groups, then unlinks it — TV\'s uncheck', () => {
         const ws = mountWorkspace(PAGE);
         ws.sync.set('symbol', true, false); // all-cells form
         openPicker(ws);
-        const chip = (): HTMLElement => syncRow(ws, 'Symbol')!.querySelector<HTMLElement>('.vela-lp-group')!;
-        // The all-cells form is the IMPLICIT group — every chart follows, so the chip
+        const chip = (): HTMLElement => ws.root.querySelector<HTMLElement>('.vela-md-chip[data-kind="symbol"][data-cell="btc"]')!;
+        // The all-cells form is the IMPLICIT group — every chart follows, so the cell
         // names it ('A', dashed). It used to read '–' while the switch said ON, which is
         // the "switch on, nothing marked" reading this suite exists to prevent.
         expect(chip().textContent).toBe('A');
         expect(chip().dataset.implicit).toBe('1');
         chip().click();
-        // Unlinked ⇒ the first free mark: 🔴 (the fill of the all-cells form keeps the
-        // active cell in it, so it reads 🔴 straight away).
         expect(ws.sync.groupOf('symbol', 'btc')).toBe('🔴');
         expect(chip().textContent).toBe('🔴');
         // …and the chart's OWN status line wears the same emoji (TV's placement).
         expect(ws.cell('btc')!.host.querySelector('.vela-sl-marks')?.textContent).toBe('🔴');
-        // The palette is ten marks deep (one per chart of the biggest layout): the chip
-        // walks it in order and the last tap unlinks — TV's "uncheck the emoji".
-        const walked = [SYNC_GROUP_MARKS.indexOf('🔴')];
+        // The palette is ten marks deep: the cell walks it in order, and the last tap
+        // unlinks the chart — TV's "uncheck the emoji to leave the group".
         for (let i = 1; i < 10; i += 1) {
             chip().click();
-            const mark = ws.sync.groupOf('symbol', 'btc');
-            expect(mark).toBe(SYNC_GROUP_MARKS[i]);
-            walked.push(i);
+            expect(ws.sync.groupOf('symbol', 'btc')).toBe(SYNC_GROUP_MARKS[i]);
         }
-        expect(walked.length).toBe(10);
         chip().click();
         expect(ws.sync.groupOf('symbol', 'btc')).toBeUndefined();
         expect(ws.cell('btc')!.host.querySelector<HTMLElement>('.vela-sl-marks')!.hidden).toBe(true);
     });
 
-    it('the desktop picker marks ANY chart — the strip is the phone rows\' twin', () => {
+    it('the desktop popover has the SAME table — any chart is marked without activating it', () => {
         const ws = mountWorkspace(PAGE);
         ws.sync.set('symbol', true, false); // all-cells form
         openPicker(ws);
-        const pills = (): HTMLElement[] => [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-target')];
-        expect(pills().map((p) => p.textContent)).toEqual(['BTC', 'ETH', 'SOL', 'BNB', 'ALL']);
-        // The ACTIVE chart is preselected, so the strip never changes what a chip means
-        // for anyone who ignores it.
-        expect(pills()[0]!.dataset.on).toBe('1');
-        expect(pills()[0]!.dataset.active).toBe('1');
+        const table = ws.root.querySelector<HTMLElement>('.vela-lp-matrix')!;
+        expect(table.hidden).toBe(false);
+        const heads = [...table.querySelectorAll<HTMLElement>('.vela-md-matrix-head[data-cell]')];
+        expect(heads.map((h) => h.textContent)).toEqual(['BTC', 'ETH', 'SOL', 'BNB']);
+        // One cell per chart, for the Symbol link — no strip, no row chip: one surface.
+        const cell = (id: string): HTMLElement => table.querySelector<HTMLElement>(`.vela-md-chip[data-kind="symbol"][data-cell="${id}"]`)!;
+        expect(ws.root.querySelector('.vela-lp-target')).toBeNull();
+        expect(ws.root.querySelector('.vela-lp-group')).toBeNull();
+        expect(cell('eth').textContent).toBe('A');
         // Mark ETH without ever making it active.
-        pills()[1]!.click();
-        expect(pills()[1]!.dataset.on).toBe('1');
-        expect(ws.active.id).toBe('btc');
-        const chip = (): HTMLElement => syncRow(ws, 'Symbol')!.querySelector<HTMLElement>('.vela-lp-group')!;
-        expect(chip().textContent).toBe('A'); // ETH follows in the implicit group
-        chip().click();
+        cell('eth').click();
         expect(ws.sync.groupOf('symbol', 'eth')).toBe('🔴');
         expect(ws.sync.groupOf('symbol', 'btc')).toBe('A'); // the active chart untouched
+        expect(ws.active.id).toBe('btc');
         expect(ws.cell('eth')!.host.querySelector('.vela-sl-marks')?.textContent).toBe('🔴');
-        expect(chip().textContent).toBe('🔴');
-        // ALL → one click drops every chart back into a single group.
-        pills()[4]!.click();
-        expect(chip().textContent).toBe('ALL');
-        chip().click();
+        expect(cell('eth').textContent).toBe('🔴');
+        expect(cell('btc').textContent).toBe('A');
+        // The ALL cell drops every chart back into one group in one click.
+        table.querySelector<HTMLElement>('.vela-md-chip-all[data-kind="symbol"]')!.click();
         expect(ws.sync.state().symbol).toBe(true);
+        expect(cell('eth').textContent).toBe('A');
     });
 
     it('the drawable scope chip flips the drawing scope in place', () => {

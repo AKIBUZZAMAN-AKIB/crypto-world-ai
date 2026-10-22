@@ -200,10 +200,11 @@ export interface TopbarOptions {
         onToggleSync: (id: string) => void;
         /** Cycle the ACTIVE cell through a link's groups (the row's chip). */
         onCycleGroup?: (id: string) => void;
-        /** The charts the picker's "Mark" strip lists — the desktop half of the phone's
-         *  per-chart marking rows. */
+        /** The charts the picker's link x chart table lists, in slot order. */
         charts?: () => Array<{ id: string; label: string; active: boolean }>;
         onCycleCellGroup?: (kind: string, cellId: string) => void;
+        /** Make a chart active from the table's column header. */
+        onSelectChart?: (cellId: string) => void;
         onAllInOneGroup?: (kind: string) => void;
         /** The drawing scope the workspace holds (the chip on the Drawings row). */
         drawingsScope?: () => 'layout' | 'global';
@@ -494,7 +495,8 @@ export class Topbar {
                 onToggleSync: (id) => layout.onToggleSync(id),
                 ...(layout.onCycleGroup ? { onCycleGroup: (id) => layout.onCycleGroup?.(id) } : {}),
                 ...(layout.charts ? { charts: () => layout.charts?.() ?? [] } : {}),
-                ...(layout.onCycleCellGroup ? { onCycleCellGroup: (kind, cellId) => layout.onCycleCellGroup?.(kind, cellId) } : {}),
+                ...(layout.onCycleCellGroup ? { onCycleCellGroup: (kind: string, cellId: string) => layout.onCycleCellGroup?.(kind, cellId) } : {}),
+                ...(layout.onSelectChart ? { onSelectChart: (cellId: string) => layout.onSelectChart?.(cellId) } : {}),
                 ...(layout.onAllInOneGroup ? { onAllInOneGroup: (kind) => layout.onAllInOneGroup?.(kind) } : {}),
                 ...(layout.drawingsScope ? { drawingsScope: () => layout.drawingsScope?.() ?? 'layout' } : {}),
                 ...(layout.onToggleDrawingsScope ? { onToggleDrawingsScope: () => layout.onToggleDrawingsScope?.() } : {}),
