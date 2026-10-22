@@ -1,5 +1,16 @@
-# Typecheck, lint and test on every pull request and on pushes to main/dev,
-# so the green check is visible on the repo and on every PR.
+# Typecheck, lint, unit tests, and the REAL-BROWSER checks on every pull request and on
+# pushes to main/dev, so the green check is visible on the repo and on every PR.
+#
+# Two jobs on purpose:
+#   • check   — fast (seconds), no browser download. Typecheck, lint, vitest.
+#   • browser — the checks jsdom cannot make: does the sync table still FIT its pane,
+#               are the touch cells still ≥ 38px, does the group badge still open, do
+#               two pages still share a link. Runs Chromium only (~120 MB) and starts
+#               the playground itself (`test/browser/ci.mjs`).
+#
+# Playwright is installed with `--no-save`: the repo does not ship it as a dependency
+# (the library's runtime never imports it), and `npm ci` would reject a package.json /
+# package-lock.json mismatch. The version is pinned so a CI run is reproducible.
 name: ci
 on:
     pull_request:
@@ -22,3 +33,19 @@ jobs:
             - run: npm run typecheck
             - run: npm run lint
             - run: npm test
+
+    browser:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 24
+                  cache: npm
+            - run: npm ci
+            # Chromium only — the checks target Chromium, and the other engines would
+            # triple the download for no extra signal.
+            - run: npm i --no-save playwright@1.64.1
+            - run: npx playwright install --with-deps chromium
+            - run: npm run test:browser:ci

@@ -16,6 +16,7 @@
 // pinned, columns are `minmax(38px, 1fr)`, and a mask appears only when there really is
 // more table to the right (measured after layout, never guessed).
 import { injectStyles } from '../ui/styles';
+import { attachLongPress, isRtl } from '../ui/gesture';
 import { Menu, type MenuItemDescriptor } from '../ui/components/menu';
 import { IMPLICIT_GROUP } from '../state/document';
 import { SYNC_GROUP_MARKS, groupMarkColor } from '../workspace/sync-marks';
@@ -76,10 +77,17 @@ export const SYNC_MATRIX_CSS = `
     border-radius: 3px;
 }
 .vela-md-matrixwrap::-webkit-scrollbar-track { background: transparent; }
-/* Only while there IS more table to the right (set from JS after layout). */
+/* Only while there IS more table IN THE READING DIRECTION (set from JS after layout). */
 .vela-md-matrixwrap[data-more] {
     mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+}
+/* RTL: the table flows right-to-left, so the "there is more" fade (and the pinned
+   label's shadow side) flip with it. Driven by data-dir, set at build time from
+   isRtl() — no dependency on the :dir() selector's browser support. */
+.vela-md-matrixwrap[data-dir='rtl'][data-more] {
+    mask-image: linear-gradient(to left, #000 calc(100% - 26px), transparent);
+    -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 26px), transparent);
 }
 .vela-md-matrix {
     display: grid;
@@ -94,9 +102,15 @@ export const SYNC_MATRIX_CSS = `
 /* A row is a wrapper with no box of its own — the grid still aligns every cell, but
    hovering a row can highlight the whole link at once. */
 .vela-md-matrix-row { display: contents; }
+/* The role carriers. A <button> cannot legally take role=gridcell (ARIA in HTML
+   restricts a button's roles to button-ish ones), so the CELL is a pass-through span and
+   the button lives inside it — the grid keeps valid cells, the control keeps its button
+   role, and display:contents keeps the layout pixel-identical. */
+.vela-md-matrixcell { display: contents; }
 .vela-md-matrix-corner {
     position: sticky;
-    left: 0;
+    inset-inline-start: 0;
+    inset-inline-end: auto;
     z-index: 2;
     display: flex;
     align-items: center;
@@ -220,8 +234,13 @@ export const SYNC_MATRIX_CSS = `
    (it already does). WCAG 2.2 SC 2.5.8 asks for a 24×24 minimum; 38px sits between that
    and the 44px comfortable target without stealing a column's width. */
 @media (pointer: coarse) {
-    .vela-md-matrix { --vela-sx-cell: 38px; }
-    .vela-md-chip { min-height: 34px; }
+    /* Touch: one thumb-sized cell. 44 px is Apple's HIG minimum and above Android's
+       48 dp only by a hair — the AA floor (WCAG 2.5.8) is 24, so this is the generous
+       reading, and it is what makes a 500 ms long press land on the chip rather than on
+       its neighbour. */
+    .vela-md-matrix { --vela-sx-cell: 44px; }
+    .vela-md-chip { min-height: 40px; }
+    .vela-md-chip { touch-action: manipulation; }
 }
 `;
 
@@ -290,7 +309,8 @@ export class SyncMatrix {
     private palette: Menu | null = null;
     /** What the caret/long-press is currently pointing at. */
     private pick: { kind: string; cellId: string; label: string; current?: string } | null = null;
-    private pressTimer: number | null = null;
+    /** Disposers for this build's long-press gestures (one per chip). */
+    private pressOffs: Array<() => void> = [];
     /** The mark each chip showed last paint — the diff drives the live-region message. */
     private readonly lastMark = new Map<string, string | undefined>();
     /** Polite screen-reader output for group changes (one line, replaced each time). */
@@ -302,9 +322,11 @@ export class SyncMatrix {
         this.el = doc.createElement('div');
         this.el.className = 'vela-md-matrixwrap';
         if (opts.shell) this.el.dataset.shell = opts.shell;
-        // A layout GRID: rows of interactive cells (APG grid pattern). The cells keep
-        // their button behaviour, and `role="gridcell"` on a button is an allowed (if not
-        // recommended) override in ARIA in HTML, which is what makes row→cell valid here.
+        // A layout GRID (APG grid pattern): a row of column headers, then one row per
+        // link, one cell per chart. The CELLS are pass-through spans carrying
+        // `role="gridcell"`; the controls stay real <button>s inside them, because ARIA in
+        // HTML does not allow role="gridcell" on a button — overriding it would cost the
+        // screen reader the "button" announcement entirely.
         this.el.setAttribute('role', 'grid');
         this.el.setAttribute('aria-label', 'Chart syncing — one row per link, one column per chart');
         this.grid = doc.createElement('div');
@@ -363,8 +385,13 @@ export class SyncMatrix {
         if (k < 0 || c < 0) return;
         let nextK = k;
         let nextC = c;
-        if (e.key === 'ArrowRight') nextC = Math.min(cells.length - 1, c + 1);
-        else if (e.key === 'ArrowLeft') nextC = Math.max(0, c - 1);
+        // In RTL the next cell is to the LEFT (the table flows right-to-left), so the
+        // horizontal arrows trade places — the APG grid rule read in the page's own
+        // direction. Home/End keep their LOGICAL meaning: first and last cell of the row.
+        const rtl = isRtl(this.el);
+        const next = rtl ? -1 : 1;
+        if (e.key === 'ArrowRight') nextC = Math.min(cells.length - 1, Math.max(0, c + next));
+        else if (e.key === 'ArrowLeft') nextC = Math.min(cells.length - 1, Math.max(0, c - next));
         else if (e.key === 'ArrowDown') nextK = Math.min(kinds.length - 1, k + 1);
         else if (e.key === 'ArrowUp') nextK = Math.max(0, k - 1);
         else if (e.key === 'Home') nextC = 0;
@@ -386,12 +413,6 @@ export class SyncMatrix {
         } catch {
             /* jsdom has no scroller */
         }
-    }
-
-    private cancelPress(): void {
-        if (this.pressTimer == null) return;
-        this.opts.doc.defaultView?.clearTimeout(this.pressTimer);
-        this.pressTimer = null;
     }
 
     /**
@@ -462,6 +483,8 @@ export class SyncMatrix {
 
     private build(charts: readonly SyncMatrixChart[], links: readonly SyncMatrixLink[]): void {
         const doc = this.opts.doc;
+        for (const off of this.pressOffs) off();
+        this.pressOffs = [];
         this.grid.replaceChildren();
         this.chips.clear();
         this.heads.clear();
@@ -469,10 +492,15 @@ export class SyncMatrix {
         this.allChips.clear();
         this.grid.style.setProperty('--vela-md-cols', String(Math.max(1, charts.length)));
 
+        const headRow = doc.createElement('span');
+        headRow.className = 'vela-md-matrix-row';
+        headRow.setAttribute('role', 'row');
         const corner = doc.createElement('span');
         corner.className = 'vela-md-matrix-corner';
+        corner.setAttribute('role', 'columnheader');
         corner.textContent = 'Link';
-        this.grid.append(corner);
+        headRow.append(corner);
+        this.grid.append(headRow);
 
         for (const c of charts) {
             const head = doc.createElement('button');
@@ -491,14 +519,19 @@ export class SyncMatrix {
                 this.opts.onSelectChart?.(c.id);
                 this.opts.onChange?.();
             });
-            this.grid.append(head);
+            const headCell = doc.createElement('span');
+            headCell.className = 'vela-md-matrixcell';
+            headCell.setAttribute('role', 'columnheader');
+            headCell.append(head);
+            headRow.append(headCell);
             this.heads.set(c.id, head);
         }
         if (this.opts.onAllInOneGroup) {
             const allHead = doc.createElement('span');
             allHead.className = 'vela-md-matrix-head vela-md-matrix-allhead';
+            allHead.setAttribute('role', 'columnheader');
             allHead.textContent = 'ALL';
-            this.grid.append(allHead);
+            headRow.append(allHead);
         }
 
         for (const link of links) {
@@ -518,7 +551,6 @@ export class SyncMatrix {
                 chip.dataset.cell = c.id;
                 chip.title = `${link.label} · chart ${c.label} — click to cycle, right-click for all groups`;
                 chip.setAttribute('aria-haspopup', 'menu'); // right-click / long-press opens the palette
-                chip.setAttribute('role', 'gridcell');
                 chip.addEventListener('click', () => {
                     this.opts.onCycleCellGroup?.(link.id, c.id);
                     this.opts.onChange?.();
@@ -529,23 +561,27 @@ export class SyncMatrix {
                     e.preventDefault();
                     this.openPalette(link.id, c.id, link.label, e.clientX, e.clientY);
                 });
-                chip.tabIndex = -1; // roving: the table is ONE tab stop (see installKeys)
-                chip.addEventListener('pointerdown', (e) => {
-                    if (e.pointerType === 'mouse') return;
-                    this.cancelPress();
-                    const { clientX, clientY } = e;
-                    this.pressTimer = this.opts.doc.defaultView?.setTimeout(() => {
-                        this.pressTimer = null;
-                        this.openPalette(link.id, c.id, link.label, clientX, clientY);
-                    }, 450) ?? null;
-                });
-                for (const ev of ['pointerup', 'pointercancel', 'pointerleave', 'pointermove'] as const) {
-                    chip.addEventListener(ev, () => this.cancelPress());
-                }
-                row.append(chip);
+                chip.tabIndex = -1; // roving: the table is ONE tab stop (see onKey)
+                // Long press = the direct group palette. The gesture module owns the
+                // platform numbers (500 ms, 10 px slop) and swallows the click that ends
+                // a fired press, so a hold can never ALSO cycle the group — the conflict
+                // a 38 px cell makes easy to hit.
+                this.pressOffs.push(
+                    attachLongPress(chip, {
+                        onFire: (down) => this.openPalette(link.id, c.id, link.label, down.clientX, down.clientY),
+                    }),
+                );
+                const cell = doc.createElement('span');
+                cell.className = 'vela-md-matrixcell';
+                cell.setAttribute('role', 'gridcell');
+                cell.append(chip);
+                row.append(cell);
                 this.chips.set(`${link.id}\u0000${c.id}`, chip);
             }
             if (this.opts.onAllInOneGroup) {
+                const allCell = doc.createElement('span');
+                allCell.className = 'vela-md-matrixcell';
+                allCell.setAttribute('role', 'gridcell');
                 const all = doc.createElement('button');
                 all.type = 'button';
                 all.className = 'vela-md-chip vela-md-matrix-chip vela-md-chip-all';
@@ -557,7 +593,8 @@ export class SyncMatrix {
                     this.opts.onAllInOneGroup?.(link.id);
                     this.opts.onChange?.();
                 });
-                row.append(all);
+                allCell.append(all);
+                row.append(allCell);
                 this.allChips.set(link.id, all);
             }
             this.grid.append(row);
@@ -575,6 +612,11 @@ export class SyncMatrix {
     private paint(charts: readonly SyncMatrixChart[], links: readonly SyncMatrixLink[]): void {
         this.lastLinks = links;
         this.lastCharts = charts;
+        // The table follows the DOCUMENT's reading direction: under `dir="rtl"` the
+        // columns flow right-to-left, the "more to the right" fade moves to the left and
+        // the arrow keys trade places. Read HERE, not at build time: a sheet is built
+        // before it is inserted, and a detached node has no computed direction yet.
+        this.el.dataset.dir = isRtl(this.el) ? 'rtl' : 'ltr';
         // Grid dimensions for AT: the header row + one row per link; the label column,
         // one column per chart, and the ALL column when the host offers it.
         this.el.setAttribute('aria-rowcount', String(links.length + 1));
@@ -622,9 +664,9 @@ export class SyncMatrix {
                 const mark = link.marks?.[c.id];
                 paintChip(chip, mark);
                 chip.setAttribute('aria-label', `${link.label} for chart ${c.label}: ${mark ?? 'not linked'}`);
-                // No aria-pressed: the cell's role is gridcell (the grid needs cell
-                // children), and the pressed state is already spelled out in the label
-                // above. `data-on` still drives the paint.
+                // No aria-pressed: this is a cyclying choice, not an on/off switch, and
+                // the current value is already spelled out in the label above. `data-on`
+                // still drives the paint.
                 // Diff instead of re-reading: only a REAL change is announced, and only
                 // after the first paint (which is the table arriving, not an edit).
                 const key = `${link.id}\u0000${c.id}`;
@@ -663,7 +705,8 @@ export class SyncMatrix {
     }
 
     destroy(): void {
-        this.cancelPress();
+        for (const off of this.pressOffs) off();
+        this.pressOffs = [];
         this.ro?.disconnect();
         this.ro = null;
         this.palette?.destroy();

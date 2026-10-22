@@ -4,8 +4,8 @@
 // single-cell case. Re-exported here so `vela/workspace` keeps its public surface.
 import type { VelaStorage } from '../widget/persist';
 
-export { encodeState, decodeState, sanitizeState } from '../state/document';
-export type { WorkspaceState, CellState, ChartState, PanelsState, DrawingToolsState } from '../state/document';
+export { encodeState, decodeState, decodeStateDetailed, sanitizeState, STATE_VERSION } from '../state/document';
+export type { DecodeFailure, DecodeResult, WorkspaceState, CellState, ChartState, PanelsState, DrawingToolsState, ChartTemplate, SavedLayoutMeta } from '../state/document';
 
 /** @deprecated Use {@link VelaStorage} — one storage contract for both shells
  *  (`get`/`set`, each synchronous OR promise-returning, so localStorage-like and

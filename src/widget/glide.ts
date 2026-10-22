@@ -3,6 +3,7 @@
 // driver). Keyboard PAN doesn't glide here: it goes through `chart.panBy`, the
 // renderer's drag-equivalent scroll (same clamp and easing as a pointer drag).
 import type { Vela } from '../Vela';
+import { prefersReducedMotion } from '../ui/motion';
 
 const MIN_SPAN_MS = 60_000;
 const FOLLOW = 0.25;
@@ -89,7 +90,9 @@ export class Glider {
                 this.stop();
                 return;
             }
-            const { cur: next, done } = followStep(this.cur, this.target);
+            // Reduced motion: snap to the target instead of easing toward it. The step is
+            // still one frame — the range changes, it just does not travel.
+            const { cur: next, done } = followStep(this.cur, this.target, prefersReducedMotion() ? 1 : FOLLOW);
             this.cur = next;
             chart.setVisibleRange(next);
             if (done) this.stop();

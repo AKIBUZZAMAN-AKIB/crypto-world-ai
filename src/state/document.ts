@@ -148,6 +148,26 @@ export interface ChartState extends CellState {
 }
 
 /** The versioned shell-state document — everything `applyState` restores. */
+/** Side-car data for a named snapshot. */
+export interface SavedLayoutMeta {
+    /** A small JPEG (`data:image/jpeg`) preview of the grid at save time. */
+    thumb?: string;
+    /** When the snapshot was written (ms since epoch). */
+    savedAt?: number;
+}
+
+/** A saved indicator TEMPLATE ("chart template"). */
+export interface ChartTemplate {
+    /** Template body version — 1 today. Unknown bodies are ignored, never guessed at. */
+    version: 1;
+    /** The indicator ledger: type id + inputs (+ hidden flag), exactly what a cell
+     *  persists, so an apply is a restore of the same shape. */
+    indicators: PersistedNativeEntry[];
+    /** Optional link to the market it was captured on (`includeMarket` when saving). */
+    symbol?: string;
+    timeframe?: string;
+}
+
 export interface WorkspaceState {
     version: 1;
     /** The layout id — always `'1'` for a widget. Restoring an id that is not
@@ -173,6 +193,26 @@ export interface WorkspaceState {
     drawingsScope?: 'layout' | 'global';
     /** Named workspace snapshots ("Save layout as…") — opaque state documents by name. */
     savedLayouts?: Record<string, unknown>;
+    /** Side-car data for those snapshots (a small JPEG preview, when it was captured).
+     *  Kept BESIDE `savedLayouts` rather than inside it so an old document — and an old
+     *  consumer — round-trips unchanged. */
+    layoutMeta?: Record<string, SavedLayoutMeta>;
+    /**
+     * Saved chart TEMPLATES — indicator sets with their settings, no drawings (Vela's
+     * documented template contract: applying one REPLACES the chart's indicators; a
+     * template never carries drawings). Keyed by name; the market may be carried
+     * optionally (the symbol/timeframe chips are off by default, as in TradingView).
+     */
+    templates?: Record<string, ChartTemplate>;
+    /** The shell's watchlist — symbols in display order, newest appended. */
+    watchlist?: string[];
+    /** User-given names for sync groups, keyed by the STABLE group id (`'red'`), not by
+     *  the emoji — so a palette change can never rename a group. */
+    groupNames?: Record<string, string>;
+    /** One-time tips already seen (`'group-badge'`, `'palette'`). */
+    seenTips?: string[];
+    /** Commands run from the palette most recently (ids, newest first, ≤ 8). */
+    recentCommands?: string[];
     /**
      * Tab-linking tag: workspaces whose documents share a tag mirror their ACTIVE cell's
      * market (symbol/timeframe) — TradingView Desktop's colored tab link. Absent = unlinked.
@@ -208,14 +248,46 @@ export function encodeState(state: WorkspaceState): string {
     return JSON.stringify(state);
 }
 
+/** The document format this build writes and understands. */
+export const STATE_VERSION = 1;
+
+export type DecodeFailure = 'empty' | 'not-json' | 'invalid' | 'future';
+
+export interface DecodeResult {
+    state: WorkspaceState | null;
+    /** Why it failed — `'future'` is not corruption: another build wrote it. */
+    reason?: DecodeFailure;
+    /** The version the payload CLAIMED, when it was a number. */
+    version?: number;
+}
+
+/**
+ * Parse + sanitize a persisted payload, WITHOUT throwing away the reason. The shell
+ * needs the distinction: a corrupt payload and a document written by a newer build both
+ * fail to load, but only the second must be preserved untouched (overwriting it would
+ * destroy the user's work in a build that cannot read it).
+ */
+export function decodeStateDetailed(raw: string | null | undefined): DecodeResult {
+    if (raw == null || raw === '') return { state: null, reason: 'empty' };
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        return { state: null, reason: 'not-json' };
+    }
+    const version =
+        parsed != null && typeof parsed === 'object' && typeof (parsed as { version?: unknown }).version === 'number'
+            ? ((parsed as { version: number }).version)
+            : undefined;
+    if (version !== undefined && version > STATE_VERSION) return { state: null, reason: 'future', version };
+    const state = sanitizeState(parsed);
+    return state ? { state } : { state: null, reason: 'invalid', ...(version !== undefined ? { version } : {}) };
+}
+
 /** Parse + sanitize a persisted payload. Null on anything unusable (wrong version,
  *  not JSON, not an object) — malformed FIELDS are dropped, never thrown on. */
 export function decodeState(raw: string): WorkspaceState | null {
-    try {
-        return sanitizeState(JSON.parse(raw));
-    } catch {
-        return null;
-    }
+    return decodeStateDetailed(raw).state;
 }
 
 /**
@@ -226,8 +298,13 @@ export function decodeState(raw: string): WorkspaceState | null {
 export function sanitizeState(doc: unknown): WorkspaceState | null {
     if (doc == null || typeof doc !== 'object') return null;
     const d = doc as Record<string, unknown>;
-    if (d.version !== 1 || typeof d.layout !== 'string') return null;
-    const out: WorkspaceState = { version: 1, layout: d.layout, charts: [] };
+    // Version tolerance, deliberately asymmetric: a MISSING version is treated as 1 (the
+    // first release shipped documents that predate the field in hand-written fixtures),
+    // and a FUTURE version is refused by `decodeStateDetailed` before we get here rather
+    // than being half-imported into an older schema.
+    const version = typeof d.version === 'number' ? d.version : 1;
+    if (!Number.isFinite(version) || version > STATE_VERSION || typeof d.layout !== 'string') return null;
+    const out: WorkspaceState = { version: STATE_VERSION, layout: d.layout, charts: [] };
 
     if (Array.isArray(d.charts)) {
         // Unique by id, LAST duplicate wins (a Map keeps the first-seen position).
@@ -259,6 +336,36 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
     if (d.drawingsScope === 'global' || d.drawingsScope === 'layout') out.drawingsScope = d.drawingsScope;
     const saved = sanitizeRecordMap(d.savedLayouts);
     if (saved) out.savedLayouts = saved;
+    const layoutMeta = sanitizeLayoutMeta(d.layoutMeta);
+    if (layoutMeta) out.layoutMeta = layoutMeta;
+    const templates = sanitizeTemplates(d.templates);
+    if (templates) out.templates = templates;
+    if (Array.isArray(d.watchlist)) {
+        const list: string[] = [];
+        for (const raw of d.watchlist as unknown[]) {
+            if (typeof raw !== 'string') continue;
+            const symbol = raw.trim();
+            if (symbol && !list.includes(symbol)) list.push(symbol);
+        }
+        if (list.length > 0) out.watchlist = list;
+    }
+    if (d.groupNames != null && typeof d.groupNames === 'object' && !Array.isArray(d.groupNames)) {
+        const names: Record<string, string> = {};
+        for (const [key, value] of Object.entries(d.groupNames as Record<string, unknown>)) {
+            if (typeof value !== 'string') continue;
+            const name = value.trim().slice(0, 24);
+            if (key && name) names[key] = name;
+        }
+        if (Object.keys(names).length > 0) out.groupNames = names;
+    }
+    if (Array.isArray(d.seenTips)) {
+        const tips = d.seenTips.filter((t): t is string => typeof t === 'string' && t.length > 0);
+        if (tips.length > 0) out.seenTips = [...new Set(tips)];
+    }
+    if (Array.isArray(d.recentCommands)) {
+        const recent = d.recentCommands.filter((c): c is string => typeof c === 'string' && c.length > 0).slice(0, 8);
+        if (recent.length > 0) out.recentCommands = [...new Set(recent)];
+    }
     if (typeof d.linkedGroup === 'string' && d.linkedGroup) out.linkedGroup = d.linkedGroup;
     const tracks = sanitizeTrackSizes(d.trackSizes);
     if (tracks) out.trackSizes = tracks;
@@ -267,6 +374,52 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
     const ext = sanitizeExt(d.ext);
     if (ext) out.ext = ext;
     return out;
+}
+
+/**
+ * Snapshot previews. A thumb must be a small `data:image/jpeg;base64,…` string — never a
+ * remote URL (a stored `http://…` would beacon the user's view to a third party on every
+ * picker open) and never unbounded (a 4 MB data URL would eat the whole storage budget).
+ */
+function sanitizeLayoutMeta(raw: unknown): Record<string, SavedLayoutMeta> | null {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const out: Record<string, SavedLayoutMeta> = {};
+    for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (!name || value == null || typeof value !== 'object' || Array.isArray(value)) continue;
+        const m = value as Record<string, unknown>;
+        const entry: SavedLayoutMeta = {};
+        if (typeof m.thumb === 'string' && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(m.thumb) && m.thumb.length <= 90_000) {
+            entry.thumb = m.thumb;
+        }
+        if (typeof m.savedAt === 'number' && Number.isFinite(m.savedAt) && m.savedAt > 0) entry.savedAt = m.savedAt;
+        if (entry.thumb || entry.savedAt) out[name] = entry;
+    }
+    return Object.keys(out).length > 0 ? out : null;
+}
+
+/** Templates: a known body version, an indicator array of the shape a cell persists, and
+ *  an optional market. Anything else is dropped (never coerced into a half-template). */
+function sanitizeTemplates(raw: unknown): Record<string, ChartTemplate> | null {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const out: Record<string, ChartTemplate> = {};
+    for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (!name || value == null || typeof value !== 'object' || Array.isArray(value)) continue;
+        const t = value as Record<string, unknown>;
+        const key = name.trim().slice(0, 40);
+        if (!key || t.version !== 1 || !Array.isArray(t.indicators)) continue;
+        const indicators: PersistedNativeEntry[] = [];
+        for (const raw of t.indicators as unknown[]) {
+            if (typeof raw === 'string' && raw) indicators.push(raw);
+            else if (raw != null && typeof raw === 'object' && typeof (raw as Record<string, unknown>).type === 'string') {
+                indicators.push(raw as PersistedNativeEntry);
+            }
+        }
+        const template: ChartTemplate = { version: 1, indicators };
+        if (typeof t.symbol === 'string' && t.symbol) template.symbol = t.symbol;
+        if (typeof t.timeframe === 'string' && t.timeframe) template.timeframe = t.timeframe;
+        out[key] = template;
+    }
+    return Object.keys(out).length > 0 ? out : null;
 }
 
 /** The `ext` bag passes through OPAQUELY (the rendererConfig/drawings precedent): only

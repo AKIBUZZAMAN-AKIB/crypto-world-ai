@@ -692,6 +692,11 @@ export class ChartCell {
 
     /** What tapping this chart's marks chip runs — the workspace opens its sync sheet on
      *  THIS cell (multi-chart shells only; a lone chart has nothing to link). */
+    /** The group badge, when this cell shows a status line (the tip's anchor). */
+    groupBadgeAnchor(): HTMLElement | null {
+        return this.statusline?.marksAnchor() ?? null;
+    }
+
     setSyncMarksHandler(fn: (() => void) | null): void {
         this.statusline?.setMarksHandler(fn);
     }
@@ -1194,6 +1199,19 @@ export class ChartCell {
      * resolves. Convergence is state application, not user edits — nothing enters the
      * undo timeline.
      */
+    /**
+     * Replace this chart's indicators with a saved TEMPLATE (see
+     * `VelaWorkspace.applyTemplate`). Templates carry the indicator ledger only — the
+     * documented contract: drawings are not part of a template, so they stay exactly as
+     * they are on the chart.
+     */
+    applyIndicatorTemplate(template: { indicators: ReadonlyArray<LedgerNativeEntry | string | { type: string; inputs?: Record<string, unknown>; hidden?: boolean }> }): void {
+        const natives = template.indicators.map((e) =>
+            typeof e === 'string' ? e : ({ ...e, inputs: (e.inputs ?? {}) as Record<string, never> } as unknown as LedgerNativeEntry),
+        );
+        this.rehydrate({ indicators: { manifest: [], natives } } as CellState);
+    }
+
     private applyIndicatorLedger(led: { manifest: LedgerManifestEntry[]; natives: LedgerNativeEntry[] }): void {
         const chart = this.inner;
         if (!chart) return;

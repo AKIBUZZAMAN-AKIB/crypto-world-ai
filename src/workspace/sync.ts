@@ -17,18 +17,33 @@ import { IMPLICIT_GROUP } from '../state/document';
 export type { SyncKind, SyncSetting, SyncOptions } from '../state/document';
 export { IMPLICIT_GROUP, SYNC_KINDS } from '../state/document';
 
-import { SYNC_GROUP_MARKS } from './sync-marks';
-export { SYNC_GROUP_MARKS, groupMarkColor } from './sync-marks';
+import { SYNC_GROUP_IDS, groupIdOf, groupMarkOf } from './sync-marks';
+export {
+    SYNC_GROUP_IDS,
+    SYNC_GROUP_MARKS,
+    SYNC_GROUPS,
+    groupDef,
+    groupIdOf,
+    groupMarkColor,
+    groupMarkOf,
+    groupNameOf,
+} from './sync-marks';
 
-/** The update rule behind the picker's group chip: unlinked ⇒ the first FREE mark (or
- *  the first one), a mark ⇒ the next one, the last ⇒ unlinked. PURE. */
-export function nextGroupMark(current: string | undefined, inUse: readonly string[], marks: readonly string[] = SYNC_GROUP_MARKS): string | null {
+/** The update rule behind the picker's group chip: unlinked ⇒ the first FREE group (or
+ *  the first one), a group ⇒ the next one, the last ⇒ unlinked. PURE.
+ *
+ *  It walks the STABLE IDS (`'red'`, `'orange'` …) — the mark is only what gets painted.
+ *  `current` and `inUse` are normalized first, so a legacy document that still stores
+ *  emoji cycles exactly as it always did. */
+export function nextGroupMark(current: string | undefined, inUse: readonly string[], groups: readonly string[] = SYNC_GROUP_IDS): string | null {
+    const used = inUse.map((g) => groupIdOf(g) ?? g);
     if (current == null) {
-        const free = marks.find((m) => !inUse.includes(m));
-        return free ?? marks[0] ?? null;
+        const free = groups.find((g) => !used.includes(g));
+        return free ?? groups[0] ?? null;
     }
-    const i = marks.indexOf(current);
-    return i >= 0 && i + 1 < marks.length ? marks[i + 1]! : null;
+    const id = groupIdOf(current) ?? current;
+    const i = groups.indexOf(id);
+    return i >= 0 && i + 1 < groups.length ? groups[i + 1]! : null;
 }
 
 /** Every link's mark for one cell ("this chart is 🔴 for symbol, 🟢 for crosshair") —
@@ -36,7 +51,7 @@ export function nextGroupMark(current: string | undefined, inUse: readonly strin
 export function cellGroupMarks(cellId: string, settings: SyncOptions): Array<{ kind: SyncKind; mark: string }> {
     const out: Array<{ kind: SyncKind; mark: string }> = [];
     for (const kind of SYNC_KINDS) {
-        const mark = groupOf(settings[kind], cellId);
+        const mark = markOf(settings[kind], cellId);
         if (mark) out.push({ kind, mark });
     }
     return out;
@@ -46,9 +61,11 @@ export function cellGroupMarks(cellId: string, settings: SyncOptions): Array<{ k
 export function syncTargets(originId: string, setting: SyncSetting | undefined, cellIds: readonly string[]): string[] {
     if (setting == null || setting === false) return [];
     if (setting === true) return cellIds.filter((id) => id !== originId);
-    const group = setting[originId];
+    // Compare CANONICAL ids, so a document written before the ids existed (emoji values)
+    // and one written after it (slugs) still see the same group.
+    const group = groupIdOf(setting[originId]);
     if (group == null) return []; // the origin is unlinked — nothing follows it
-    return cellIds.filter((id) => id !== originId && setting[id] === group);
+    return cellIds.filter((id) => id !== originId && groupIdOf(setting[id]) === group);
 }
 
 /** Whether two visible ranges agree within `epsMs` on both edges — the short-circuit
@@ -140,14 +157,17 @@ export function syncEnabled(setting: SyncSetting | undefined): boolean {
 export function syncGroups(setting: SyncSetting | undefined): string[] {
     if (setting == null || setting === false || setting === true) return [];
     const seen: string[] = [];
-    for (const g of Object.values(setting)) if (!seen.includes(g)) seen.push(g);
+    for (const g of Object.values(setting)) {
+        const id = groupIdOf(g) ?? g;
+        if (!seen.includes(id)) seen.push(id);
+    }
     return seen;
 }
 
 /** The group a cell belongs to (undefined when unlinked or in the all-cells form). */
 export function groupOf(setting: SyncSetting | undefined, cellId: string): string | undefined {
     if (setting == null || setting === false || setting === true) return undefined;
-    return setting[cellId];
+    return groupIdOf(setting[cellId]);
 }
 
 
@@ -159,7 +179,8 @@ export function groupOf(setting: SyncSetting | undefined, cellId: string): strin
  */
 export function markOf(setting: SyncSetting | undefined, cellId: string): string | undefined {
     if (setting === true) return IMPLICIT_GROUP;
-    return groupOf(setting, cellId);
+    const id = groupOf(setting, cellId);
+    return id == null ? undefined : (groupMarkOf(id) ?? id);
 }
 
 /**
@@ -176,12 +197,14 @@ export function groupSetting(
 ): SyncSetting | undefined {
     const next: Record<string, string> = {};
     if (base != null && base !== true) {
-        for (const [id, g] of Object.entries(base)) next[id] = g;
+        // Normalize on the way through: the moment a document is edited it is upgraded
+        // from legacy emoji values to stable ids.
+        for (const [id, g] of Object.entries(base)) next[id] = groupIdOf(g) ?? g;
     } else if (base === true) {
         for (const id of cellIds) next[id] = 'A';
     }
     if (group == null) delete next[cellId];
-    else next[cellId] = group;
+    else next[cellId] = groupIdOf(group) ?? group;
     return Object.keys(next).length > 0 ? next : undefined;
 }
 

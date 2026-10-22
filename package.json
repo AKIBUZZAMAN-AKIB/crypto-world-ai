@@ -94,7 +94,8 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "playground": "vite",
-    "test:browser": "node test/browser/run.mjs"
+    "test:browser": "node test/browser/run.mjs",
+    "test:browser:ci": "node test/browser/ci.mjs"
   },
   "devDependencies": {
     "eslint": "^9.0.0",

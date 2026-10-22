@@ -34,6 +34,10 @@ import { SymbolPicker } from '../widget/symbol-picker';
 import { IndicatorPicker } from '../widget/indicator-picker';
 import { TimeframeQuick } from '../widget/timeframe-quick';
 import { ShortcutsHelp } from '../widget/shortcuts-help';
+import { AlertList } from '../widget/alert-list';
+import { Tip } from '../widget/tip';
+import { REDUCED_MOTION_CSS } from '../ui/motion';
+import { CommandPalette, type PaletteCommand } from '../widget/command-palette';
 import { Toast } from '../widget/toast';
 import { Glider, ZOOM_IN, ZOOM_OUT, PAN_FAST } from '../widget/glide';
 import { toolShortcutHints } from '../widget/tool-shortcuts';
@@ -59,6 +63,8 @@ import { registerBuiltinChartTypes } from '../chart-types/builtins';
 import { parseSymbol } from '../data/ProviderRegistry';
 import {
     alignedRangeAround,
+    groupDef,
+    groupIdOf,
     groupOf,
     groupSetting,
     IMPLICIT_GROUP,
@@ -74,8 +80,8 @@ import {
     type SyncOptions,
     type SyncSetting,
 } from './sync';
-import { encodeState, decodeState, sanitizeState, type CellState, type DrawingToolsState, type WorkspaceState, type WorkspaceStorage } from './persist';
-import { localStorageAdapter } from '../widget/persist';
+import { encodeState, decodeState, decodeStateDetailed, sanitizeState, type CellState, type ChartTemplate, type DrawingToolsState, type SavedLayoutMeta, type WorkspaceState, type WorkspaceStorage } from './persist';
+import { localStorageAdapter, type StorageFailure } from '../widget/persist';
 
 /** The links in TradingView's reading order — the picker's rows and the badge's order. */
 const SYNC_ROW_ORDER: ReadonlyArray<readonly [SyncKind, string]> = [
@@ -208,6 +214,10 @@ export interface WorkspaceEventMap extends Record<string, unknown> {
     /** The persistable state changed (debounced ~500ms) — re-pull `getState()` if you
      *  consume it. The signal custom persistence flows build on. */
     'state:changed': undefined;
+    /** Another tab wrote the persisted document (this tab did NOT adopt it). */
+    'state:external': { key: string; raw: string };
+    /** A storage write failed and the shell could not work around it. */
+    'persist:failed': { kind: 'quota' | 'blocked' | 'unknown' };
 }
 
 const DEFAULT_TIMEFRAMES = ['1', '5', '15', '30', '60', '240', 'D', 'W', 'M'];
@@ -420,6 +430,19 @@ export class VelaWorkspace {
     private drawingsBySymbol: Record<string, unknown> = {};
     /** Named workspace snapshots ("Save layout as…"), by name. */
     private readonly savedLayouts = new Map<string, WorkspaceState>();
+    /** Side-car data for the snapshots (preview JPEG + save time), by name. */
+    private readonly layoutMeta = new Map<string, SavedLayoutMeta>();
+    /** Saved chart TEMPLATES — indicator sets, no drawings (see `ChartTemplate`). */
+    private readonly templates = new Map<string, ChartTemplate>();
+    /** The shell watchlist — symbols in display order. */
+    private watchlist: string[] = [];
+    /** Names the USER gave to sync groups, keyed by the stable group id. */
+    private groupNames: Record<string, string> = {};
+    /** One-time tips already shown (the ◌ affordance, the palette chord). */
+    private readonly seenTips = new Set<string>();
+    /** The live coach mark, if any (one at a time — two pointing fingers is noise). */
+    private groupTip: Tip | null = null;
+    private groupTipTimer: ReturnType<typeof setTimeout> | null = null;
     /** Tab-link tag (TradingView Desktop's colored tab link); null = unlinked. */
     private linkGroup: string | null = null;
     /** The tab-link transport (same page synchronously, other tabs via BroadcastChannel). */
@@ -440,6 +463,14 @@ export class VelaWorkspace {
     private timeBusy = false;
     // ── persistence (state surface + adapter plumbing) ──
     private readonly persistKey: string | null;
+    /** Storage refused a write for lack of space; writes now leave the previews out. */
+    private slimOnQuota = false;
+    /** Throttle for the two storage notices (a failing adapter retries every 500 ms). */
+    private lastStorageNotice = 0;
+    /** One-shot: the chart pool is full and a dormant chart had to be dropped. */
+    private poolDropNoticed = false;
+    /** Throttle for the "another tab wrote this" notice. */
+    private lastExternalNotice = 0;
     private readonly storage: WorkspaceStorage;
     private stateTimer: ReturnType<typeof setTimeout> | null = null;
     /** Re-entrance guard for {@link flushPendingState}: a `state:changed` subscriber that
@@ -486,6 +517,12 @@ export class VelaWorkspace {
     /** Bell retention — `alertCap` option, default {@link ALERT_CAP}. */
     private readonly alertCap: number;
     private alertsMenu: Menu | null = null;
+    /** The grouped alert list (the bell's real surface: per chart, per alert). */
+    private alertList: AlertList | null = null;
+    /** ⌘K palette — built lazily on first open. */
+    private palette: CommandPalette | null = null;
+    /** Recently run palette commands, newest first (persisted with the document). */
+    private recentCommands: string[] = [];
     // ── mobile chrome (same components as the widget shell; CSS keys off data-layout
     // on the root, the drawers build lazily on first open and act on the ACTIVE cell) ──
     /** Writes `data-layout` on the root and pushes mode flips into every cell's renderer. */
@@ -544,17 +581,33 @@ export class VelaWorkspace {
         // ── persistence boot: a SYNC storage restores before the first build (no flash
         // of defaults); an async adapter resolves later and late-applies via applyState.
         this.persistKey = opts.persist === undefined || opts.persist === false ? null : opts.persist === true ? 'vela-workspace' : opts.persist;
-        this.storage = opts.storage ?? localStorageAdapter();
+        this.storage = opts.storage ?? localStorageAdapter({ onError: (f) => this.handleStorageFailure(f) });
         let boot: WorkspaceState | null = null;
         if (this.persistKey !== null) {
             const raw = this.storage.get(this.persistKey);
-            if (typeof raw === 'string') boot = decodeState(raw);
-            else if (raw != null && typeof raw === 'object') {
+            if (typeof raw === 'string') {
+                const decoded = decodeStateDetailed(raw);
+                boot = decoded.state;
+                // A payload this build cannot read is NOT deleted: it is copied aside, so
+                // an upgrade (or a human with the console) can still recover the trader's
+                // work instead of it being overwritten by the next default save.
+                if (!boot && raw.length > 0 && decoded.reason !== 'empty') this.rescueUnreadable(raw, decoded.reason);
+            } else if (raw != null && typeof raw === 'object') {
                 void raw.then((r) => {
-                    if (!this.destroyed && r) this.applyState(decodeState(r));
+                    if (this.destroyed || !r) return;
+                    const decoded = decodeStateDetailed(r);
+                    if (decoded.state) this.applyState(decoded.state);
+                    else this.rescueUnreadable(r, decoded.reason);
                 });
             }
-            if (typeof window !== 'undefined') window.addEventListener('beforeunload', this.onUnload);
+            if (typeof window !== 'undefined') {
+                window.addEventListener('beforeunload', this.onUnload);
+                // Another TAB writing this key is the one conflict localStorage can tell
+                // us about (the event never fires in the document that wrote). We do not
+                // adopt the other document — that would silently discard what this tab
+                // has in hand — we say so and let the host decide.
+                window.addEventListener('storage', this.onForeignWrite);
+            }
         }
         this.timezone = boot?.timezone ?? opts.timezone ?? 'Etc/UTC';
         if (boot?.favorites) this.favs = [...boot.favorites];
@@ -584,6 +637,9 @@ export class VelaWorkspace {
 
         const doc = hostEl.ownerDocument;
         injectStyles(STYLE_ID, CSS, doc);
+        // One global rule for the CSS half of `prefers-reduced-motion` (the canvas half
+        // lives in NativeRenderer). Scoped to the library's roots, injected once.
+        injectStyles('vela-reduced-motion', REDUCED_MOTION_CSS, doc);
         this.root = doc.createElement('div');
         this.root.className = 'vela-workspace';
         ensureUIHost(this.root, resolveTheme(opts.theme));
@@ -601,6 +657,14 @@ export class VelaWorkspace {
             // Row icons come from each descriptor's OWNING provider (resolveSymbolIcon).
             iconFor: (d) => this.feed.symbolIconOf(d),
             onSelect: (ticker) => this.active.setSymbol(ticker),
+            // The watchlist: the trader's shortlist at the top of the picker, a star on
+            // every row, and (multi-chart) one tap to put a symbol on EVERY chart.
+            watchlist: () => this.watchlist,
+            onToggleWatch: (symbol, on) => {
+                if (on) this.addToWatchlist(symbol);
+                else this.removeFromWatchlist(symbol);
+            },
+            ...(this.def.cells.length > 1 ? { onApplyAll: (symbol: string) => this.setSymbolForAll(symbol) } : {}),
             onOpenChange: (open) => {
                 // In-chart dialogs (indicator inputs, chart settings) live inside a cell's
                 // chart container, so opening the search from the topbar never hits their
@@ -687,8 +751,22 @@ export class VelaWorkspace {
                 onClearPooled: () => this.clearPooled(),
                 clearedCharts: () => this.clearedChartCount,
                 onRestorePooled: () => this.restorePooled(),
-                savedLayouts: () => this.savedLayoutList(),
+                savedLayouts: () =>
+                    this.savedLayoutList().map((l) => ({
+                        ...l,
+                        thumb: this.layoutThumb(l.name),
+                        savedAt: this.layoutSavedAt(l.name),
+                    })),
                 onSaveLayout: (name) => this.saveLayout(name),
+                onSaveLayoutWithThumb: (name) => this.saveLayoutWithThumbnail(name),
+                templates: () => this.templateList(),
+                onSaveTemplate: (name, includeMarket) => this.saveTemplate(name, { includeMarket }),
+                onApplyTemplate: (name, target) => this.applyTemplate(name, target),
+                onDeleteTemplate: (name) => this.deleteTemplate(name),
+                onExportTemplate: (name) => this.exportTemplate(name),
+                onImportTemplate: (json) => this.importTemplate(json),
+                legend: () => this.groupLegend(),
+                onRenameGroup: (id, name) => this.setGroupName(id, name),
                 onOpenLayout: (name) => this.openLayout(name),
                 onDeleteLayout: (name) => this.deleteLayout(name),
                 onRenameLayout: (from, to) => this.renameLayout(from, to),
@@ -859,6 +937,13 @@ export class VelaWorkspace {
                       // Multi-chart only: the stop that isolates the ACTIVE chart (the
                       // per-cell hover cluster has no cursor to reveal it on mobile).
                       ...(this.monoLayout ? {} : { onMaximizeClick: () => this.toggleMobileMaximize() }),
+                      // The layout stop: open the sheet straight on its Layout block.
+                      ...(this.monoLayout
+                          ? {}
+                          : {
+                                layoutLabel: () => `${this.def.cols.length}×${this.def.rows.length}`,
+                                onLayoutClick: () => this.openMoreDrawer('layout'),
+                            }),
                       onMoreClick: () => this.openMoreDrawer(),
                       onSettingsClick: () => this.active.chart.renderer.openSettings(),
                   })
@@ -1163,6 +1248,16 @@ export class VelaWorkspace {
         if (Object.keys(this.drawingsBySymbol).length > 0) state.drawingsBySymbol = { ...this.drawingsBySymbol };
         if (this.drawingsScope !== 'layout') state.drawingsScope = this.drawingsScope;
         if (this.savedLayouts.size > 0) state.savedLayouts = Object.fromEntries([...this.savedLayouts].map(([k, v]) => [k, v as unknown]));
+        if (this.layoutMeta.size > 0) state.layoutMeta = Object.fromEntries([...this.layoutMeta].map(([k, v]) => [k, { ...v }]));
+        if (this.templates.size > 0) {
+            state.templates = Object.fromEntries(
+                [...this.templates].map(([k, v]) => [k, { ...v, indicators: [...v.indicators] }]),
+            );
+        }
+        if (this.watchlist.length > 0) state.watchlist = [...this.watchlist];
+        if (Object.keys(this.groupNames).length > 0) state.groupNames = { ...this.groupNames };
+        if (this.seenTips.size > 0) state.seenTips = [...this.seenTips];
+        if (this.recentCommands.length > 0) state.recentCommands = [...this.recentCommands];
         if (this.linkGroup) state.linkedGroup = this.linkGroup;
         return state;
     }
@@ -1193,6 +1288,21 @@ export class VelaWorkspace {
                 if (parsed) this.savedLayouts.set(name, parsed);
             }
         }
+        if (st.layoutMeta) {
+            for (const [name, meta] of Object.entries(st.layoutMeta)) this.layoutMeta.set(name, { ...meta });
+        }
+        if (st.templates) {
+            for (const [name, template] of Object.entries(st.templates)) this.templates.set(name, template);
+        }
+        if (st.watchlist) this.watchlist = [...st.watchlist];
+        if (st.groupNames) this.groupNames = { ...st.groupNames };
+        if (st.seenTips) for (const tip of st.seenTips) this.seenTips.add(tip);
+        // A document can arrive from an older build, a hand-edited file or a share link:
+        // keep only the side-cars that still name a real snapshot.
+        for (const name of [...this.layoutMeta.keys()]) {
+            if (!this.savedLayouts.has(name)) this.layoutMeta.delete(name);
+        }
+        if (st.recentCommands) this.recentCommands = [...st.recentCommands];
         if (typeof st.linkedGroup === 'string') {
             this.linkGroup = st.linkedGroup;
             this.link.setTag(this.linkGroup);
@@ -1496,11 +1606,15 @@ export class VelaWorkspace {
 
     destroy(): void {
         if (this.destroyed) return;
+        this.dismissGroupTip(false);
         this.flushPendingState(); // the user's last edit, before anything is torn down
         this.destroyed = true;
         this.replay.destroy();
         this.link.destroy();
-        if (this.persistKey !== null && typeof window !== 'undefined') window.removeEventListener('beforeunload', this.onUnload);
+        if (this.persistKey !== null && typeof window !== 'undefined') {
+            window.removeEventListener('beforeunload', this.onUnload);
+            window.removeEventListener('storage', this.onForeignWrite);
+        }
         this.resizeObserver?.disconnect();
         this.splitters.destroy();
         for (const [id, cell] of [...this.cellsById]) {
@@ -1576,6 +1690,7 @@ export class VelaWorkspace {
         this.mobileBar?.renderActions();
         this.mobileBar?.setSymbol(cell.symbol);
         this.mobileBar?.setTimeframe(cell.timeframe);
+        this.mobileBar?.setLayoutLabel(`${this.def.cols.length}×${this.def.rows.length}`);
         this.syncMobileMaximize(); // the new active cell may hold a maximized pane
         this.drawingPill?.onChart(cell.chart); // the pill mirrors the ACTIVE cell's tool state
         const pushHistory = (): void => this.topbar.setHistoryState(cell.history.canUndo, cell.history.canRedo);
@@ -1678,11 +1793,83 @@ export class VelaWorkspace {
      *  - `emitting` is held across the emit, so a handler calling back in (a host that
      *    tears down on save is the obvious one) cannot re-enter this and recurse.
      */
+    /**
+     * The document as it should be WRITTEN. After a quota failure the previews are the
+     * first thing to go: they are the only field that is large, redundant (a layout can
+     * be re-captured) and useless without its layout.
+     */
+    private encodeForStorage(): string {
+        const state = this.getState();
+        if (this.slimOnQuota && state.layoutMeta) {
+            for (const meta of Object.values(state.layoutMeta)) delete meta.thumb;
+        }
+        return encodeState(state);
+    }
+
+    /** Keep an unreadable / too-new payload aside, once per boot, and say so. */
+    private rescueUnreadable(raw: string, reason?: string): void {
+        if (this.persistKey === null) return;
+        const backupKey = `${this.persistKey}:unreadable`;
+        try {
+            void this.storage.set(backupKey, raw);
+        } catch {
+            /* the rescue itself is best-effort */
+        }
+        const why = reason === 'future' ? 'was written by a NEWER version of this library' : 'could not be read';
+        this.deferNotice(`Your saved layout ${why}. It was left untouched and copied to “${backupKey}”.`, 'error');
+    }
+
+    /**
+     * A storage write failed. Quota is treated as a SIGNAL, not an error: drop the
+     * cheapest-to-lose field (previews), retry, and only then tell the user that nothing
+     * more can be saved. A blocked store (private mode) is said out loud immediately —
+     * silently losing a session is the worst possible outcome.
+     */
+    private handleStorageFailure(failure: StorageFailure): void {
+        if (failure.kind === 'quota' && !this.slimOnQuota) {
+            this.slimOnQuota = true;
+            this.deferNotice('Browser storage is full — layout previews were dropped so your layouts keep saving.', 'info');
+            this.persistNow();
+            return;
+        }
+        const message =
+            failure.kind === 'quota'
+                ? 'Browser storage is full — changes are kept in memory only. Export the layout you want to keep.'
+                : 'This browser is not letting the workspace save (storage unavailable). Changes are kept in memory only.';
+        this.deferNotice(message, 'error');
+        this.events.emit('persist:failed', { kind: failure.kind });
+    }
+
+    /** Toast with a per-message throttle, deferred so a constructor-time failure lands. */
+    private deferNotice(message: string, kind: 'info' | 'success' | 'error'): void {
+        const now = Date.now();
+        if (now - this.lastStorageNotice < 8000) return;
+        this.lastStorageNotice = now;
+        // A failure can be reported while the constructor is still running (the boot
+        // decode rescues an unreadable payload), so `root` may not be assigned yet.
+        const doc = (this.root as HTMLElement | undefined)?.ownerDocument ?? (typeof document !== 'undefined' ? document : null);
+        const win = doc?.defaultView ?? null;
+        if (!win) return;
+        win.setTimeout(() => {
+            if (!this.destroyed) this.toast(message, kind, 6000);
+        }, 0);
+    }
+
+    /** Another document (another TAB, or the same app in an iframe) wrote our key. */
+    private readonly onForeignWrite = (e: StorageEvent): void => {
+        if (this.persistKey === null || e.key !== this.persistKey || e.newValue == null) return;
+        this.events.emit('state:external', { key: this.persistKey, raw: e.newValue });
+        const now = Date.now();
+        if (now - this.lastExternalNotice < 8000) return;
+        this.lastExternalNotice = now;
+        this.toast('This layout was changed in another tab — reload to open that version.', 'info', 7000);
+    };
+
     private flushPendingState(): void {
         if (this.stateTimer == null || this.emitting) return;
         clearTimeout(this.stateTimer);
         this.stateTimer = null;
-        const snapshot = this.persistKey !== null ? encodeState(this.getState()) : null;
+        const snapshot = this.persistKey !== null ? this.encodeForStorage() : null;
         this.emitting = true;
         try {
             this.events.emit('state:changed', undefined);
@@ -1702,7 +1889,7 @@ export class VelaWorkspace {
     private persistNow(): void {
         if (this.persistKey === null || this.destroyed) return;
         try {
-            void this.storage.set(this.persistKey, encodeState(this.getState()));
+            void this.storage.set(this.persistKey, this.encodeForStorage());
         } catch {
             /* best-effort — a failing adapter must never break the workspace */
         }
@@ -1976,6 +2163,7 @@ export class VelaWorkspace {
                 .filter(Boolean)
                 .join(' ');
             this.alerts.unshift({ cellId: cell.id, source, title: alert.title ?? 'Alert', message: alert.message, time: alert.time });
+            this.alertList?.refresh();
             if (this.alerts.length > this.alertCap) this.alerts.pop();
             this.toastHost.show(`${source} — ${alert.title ? alert.title + ' — ' : ''}${alert.message}`, 'info', 4000);
             this.topbar.setAlertCount(this.alerts.length);
@@ -2105,6 +2293,14 @@ export class VelaWorkspace {
     private applySyncSetting(kind: SyncKind, setting: SyncSetting | undefined, align = false): void {
         if (setting == null || setting === false) delete this.syncOpts[kind];
         else {
+            // Normalize group values to STABLE ids at the single write gate. A host may
+            // pass legacy marks (`'🔴'`) or its own keys; documents from here on only
+            // carry ids, which is what makes the palette free to change.
+            if (typeof setting === 'object') {
+                const canon: Record<string, string> = {};
+                for (const [id, g] of Object.entries(setting)) canon[id] = groupIdOf(g) ?? g;
+                setting = canon;
+            }
             this.syncOpts[kind] = setting;
             // Remember how the link was ON so the switch's off→on round-trip restores
             // the chart chips instead of collapsing a grouped grid into the all-cells
@@ -2390,10 +2586,13 @@ export class VelaWorkspace {
         // leaves a half-link behind (one chart in a group, nothing else following).
         if (!syncEnabled(this.syncOpts[kind])) this.sync.set(kind, true, false);
         const setting = this.syncOpts[kind];
-        const current = markOf(setting, cellId);
-        // `markOf` reports the implicit group for an all-cells link; `nextGroupMark`
-        // treats a real mark as a position in the palette and anything else as "unlinked"
-        // — so the first tap on an all-cells chart hands it 🔴 while the rest keep 'A'.
+        // The CYCLE walks the stable group ids; `markOf` is only what the chip paints,
+        // so it is deliberately not the input here (a legacy document storing emoji is
+        // normalized by `nextGroupMark` anyway).
+        const current = groupOf(setting, cellId);
+        // An all-cells link reports the implicit group; `nextGroupMark` treats a real id
+        // as a position in the palette and anything else as "unlinked" — so the first tap
+        // on an all-cells chart hands it red while the rest keep 'A'.
         const next = nextGroupMark(current === IMPLICIT_GROUP ? undefined : current, syncGroups(setting));
         this.sync.setGroup(kind, cellId, next);
         this.projectGroupMarks();
@@ -2445,6 +2644,13 @@ export class VelaWorkspace {
         // chart shows it (as "◌") instead of hiding the affordance entirely.
         const linkable = !this.monoLayout && this.cellsById.size > 1;
         for (const [id, cellMarks] of marks) this.cellsById.get(id)?.setSyncMarks(cellMarks, linkable);
+        // The ring's job is done the moment any chart joins a group (the user has found
+        // the mechanism), or when the grid is no longer linkable at all.
+        if (this.groupTip && (!linkable || [...marks.values()].some((m) => m.length > 0))) {
+            this.dismissGroupTip(true);
+        } else if (!this.groupTip && linkable) {
+            this.maybeShowGroupTip();
+        }
     }
 
     // ── drawing scope: the cell's document, or the SYMBOL's ─────────────────────────
@@ -2512,6 +2718,10 @@ export class VelaWorkspace {
 
     deleteLayout(name: string): void {
         if (!this.savedLayouts.delete(name)) return;
+        // The side-car goes with the snapshot: a thumbnail or timestamp whose layout is
+        // gone is an orphan that would re-appear under a NEW layout saved with the same
+        // name — a preview of somebody else's chart.
+        this.layoutMeta.delete(name);
         if (this.activeSavedLayout === name) this.activeSavedLayout = null;
         this.markStateDirty();
     }
@@ -2531,6 +2741,14 @@ export class VelaWorkspace {
         this.savedLayouts.clear();
         for (const [key, value] of rebuilt) this.savedLayouts.set(key, value);
         if (this.activeSavedLayout === from) this.activeSavedLayout = name;
+        // Move the side-car in the same breath. `renameLayout` rebuilds the Map to keep
+        // the picker's row order, so metadata keyed by the old name has to follow it —
+        // otherwise the renamed row loses its preview and the old name keeps it.
+        const meta = this.layoutMeta.get(from);
+        if (meta) {
+            this.layoutMeta.delete(from);
+            this.layoutMeta.set(name, meta);
+        }
         this.markStateDirty();
         this.toast(`Layout “${from}” renamed to “${name}”`, 'success');
         return true;
@@ -2575,6 +2793,361 @@ export class VelaWorkspace {
         this.markStateDirty();
         this.toast(`Layout “${name}” imported`, 'success');
         return name;
+    }
+
+    // ── chart templates ("save this indicator set, apply it anywhere") ──────────────
+    //
+    // Vela's documented template contract (docs.luxalgo.com → Charts → Indicators →
+    // Templates): a template is a snapshot of the chart's INDICATORS with their exact
+    // settings. Drawings are NOT part of it; drawing objects are removed from indicator
+    // panes when a template is applied, which is why the docs tell you to undo quickly.
+    // The market is OPT-IN (the symbol/timeframe chips are off by default), and in a
+    // multi-chart layout the trader is asked where to apply it: the selected chart, or
+    // every chart. That is exactly the surface below — `includeMarket` is the chips, and
+    // `target` is the destination question.
+
+    /** The saved templates, in insertion order, with their indicator count. */
+    templateList(): Array<{ name: string; count: number; symbol?: string; timeframe?: string }> {
+        return [...this.templates].map(([name, t]) => ({
+            name,
+            count: t.indicators.length,
+            ...(t.symbol ? { symbol: t.symbol } : {}),
+            ...(t.timeframe ? { timeframe: t.timeframe } : {}),
+        }));
+    }
+
+    /**
+     * Capture the ACTIVE chart's indicator set as `name` (replacing a same-named
+     * template — TradingView asks "replace?", the caller owns that prompt).
+     * `includeMarket` also stores the symbol/timeframe, so applying the template
+     * switches the chart's market; leave it off for a market-agnostic setup.
+     */
+    saveTemplate(name: string, opts: { includeMarket?: boolean } = {}): boolean {
+        const key = name.trim().slice(0, 40);
+        if (!key || !this.activeId) return false;
+        const cell = this.cellsById.get(this.activeId);
+        if (!cell) return false;
+        const ledger = cell.indicatorLedger();
+        const template: ChartTemplate = {
+            version: 1,
+            indicators: ledger.natives.map((e) => (typeof e === 'string' ? e : { ...e })),
+        };
+        if (opts.includeMarket) {
+            template.symbol = cell.symbol;
+            template.timeframe = cell.timeframe;
+        }
+        this.templates.set(key, template);
+        this.markStateDirty();
+        this.toast(`Template “${key}” saved (${template.indicators.length} indicator${template.indicators.length === 1 ? '' : 's'})`, 'success');
+        return true;
+    }
+
+    /**
+     * Apply a template. `'active'` (default) replaces the active chart's indicators,
+     * `'all'` replaces every chart's, and a cell id targets that one slot. Returns the
+     * number of charts changed. Applying REPLACES — it never stacks (the documented
+     * behaviour), and drawings are untouched by design.
+     */
+    applyTemplate(name: string, target: 'active' | 'all' | string = 'active'): number {
+        const template = this.templates.get(name);
+        if (!template) return 0;
+        const ids = target === 'all' ? [...this.cellsById.keys()] : target === 'active' ? (this.activeId ? [this.activeId] : []) : [target];
+        let changed = 0;
+        for (const id of ids) {
+            const cell = this.cellsById.get(id);
+            if (!cell) continue;
+            cell.applyIndicatorTemplate(template);
+            // The optional market chips: only when the template carries them, so a
+            // market-agnostic template never moves a chart.
+            if (template.symbol) cell.setSymbol(template.symbol);
+            if (template.timeframe) cell.setTimeframe(template.timeframe);
+            changed += 1;
+        }
+        if (changed > 0) {
+            this.markStateDirty();
+            this.toast(`Template “${name}” applied to ${changed} chart${changed === 1 ? '' : 's'}`, 'success');
+        }
+        return changed;
+    }
+
+    deleteTemplate(name: string): boolean {
+        if (!this.templates.delete(name)) return false;
+        this.markStateDirty();
+        return true;
+    }
+
+    renameTemplate(from: string, to: string): boolean {
+        const name = to.trim().slice(0, 40);
+        const template = this.templates.get(from);
+        if (!template || !name || name === from || this.templates.has(name)) return false;
+        const rebuilt = new Map<string, ChartTemplate>();
+        for (const [key, value] of this.templates) rebuilt.set(key === from ? name : key, value);
+        this.templates.clear();
+        for (const [key, value] of rebuilt) this.templates.set(key, value);
+        this.markStateDirty();
+        return true;
+    }
+
+    /** One template as a portable file — the same envelope shape as a layout export. */
+    exportTemplate(name: string): string | null {
+        const template = this.templates.get(name);
+        if (!template) return null;
+        return JSON.stringify({ app: 'vela', kind: 'template', version: 1, name, template }, null, 2);
+    }
+
+    /** Import a template file. Returns the name it landed under (never overwrites). */
+    importTemplate(json: string): string | null {
+        let raw: unknown;
+        try {
+            raw = JSON.parse(json);
+        } catch {
+            return null;
+        }
+        if (!raw || typeof raw !== 'object') return null;
+        const env = raw as { app?: unknown; kind?: unknown; name?: unknown; template?: unknown };
+        const body = env.kind === 'template' ? env.template : raw;
+        const probe = sanitizeState({ version: 1, layout: '1', charts: [], templates: { probe: body } });
+        const template = probe?.templates?.probe;
+        if (!template) return null;
+        const base = (typeof env.name === 'string' && env.name.trim()) || 'Imported template';
+        let name = base;
+        for (let n = 2; this.templates.has(name); n += 1) name = `${base} (${n})`;
+        this.templates.set(name, template);
+        this.markStateDirty();
+        this.toast(`Template “${name}” imported`, 'success');
+        return name;
+    }
+
+    // ── watchlist + batch symbols ────────────────────────────────────────────────────
+    /** The watchlist, in display order. */
+    watchlistSymbols(): string[] {
+        return [...this.watchlist];
+    }
+
+    /** Add a symbol (canonical or bare) to the watchlist. False when it is already on it. */
+    addToWatchlist(symbol: string): boolean {
+        const s = symbol.trim();
+        if (!s || this.watchlist.includes(s)) return false;
+        this.watchlist.push(s);
+        this.markStateDirty();
+        return true;
+    }
+
+    removeFromWatchlist(symbol: string): boolean {
+        const i = this.watchlist.indexOf(symbol);
+        if (i < 0) return false;
+        this.watchlist.splice(i, 1);
+        this.markStateDirty();
+        return true;
+    }
+
+    /**
+     * Put ONE symbol on EVERY chart — the multi-chart answer to "I want all four on
+     * BTC". Returns how many charts took it. With the Symbol link ON the group would
+     * have copied the next edit anyway; this is the explicit, one-step version, and it
+     * works when the link is off.
+     */
+    setSymbolForAll(symbol: string): number {
+        const s = symbol.trim();
+        if (!s) return 0;
+        let changed = 0;
+        for (const cell of this.cellsById.values()) {
+            if (cell.symbol === s) continue;
+            cell.setSymbol(s);
+            changed += 1;
+        }
+        if (changed > 0) {
+            this.markStateDirty();
+            this.toast(`${s} on ${changed} chart${changed === 1 ? '' : 's'}`, 'info');
+        }
+        if (!this.watchlist.includes(s)) this.addToWatchlist(s);
+        return changed;
+    }
+
+    // ── group names + legend ────────────────────────────────────────────────────────
+    /** The user's name for a group (undefined = unnamed). */
+    groupName(id: string): string | undefined {
+        return this.groupNames[id];
+    }
+
+    /** Name a group, or clear the name with `null`. Keyed by the STABLE id, so the
+     *  name survives a palette change; the emoji is only what the legend paints. */
+    setGroupName(id: string, name: string | null): void {
+        const trimmed = name?.trim().slice(0, 24) ?? '';
+        if (trimmed) this.groupNames[id] = trimmed;
+        else delete this.groupNames[id];
+        this.markStateDirty();
+        this.projectGroupMarks();
+    }
+
+    /**
+     * The groups actually in use, one entry per group, with the user's name and how many
+     * charts wear it. This is what the legend beside the matrix renders — the table says
+     * WHICH chart, the legend says WHAT the group is for.
+     */
+    groupLegend(): Array<{ id: string; mark: string; color?: string; name: string; count: number }> {
+        const seen = new Map<string, number>();
+        for (const kind of SYNC_KINDS) {
+            const setting = this.syncOpts[kind];
+            if (setting == null || setting === false) continue;
+            for (const cellId of this.cellsById.keys()) {
+                const id = groupOf(setting, cellId);
+                if (!id) continue;
+                seen.set(id, (seen.get(id) ?? 0) + 1);
+            }
+        }
+        return [...seen].map(([id, count]) => {
+            const def = groupDef(id);
+            return {
+                id,
+                mark: def?.mark ?? id,
+                ...(def ? { color: def.color } : {}),
+                name: this.groupNames[id] ?? def?.name ?? id,
+                count,
+            };
+        });
+    }
+
+    // ── one-time tips ───────────────────────────────────────────────────────────────
+    /**
+     * The ◌ coach mark. On a grid an unmarked chart shows a hollow ring on its status
+     * line — truthful, but a ring explains nothing. Once per workspace (a `seenTips`
+     * record, so it survives reloads and never nags), the first time such a chart is on
+     * screen, a small card points at the ring and says what pressing it does.
+     *
+     * Deliberately NOT a modal, NOT focus-stealing, and NOT tied to an event the user
+     * did not ask for: it appears a beat after the layout settles, and any of the three
+     * obvious answers (the ×, Escape, the badge itself) retires it for good.
+     */
+    private maybeShowGroupTip(): void {
+        if (this.destroyed || this.monoLayout || this.cellsById.size < 2) return;
+        if (this.groupTip || this.groupTipTimer != null || this.hasSeenTip('group-badge')) return;
+        const first = this.cellsById.get(this.order[0] ?? '') ?? this.cellsById.values().next().value;
+        const anchor = first?.groupBadgeAnchor();
+        // Only the "nothing yet" state: a chart already in a group does not need the ring
+        // explained, and a hidden badge (single chart) has nothing to point at.
+        if (!anchor || anchor.hidden || !anchor.hasAttribute('data-empty')) return;
+        const win = this.root.ownerDocument.defaultView;
+        if (!win) return;
+        this.groupTipTimer = win.setTimeout(() => {
+            this.groupTipTimer = null;
+            if (this.destroyed || this.hasSeenTip('group-badge')) return;
+            // The badge may have gained a group during the beat — re-check, do not guess.
+            if (anchor.hidden || !anchor.hasAttribute('data-empty') || !anchor.isConnected) return;
+            this.groupTip = new Tip({
+                anchor,
+                content:
+                    '◌ means this chart is in no sync group. Press it to pick one — charts wearing the same group follow each other.',
+                onDismiss: () => {
+                    this.groupTip = null;
+                    this.markTipSeen('group-badge');
+                },
+            });
+        }, 900);
+    }
+
+    /** Retire the coach mark (optionally recording it as seen). */
+    private dismissGroupTip(remember: boolean): void {
+        const win = this.root.ownerDocument.defaultView;
+        if (this.groupTipTimer != null) {
+            win?.clearTimeout(this.groupTipTimer);
+            this.groupTipTimer = null;
+        }
+        const tip = this.groupTip;
+        this.groupTip = null;
+        if (remember) this.markTipSeen('group-badge');
+        tip?.dismiss();
+    }
+
+    hasSeenTip(id: string): boolean {
+        return this.seenTips.has(id);
+    }
+
+    markTipSeen(id: string): void {
+        if (this.seenTips.has(id)) return;
+        this.seenTips.add(id);
+        this.markStateDirty();
+    }
+
+    // ── snapshot previews ───────────────────────────────────────────────────────────
+    /**
+     * A small JPEG of the CURRENT grid, for a saved-layout row. Built by blitting each
+     * cell's own raster onto one small canvas — no async image decode, so it also works
+     * the instant a cell has painted. Null when nothing has painted yet (the row then
+     * simply shows no preview rather than an empty box).
+     */
+    captureThumbnail(maxWidth = 260): string | null {
+        if (this.destroyed) return null;
+        const cells = this.shotCells();
+        if (cells.length === 0) return null;
+        const gridRect = this.gridEl.getBoundingClientRect();
+        if (!(gridRect.width > 0 && gridRect.height > 0)) return null;
+        const doc = this.root.ownerDocument;
+        const scale = Math.min(1, maxWidth / gridRect.width);
+        const out = doc.createElement('canvas');
+        out.width = Math.max(1, Math.round(gridRect.width * scale));
+        out.height = Math.max(1, Math.round(gridRect.height * scale));
+        const ctx = out.getContext?.('2d');
+        if (!ctx) return null;
+        const win = doc.defaultView;
+        ctx.fillStyle = (win ? win.getComputedStyle(this.gridEl).backgroundColor : '') || '#000000';
+        ctx.fillRect(0, 0, out.width, out.height);
+        let painted = 0;
+        for (const cell of cells) {
+            const source = cell.screenshotCanvas();
+            if (!source) continue;
+            const r = cell.host.getBoundingClientRect();
+            if (!(r.width > 0 && r.height > 0)) continue;
+            ctx.drawImage(source as CanvasImageSource, (r.left - gridRect.left) * scale, (r.top - gridRect.top) * scale, r.width * scale, r.height * scale);
+            painted += 1;
+        }
+        if (painted === 0) return null;
+        try {
+            return out.toDataURL('image/jpeg', 0.6);
+        } catch {
+            return null; // tainted canvas / no encoder — a preview is never worth a throw
+        }
+    }
+
+    /**
+     * Save a snapshot WITH its preview. The thumbnail is best-effort: a save never fails
+     * because a chart has not painted yet. Previews are capped (the OLDEST drop first)
+     * so twelve layouts cannot eat the storage budget with pictures.
+     */
+    saveLayoutWithThumbnail(name: string, maxWidth = 260): boolean {
+        // Trim FIRST: a blank name must not leave a side-car behind for a snapshot the
+        // save itself refuses (`saveLayout` returns silently on '').
+        const key = name.trim();
+        if (!key) return false;
+        const thumb = this.captureThumbnail(maxWidth);
+        this.saveLayout(key);
+        const prev = this.layoutMeta.get(key) ?? {};
+        this.layoutMeta.set(key, { ...prev, savedAt: Date.now(), ...(thumb ? { thumb } : {}) });
+        this.pruneThumbs();
+        this.markStateDirty();
+        return Boolean(thumb);
+    }
+
+    /** The preview JPEG of a saved layout, when one exists. */
+    layoutThumb(name: string): string | null {
+        return this.layoutMeta.get(name)?.thumb ?? null;
+    }
+
+    /** When a snapshot was written (ms), for the row's "saved 2h ago" line. */
+    layoutSavedAt(name: string): number | null {
+        return this.layoutMeta.get(name)?.savedAt ?? null;
+    }
+
+    private pruneThumbs(): void {
+        const withThumb = [...this.layoutMeta].filter(([, m]) => m.thumb);
+        if (withThumb.length <= 12) return;
+        withThumb.sort((a, b) => (a[1].savedAt ?? 0) - (b[1].savedAt ?? 0));
+        for (const [name] of withThumb.slice(0, withThumb.length - 12)) {
+            const meta = this.layoutMeta.get(name);
+            if (!meta) continue;
+            const { thumb: _drop, ...rest } = meta;
+            this.layoutMeta.set(name, rest);
+        }
     }
 
     // ── tab linking (TradingView Desktop's colored tab link) ───────────────────────
@@ -2696,6 +3269,7 @@ export class VelaWorkspace {
             const oldest = this.pool.keys().next().value;
             if (oldest == null) break;
             this.pool.delete(oldest);
+            this.notePoolDrop();
         }
         this.refreshRetention();
         this.markStateDirty();
@@ -3051,6 +3625,7 @@ export class VelaWorkspace {
         this.topbar.setTimeframe(cell.timeframe);
         this.mobileBar?.setSymbol(cell.symbol);
         this.mobileBar?.setTimeframe(cell.timeframe);
+        this.mobileBar?.setLayoutLabel(`${this.def.cols.length}×${this.def.rows.length}`);
         this.objectTree.setSymbol(cell.symbol);
         this.bottombar?.setSession({ session: cell.session, enabled: cell.sessionAvailable });
         this.projectTimezone(); // the new symbol's market zone, once its metadata lands
@@ -3109,6 +3684,10 @@ export class VelaWorkspace {
         this.priceScaleDrawer?.close();
         this.alertsMenu?.destroy();
         this.alertsMenu = null;
+        this.alertList?.destroy();
+        this.alertList = null;
+        this.palette?.destroy();
+        this.palette = null;
         for (const cell of this.cellsById.values()) {
             cell.chart.renderer.closeDialogs();
             cell.chart.renderer.setLayoutMode(mode);
@@ -3230,8 +3809,22 @@ export class VelaWorkspace {
                 onClearPooled: () => this.clearPooled(),
                 clearedCharts: () => this.clearedChartCount,
                 onRestorePooled: () => this.restorePooled(),
-                savedLayouts: () => this.savedLayoutList(),
+                savedLayouts: () =>
+                    this.savedLayoutList().map((l) => ({
+                        ...l,
+                        thumb: this.layoutThumb(l.name),
+                        savedAt: this.layoutSavedAt(l.name),
+                    })),
                 onSaveLayout: (name) => this.saveLayout(name),
+                onSaveLayoutWithThumb: (name) => this.saveLayoutWithThumbnail(name),
+                templates: () => this.templateList(),
+                onSaveTemplate: (name, includeMarket) => this.saveTemplate(name, { includeMarket }),
+                onApplyTemplate: (name, target) => this.applyTemplate(name, target),
+                onDeleteTemplate: (name) => this.deleteTemplate(name),
+                onExportTemplate: (name) => this.exportTemplate(name),
+                onImportTemplate: (json) => this.importTemplate(json),
+                legend: () => this.groupLegend(),
+                onRenameGroup: (id, name) => this.setGroupName(id, name),
                 onOpenLayout: (name) => this.openLayout(name),
                 onDeleteLayout: (name) => this.deleteLayout(name),
                 onRenameLayout: (from, to) => this.renameLayout(from, to),
@@ -3522,24 +4115,53 @@ export class VelaWorkspace {
         this.replayDatePop.show();
     }
 
-    private openAlertsMenu(anchor: HTMLElement): void {
+    /**
+     * The bell opens the grouped alert list. The old flat menu answered "what happened?"
+     * but not "on WHICH chart?" — in a 4- or 16-chart grid that is the only question
+     * worth asking. `anchor` is kept in the signature because the topbar slot hands it
+     * over; the dialog is centred rather than anchored (a 16-chart list under a bell
+     * button would hang off the screen).
+     */
+    private openAlertsMenu(_anchor: HTMLElement): void {
         this.alertsMenu?.destroy();
-        const items = this.alerts.length
-            ? this.alerts.map((a, i) => ({
-                  id: String(i),
-                  label: `${a.source} · ${new Date(a.time).toLocaleTimeString()} · ${a.title}: ${a.message}`.slice(0, 80),
-              }))
-            : [{ id: 'none', label: 'No alerts yet', disabled: true }];
-        this.alertsMenu = new Menu({
+        this.alertsMenu = null;
+        this.alertList?.destroy();
+        this.alertList = null;
+        this.palette?.destroy();
+        this.palette = null;
+        this.alertList ??= new AlertList({
+            doc: this.root.ownerDocument,
             host: this.root,
-            items,
-            onSelect: (id) => {
-                const alert = this.alerts[Number(id)];
-                if (alert && this.cellsById.has(alert.cellId)) this.setActiveCell(alert.cellId);
+            getAlerts: () => this.alerts,
+            getCharts: () => this.syncCharts(),
+            onGo: (cellId) => {
+                if (this.cellsById.has(cellId)) this.setActiveCell(cellId);
             },
+            onClearChart: (cellId) => {
+                this.alerts = this.alerts.filter((a) => a.cellId !== cellId);
+                this.topbar.setAlertCount(this.alerts.length);
+                this.markStateDirty();
+            },
+            onClearAll: () => {
+                this.alerts = [];
+                this.topbar.setAlertCount(0);
+                this.markStateDirty();
+            },
+            onOpenChange: (open) => this.trackDialog(open),
         });
-        const r = anchor.getBoundingClientRect();
-        this.alertsMenu.openAt(r.left, r.bottom + 4);
+        this.alertList.open();
+    }
+
+    /** Alert rows recorded for one chart (the per-cell badge reads this). */
+    alertCountFor(cellId: string): number {
+        let n = 0;
+        for (const a of this.alerts) if (a.cellId === cellId) n += 1;
+        return n;
+    }
+
+    /** Every alert, newest first (the list's data source, exposed for hosts/tests). */
+    alertEntries(): ReadonlyArray<{ cellId: string; source: string; title: string; message: string; time: number }> {
+        return this.alerts;
     }
 
     /** Mount registered attachments not yet mounted on this workspace (idempotent per id). */
@@ -3649,6 +4271,18 @@ export class VelaWorkspace {
         } else if (this.indicatorPicker) {
             this.keymap.register({ id: 'indicators.open', keys: '/', label: 'Open the indicator picker', category: 'Indicators', run: () => this.indicatorPicker?.open() });
         }
+        // ⌘K / Ctrl+K — and ⇧⌘P, VS Code's second door. `allowInInput` matters: the
+        // palette's own field holds focus while it is open, and a binding muted by
+        // typing would be dead exactly when the user reaches for it again.
+        this.keymap.register({
+            id: 'app.command-palette',
+            keys: ['mod+k', 'mod+shift+p'],
+            label: 'Open the command palette',
+            category: 'Help',
+            scope: 'global',
+            allowInInput: true,
+            run: () => this.openPalette(),
+        });
         this.keymap.register({
             id: 'help.shortcuts',
             keys: '?',
@@ -3659,6 +4293,147 @@ export class VelaWorkspace {
                 this.shortcutsHelp.open();
             },
         });
+    }
+
+    // ── command palette ─────────────────────────────────────────────────────────────
+    /** Open ⌘K. Public so a host can put a button on it. */
+    openPalette(): void {
+        this.palette ??= new CommandPalette({
+            doc: this.root.ownerDocument,
+            host: this.root,
+            commands: () => this.paletteCommands(),
+            recents: () => this.recentCommands,
+            onRun: (id) => this.rememberCommand(id),
+            onOpenChange: (open) => this.trackDialog(open),
+        });
+        this.palette.open();
+    }
+
+    private rememberCommand(id: string): void {
+        this.recentCommands = [id, ...this.recentCommands.filter((x) => x !== id)].slice(0, 8);
+        this.markStateDirty();
+    }
+
+    /**
+     * Everything the palette can run. Shortcuts come straight from the keymap (so a
+     * plugin's binding appears with its own label and chord); the rest are the
+     * workspace verbs that have no chord — layouts, snapshots, templates, symbols.
+     * Ids are stable, because recents are remembered by id across renames.
+     */
+    private paletteCommands(): PaletteCommand[] {
+        const out: PaletteCommand[] = [];
+        for (const b of this.keymap.bindings()) {
+            if (b.id === 'app.command-palette') continue; // the palette inside the palette
+            out.push({
+                id: `key:${b.id}`,
+                label: b.label,
+                category: b.category || 'Shortcuts',
+                keys: b.display,
+                keywords: b.id.replace(/[.:-]/g, ' '),
+                run: () => this.keymap.invoke(b.id),
+            });
+        }
+        // Layouts — by name (registered presets) and by shape (the picker's squares).
+        for (const p of this.presetRows()) {
+            out.push({
+                id: `layout:${p.id}`,
+                label: `Layout — ${p.label}`,
+                category: 'Layout',
+                keywords: 'layout grid charts',
+                ...(p.cells ? { hint: `${p.cells} chart${p.cells === 1 ? '' : 's'}` } : {}),
+                run: () => this.setLayout(p.id),
+            });
+        }
+        for (const [rows, cols] of [[1, 2], [2, 1], [2, 2], [2, 3], [3, 2], [3, 3], [4, 4]] as const) {
+            const id = layoutForGrid(rows, cols).id;
+            if (this.presetRows().some((p) => p.id === id)) continue;
+            out.push({
+                id: `layout:${id}`,
+                label: `Layout — ${cols} × ${rows} grid`,
+                category: 'Layout',
+                keywords: 'layout grid charts',
+                hint: `${rows * cols} charts`,
+                run: () => this.setLayout(id),
+            });
+        }
+        // Saved snapshots.
+        for (const l of this.savedLayoutList()) {
+            out.push({
+                id: `saved:${l.name}`,
+                label: `Open saved layout “${l.name}”`,
+                category: 'Saved layouts',
+                keywords: 'snapshot restore',
+                run: () => this.openLayout(l.name),
+            });
+        }
+        // Templates — the two documented destinations.
+        for (const t of this.templateList()) {
+            out.push({
+                id: `tpl-active:${t.name}`,
+                label: `Template “${t.name}” → this chart`,
+                category: 'Templates',
+                keywords: 'indicator template apply',
+                hint: `${t.count} ind.`,
+                run: () => this.applyTemplate(t.name, 'active'),
+            });
+            if (this.cellsById.size > 1) {
+                out.push({
+                    id: `tpl-all:${t.name}`,
+                    label: `Template “${t.name}” → every chart`,
+                    category: 'Templates',
+                    keywords: 'indicator template apply all',
+                    hint: `${t.count} ind.`,
+                    run: () => this.applyTemplate(t.name, 'all'),
+                });
+            }
+        }
+        // Watchlist — one command per symbol puts it on EVERY chart.
+        for (const symbol of this.watchlist) {
+            out.push({
+                id: `symbol-all:${symbol}`,
+                label: `Symbol ${symbol} → every chart`,
+                category: 'Symbols',
+                keywords: 'watchlist all charts batch',
+                run: () => this.setSymbolForAll(symbol),
+            });
+        }
+        const activeSymbol = this.active?.symbol;
+        if (activeSymbol) {
+            out.push({
+                id: `watch-add:${activeSymbol}`,
+                label: `Add ${activeSymbol} to the watchlist`,
+                category: 'Symbols',
+                keywords: 'watchlist star add',
+                run: () => this.addToWatchlist(activeSymbol),
+            });
+        }
+        out.push(
+            {
+                id: 'view:alerts',
+                label: 'Alerts — every chart, grouped',
+                category: 'View',
+                keywords: 'bell notifications list',
+                run: () => this.openAlertsMenu(this.topbar.el),
+            },
+            {
+                id: 'view:shortcuts',
+                label: 'Keyboard shortcuts',
+                category: 'Help',
+                keywords: 'keys help',
+                run: () => {
+                    this.shortcutsHelp ??= new ShortcutsHelp(this.keymap, this.root, (open) => this.trackDialog(open));
+                    this.shortcutsHelp.open();
+                },
+            },
+            {
+                id: 'view:screenshot',
+                label: 'Download a screenshot of the layout',
+                category: 'View',
+                keywords: 'png image capture',
+                run: () => this.downloadScreenshot(),
+            },
+        );
+        return out;
     }
 
     /** Bare-typing router: letters and `0` → symbol search (seeded), digits 1–9 → timeframe entry. */
@@ -3686,7 +4461,33 @@ export class VelaWorkspace {
         if (this.pool.size > POOL_CAP) {
             const oldest = this.pool.keys().next().value;
             if (oldest != null) this.pool.delete(oldest);
+            this.notePoolDrop();
         }
+    }
+
+    /**
+     * The pool holds at most {@link POOL_CAP} dormant charts. Past that the OLDEST is
+     * dropped — right, but it used to happen in silence: the trader shrinks a 16-chart
+     * grid to 4 and later finds half their setups gone with no explanation. One notice
+     * per session, naming the ceiling, turns a mystery into a rule they can work with.
+     */
+    private notePoolDrop(): void {
+        if (this.poolDropNoticed) return;
+        this.poolDropNoticed = true;
+        this.toast(
+            `Only ${POOL_CAP} hidden charts are kept — the oldest one was dropped. Reopening that slot starts it fresh.`,
+            'info',
+            6500,
+        );
+    }
+
+    /** The dormant-chart ceiling and what is currently in the pool. */
+    poolCapacity(): number {
+        return POOL_CAP;
+    }
+
+    pooledCount(): number {
+        return this.pool.size;
     }
 
     /**

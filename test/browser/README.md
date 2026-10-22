@@ -15,6 +15,22 @@ npm run test:browser            # runs every *.mjs here, exits non-zero on failu
 already have it (`npm i -D playwright`). Each script prints one JSON line and sets a
 non-zero exit code on a failed assertion, so CI can gate on it.
 
+### In CI (nobody is holding a server)
+
+```bash
+npm i --no-save playwright@1.64.1
+npx playwright install --with-deps chromium
+npm run test:browser:ci        # boots vite on 127.0.0.1:5190, runs the suite, kills it
+```
+
+`test:browser:ci` exists for exactly that: `.github/workflows/ci.yml`'s `browser` job has
+no dev server of its own, and a Playwright `webServer` block would drag in
+`@playwright/test` for a suite that uses plain `playwright`. The runner waits for the page
+to answer (up to 120 s), runs `run.mjs`, forwards its exit code, and always stops vite.
+`playwright` is installed with `--no-save` — it is a test tool, never a runtime
+dependency, and adding it to `package.json` without regenerating the lockfile would make
+`npm ci` refuse to run.
+
 Environment knobs:
 
 - `PLAYWRIGHT_BROWSERS_PATH` — where the browser builds are unpacked

@@ -45,6 +45,7 @@ import { PaneControls } from './chrome/PaneControls';
 import { AxisScaleButtons, type AxisScaleView } from './chrome/AxisScaleButtons';
 import { NATIVE_CAPABILITIES, supportsWebGL2 } from './capabilities';
 import { WebGL2Backend } from './backend/WebGL2Backend';
+import { prefersReducedMotion, watchReducedMotion } from '../../ui/motion';
 import { CoordinateSystem, type PaneBounds, type PriceScale } from './core/CoordinateSystem';
 import { Scheduler, InvalidateLevel, repaintsData, repaintsChrome } from './core/Scheduler';
 import { Animator, EaseSetting, easeToward } from './core/Animator';
@@ -220,6 +221,7 @@ export class NativeRenderer implements IChartRenderer {
     private readonly coords = new CoordinateSystem();
     private readonly scene = new SceneGraph();
     private backend!: IRenderBackend; // chosen at mount (WebGL2 if available, else canvas2d)
+    // Reduced motion is read once the fields exist (see the constructor's tail).
 
     /** Which geometry backend this renderer actually mounted (`'webgl2'` or `'canvas2d'`).
      *  Read-only diagnostic: the workspace's WebGL budget policy switches it per grid. */
@@ -276,6 +278,15 @@ export class NativeRenderer implements IChartRenderer {
     private readonly animScroll = new EaseSetting(SCROLL_EASE_DEFAULT_MS); // scroll-to-latest / panBy glide
     private readonly animAutoscale = new EaseSetting(AUTOSCALE_EASE_DEFAULT_MS); // autoscale glide during zoom/fling
     private readonly animLiveBar = new EaseSetting(LIVE_BAR_EASE_DEFAULT_MS, 0); // forming-bar OHLC glide; ships off
+    /**
+     * `prefers-reduced-motion` applies to the CANVAS too, and CSS cannot reach it: WCAG
+     * 2.3.3 counts a zoom that keeps gliding after the wheel stops. Every ease is zeroed
+     * when the platform asks for less motion (and restored to its own default when the
+     * preference goes away), while an explicit `renderer.set('animZoom', …)` afterwards
+     * still wins — a host's word beats a media query.
+     */
+    private motionOn = { zoom: true, pan: true, scroll: true, autoscale: true };
+    private stopMotionWatch: (() => void) | null = null;
     // Brand default candles.
     private candleUp = BULLISH;
     private candleDown = BEARISH;
@@ -407,6 +418,28 @@ export class NativeRenderer implements IChartRenderer {
             this.scene.candleOverride = candleOverrideFor(opts.priceStyle, this.scene.style.chartTypes);
             if (typeof opts.priceAxisTicks === 'function') this.priceAxisTicks.setHook(opts.priceAxisTicks);
         }
+        // ── reduced motion (WCAG 2.3.3 / technique C39) ──
+        // The configured durations are the BASELINE; the platform preference is a
+        // ceiling over them. A user who flips the switch mid-session is followed, and an
+        // explicit `renderer.set('animZoom', …)` afterwards still wins until the next
+        // change — a host's word beats a media query.
+        // Remember which motions the HOST configured — not their durations, so restoring
+        // them after the preference goes away reproduces the exact `getConfig()` the host
+        // asked for (an ease that shipped off stays off).
+        this.motionOn = {
+            zoom: this.animZoom.on,
+            pan: this.animPan.on,
+            scroll: this.animScroll.on,
+            autoscale: this.animAutoscale.on,
+        };
+        const applyMotionPreference = (reduced: boolean): void => {
+            this.animZoom.toggle(!reduced && this.motionOn.zoom);
+            this.animPan.toggle(!reduced && this.motionOn.pan);
+            this.animScroll.toggle(!reduced && this.motionOn.scroll);
+            this.animAutoscale.toggle(!reduced && this.motionOn.autoscale);
+        };
+        applyMotionPreference(prefersReducedMotion());
+        this.stopMotionWatch = watchReducedMotion(applyMotionPreference);
         // Seed a theme so getConfig()/applyConfig() work before mount (mount overwrites
         // it with the real, Vela-resolved theme). Candle colors follow opts.
         this.theme = this.deriveTheme(DARK_THEME);
@@ -1871,6 +1904,8 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     destroy(): void {
+        this.stopMotionWatch?.();
+        this.stopMotionWatch = null;
         if (this.introRaf != null) cancelAnimationFrame(this.introRaf);
         this.loadingEl?.remove();
         this.loadingEl = null;

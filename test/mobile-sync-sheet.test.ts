@@ -67,8 +67,8 @@ describe('markOf — the chip/status-line reading of a link', () => {
     });
 
     it('the implicit group is not a palette mark, so the first chip tap still hands out 🔴', () => {
-        expect(nextGroupMark(undefined, [])).toBe('🔴');
-        expect(nextGroupMark('🔴', ['🔴'])).toBe('🟠');
+        expect(nextGroupMark(undefined, [])).toBe('red'); // stable id, not the glyph
+        expect(nextGroupMark('🔴', ['🔴'])).toBe('orange'); // legacy mark in, id out
     });
 
     it('the palette holds TEN distinct marks — one per chart of the biggest layout, and then some', () => {
@@ -384,7 +384,7 @@ describe('the workspace’s Sync sheet', () => {
         ws.openSyncDrawer();
         ws.root.querySelector<HTMLElement>('.vela-md-chip[data-kind="symbol"][data-cell="sol"]')!.click();
         // Not a half-link: everyone follows, and SOL steps out into its own group.
-        expect(ws.sync.state().symbol).toEqual({ btc: 'A', eth: 'A', sol: '🔴', bnb: 'A' });
+        expect(ws.sync.state().symbol).toEqual({ btc: 'A', eth: 'A', sol: 'red', bnb: 'A' });
     });
 
     it('a per-chart tap puts THAT chart in its own group and re-marks the charts', () => {
@@ -393,7 +393,7 @@ describe('the workspace’s Sync sheet', () => {
         openSheet(ws);
         const chip = ws.root.querySelector<HTMLElement>('.vela-md-chip[data-kind="symbol"][data-cell="eth"]')!;
         chip.click();
-        expect(ws.sync.groupOf('symbol', 'eth')).toBe('🔴');
+        expect(ws.sync.groupOf('symbol', 'eth')).toBe('red');
         expect(ws.sync.groupOf('symbol', 'btc')).toBe('A');
         // Every chart that follows the link WEARS the mark now — including the ones left
         // in the implicit group (they read 'A', the group's name).
@@ -411,7 +411,7 @@ describe('the workspace’s Sync sheet', () => {
         expect(ws.sync.state().symbol).toBeUndefined();
         expect(symbol().getAttribute('aria-checked')).toBe('false');
         symbol().click(); // on again
-        expect(ws.sync.state().symbol).toEqual({ btc: '🔴', eth: '🟢' });
+        expect(ws.sync.state().symbol).toEqual({ btc: 'red', eth: 'green' });
         expect(ws.root.querySelector<HTMLElement>('.vela-md-chip[data-kind="symbol"][data-cell="btc"]')?.textContent).toBe('🔴');
     });
 });

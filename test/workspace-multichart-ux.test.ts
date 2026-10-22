@@ -15,7 +15,7 @@ import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { VelaWorkspace } from '../src/workspace/VelaWorkspace';
 import { SplitterLayer } from '../src/workspace/splitters';
 import { bodyItems } from '../src/widget/context-menu-model';
-import { SYNC_GROUP_MARKS, alignedRangeAround, groupSetting, syncEnabled, syncGroups } from '../src/workspace/sync';
+import { SYNC_GROUP_IDS, SYNC_GROUP_MARKS, alignedRangeAround, groupSetting, syncEnabled, syncGroups } from '../src/workspace/sync';
 import { resizeAllTracks, resizeTracks } from '../src/workspace/splitters';
 import { layoutDefinition, layouts, occupancyGrid } from '../src/workspace/layouts';
 import { decodeState, encodeState } from '../src/state/document';
@@ -108,7 +108,8 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         expect(chip().textContent).toBe('A');
         expect(chip().dataset.implicit).toBe('1');
         chip().click();
-        expect(ws.sync.groupOf('symbol', 'btc')).toBe('🔴');
+        // The stored value is the STABLE id; the emoji is only what gets painted.
+        expect(ws.sync.groupOf('symbol', 'btc')).toBe('red');
         expect(chip().textContent).toBe('🔴');
         // …and the chart's OWN status line wears the same emoji (TV's placement).
         expect(ws.cell('btc')!.host.querySelector('.vela-sl-marks')?.textContent).toBe('🔴');
@@ -116,7 +117,7 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         // unlinks the chart — TV's "uncheck the emoji to leave the group".
         for (let i = 1; i < 10; i += 1) {
             chip().click();
-            expect(ws.sync.groupOf('symbol', 'btc')).toBe(SYNC_GROUP_MARKS[i]);
+            expect(ws.sync.groupOf('symbol', 'btc')).toBe(SYNC_GROUP_IDS[i]);
         }
         chip().click();
         expect(ws.sync.groupOf('symbol', 'btc')).toBeUndefined();
@@ -153,7 +154,7 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         expect(cell('eth').textContent).toBe('A');
         // Mark ETH without ever making it active.
         cell('eth').click();
-        expect(ws.sync.groupOf('symbol', 'eth')).toBe('🔴');
+        expect(ws.sync.groupOf('symbol', 'eth')).toBe('red');
         expect(ws.sync.groupOf('symbol', 'btc')).toBe('A'); // the active chart untouched
         expect(ws.active.id).toBe('btc');
         expect(ws.cell('eth')!.host.querySelector('.vela-sl-marks')?.textContent).toBe('🔴');
@@ -204,7 +205,8 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         // on real pointer events, which jsdom does not synthesise — the click path is
         // covered by the browser probe, `test/browser/sync-doors.mjs`.)
         ws.setGroupFor('symbol', 'eth', SYNC_GROUP_MARKS[7]!);
-        expect(ws.sync.groupOf('symbol', 'eth')).toBe(SYNC_GROUP_MARKS[7]);
+        // A legacy MARK passed in is normalized to the stable id on the way to storage.
+        expect(ws.sync.groupOf('symbol', 'eth')).toBe('black');
         expect(ws.sync.groupOf('symbol', 'btc')).toBe('A'); // everyone else untouched
         // One call, one group — no cycle: group 8 lands in a single step.
         ws.setGroupFor('symbol', 'sol', null);

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const files = (await readdir(here)).filter((f) => f.endsWith('.mjs') && f !== 'helpers.mjs' && f !== 'run.mjs').sort();
+const files = (await readdir(here)).filter((f) => f.endsWith('.mjs') && f !== 'helpers.mjs' && f !== 'run.mjs' && f !== 'ci.mjs').sort();
 let failed = 0;
 for (const f of files) {
     const code = await new Promise((resolve) => {

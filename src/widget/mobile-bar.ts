@@ -50,6 +50,17 @@ const CSS = `
 /* Left-aligned contributed actions get their own stops (the built-in indicators
    slot) — the wrapper is layout-transparent so each stop flexes like a sibling. */
 .vela-mb-actions { display: contents; }
+.vela-mb-layout {
+    flex: 0 0 auto;
+    min-width: 44px;
+    padding: 0 6px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    border-left: 1px solid var(--vela-border);
+    border-right: 1px solid var(--vela-border);
+    margin: 0 2px;
+}
 .vela-mb-symbol {
     flex: 1.6 1 0;
     font-size: 14px;
@@ -74,6 +85,13 @@ export interface MobileBarOptions {
     onIndicatorsClick?: () => void;
     /** Omitted ⇒ no drawings stop (the shell disabled user drawings — `drawings: false`). */
     onDrawingsClick?: () => void;
+    /**
+     * The LAYOUT stop (multi-chart shells). It shows the current grid ("2×2") and opens
+     * the layout sheet directly — one tap from the bar instead of More → Layout → tab,
+     * which is the most repeated navigation in a multi-chart phone session.
+     */
+    layoutLabel?: () => string;
+    onLayoutClick?: () => void;
     /** Omitted ⇒ no maximize stop (single-chart shells — nothing to isolate). The
      *  workspace passes a toggle that isolates the active chart over the grid;
      *  {@link setMaximizeActive} lights the stop while something is isolated. */
@@ -89,6 +107,8 @@ export class MobileBar {
     readonly el: HTMLElement;
     private readonly symbolEl: HTMLElement;
     private readonly tfEl: HTMLElement;
+    /** The layout stop (null on single-chart shells). */
+    private readonly layoutEl: HTMLButtonElement | null;
     /** The maximize toggle stop (null when the shell has nothing to isolate). */
     private readonly maxEl: HTMLButtonElement | null;
     /** Left-aligned contributed actions — filled by {@link renderActions}. */
@@ -115,6 +135,9 @@ export class MobileBar {
         this.symbolEl.textContent = parseSymbol(opts.symbol).ticker;
         this.tfEl = item('vela-mb-tf', 'Timeframe', opts.onTimeframeClick);
         this.tfEl.textContent = timeframeLabel(opts.timeframe);
+        // The layout stop sits beside the timeframe: both answer "what am I looking at".
+        this.layoutEl = opts.onLayoutClick ? item('vela-mb-layout', 'Layout', opts.onLayoutClick) : null;
+        if (this.layoutEl) this.setLayoutLabel(opts.layoutLabel?.() ?? '');
         const onIndicators = opts.onIndicatorsClick;
         const indicators = onIndicators ? item('vela-mb-indicators', 'Indicators', onIndicators, 'indicators') : null;
         this.actionsHost = doc.createElement('span');
@@ -126,7 +149,17 @@ export class MobileBar {
         const more = item('vela-mb-more', 'More', opts.onMoreClick, 'kebab');
         const settings = item('vela-mb-settings', 'Chart settings', opts.onSettingsClick, 'gear');
 
-        this.el.append(this.symbolEl, this.tfEl, ...(indicators ? [indicators] : []), this.actionsHost, ...(drawings ? [drawings] : []), ...(this.maxEl ? [this.maxEl] : []), more, settings);
+        this.el.append(
+            this.symbolEl,
+            this.tfEl,
+            ...(this.layoutEl ? [this.layoutEl] : []),
+            ...(indicators ? [indicators] : []),
+            this.actionsHost,
+            ...(drawings ? [drawings] : []),
+            ...(this.maxEl ? [this.maxEl] : []),
+            more,
+            settings,
+        );
         host.appendChild(this.el);
         this.renderActions();
     }
@@ -166,6 +199,13 @@ export class MobileBar {
 
     /** Light the maximize stop while something is isolated (a chart over the grid,
      *  or a maximized pane inside the active chart) — inverse chip + restore glyph. */
+    /** The layout stop's caption ("2×2", "1+3"). */
+    setLayoutLabel(label: string): void {
+        if (!this.layoutEl) return;
+        if (this.layoutEl.textContent !== label) this.layoutEl.textContent = label;
+        this.layoutEl.setAttribute('aria-label', `Layout — ${label || 'grid'}. Open the layout sheet`);
+    }
+
     setMaximizeActive(on: boolean): void {
         if (!this.maxEl) return;
         this.maxEl.classList.toggle('vela-mb-on', on);

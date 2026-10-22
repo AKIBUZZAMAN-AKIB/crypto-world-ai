@@ -191,6 +191,22 @@ export class KeymapManager {
         });
     }
 
+    /**
+     * Run a registered binding by id — the door the command palette uses to reach a
+     * shortcut's behaviour without faking a keystroke. Returns false for an unknown id
+     * (a composition may have removed the slot, and its chord with it).
+     */
+    invoke(id: string): boolean {
+        const desc = this.descriptors.get(id);
+        if (!desc) return false;
+        const ev =
+            typeof KeyboardEvent === 'function'
+                ? new KeyboardEvent('keydown', { key: 'Unidentified' })
+                : ({ key: 'Unidentified' } as KeyboardEvent);
+        desc.run(ev);
+        return true;
+    }
+
     pushScope(scope: string): () => void {
         this.scopeStack.push(scope);
         return () => this.popScope(scope);

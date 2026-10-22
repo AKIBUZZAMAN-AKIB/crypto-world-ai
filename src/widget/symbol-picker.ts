@@ -119,6 +119,20 @@ export function filterSymbols(list: readonly SymbolDescriptor[], query: string, 
     return [...prefix, ...substr, ...desc, ...venue].slice(0, limit);
 }
 
+const WATCH_CSS = `
+.vela-sp-watch { padding: 2px 4px 8px; border-bottom: 1px solid var(--vela-border-soft, var(--vela-border)); margin-bottom: 4px; }
+.vela-sp-watchhead { display: flex; align-items: center; gap: 6px; padding: 4px 6px; font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--vela-fg-faint, var(--vela-fg-muted)); }
+.vela-sp-watchcount { padding: 0 5px; border-radius: 6px; background: var(--vela-hover); font-size: 9.5px; }
+.vela-sp-watchrow { display: flex; align-items: center; gap: 4px; }
+.vela-sp-watchpick { all: unset; flex: 1 1 auto; min-width: 0; height: 34px; padding: 0 8px; border-radius: 6px; font-size: 12.5px; font-weight: 600; color: var(--vela-fg); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vela-sp-watchpick:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-sp-watchall { all: unset; flex: none; height: 26px; padding: 0 8px; border-radius: 5px; border: 1px solid var(--vela-border); font-size: 10.5px; color: var(--vela-fg-muted); cursor: pointer; white-space: nowrap; }
+.vela-sp-watchall:hover { color: var(--vela-fg-bright); background: var(--vela-hover); }
+.vela-sp-star { all: unset; flex: none; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; color: var(--vela-fg-faint, var(--vela-fg-muted)); }
+.vela-sp-star:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-sp-star[data-on='1'] { color: var(--vela-warning); }
+.vela-sp-star .vela-icon { font-size: 14px; width: 14px; height: 14px; }
+`;
 const STYLE_ID = 'vela-widget-symbolpicker';
 const CSS = `
 /* The dialog body is flush (a flex column): search + market tabs are a fixed head
@@ -249,6 +263,16 @@ export interface SymbolPickerOptions {
     /** The row's icon URL — routed to the descriptor's OWNING provider
      *  (`resolveSymbolIcon`). Absent or `undefined` per row ⇒ the initials badge. */
     iconFor?: (d: SymbolDescriptor) => string | undefined;
+    /**
+     * The shell's watchlist (symbols in display order). Supplying it turns the picker's
+     * empty state into the watchlist — the list you actually trade from — and puts a
+     * star on every result row.
+     */
+    watchlist?: () => readonly string[];
+    /** Star / unstar a symbol (`on` is the new state). */
+    onToggleWatch?: (symbol: string, on: boolean) => void;
+    /** Put a watchlist symbol on EVERY chart (multi-chart shells only). */
+    onApplyAll?: (symbol: string) => void;
 }
 
 /** Rows rendered per page — the list GROWS by this much every time the scroll nears the
@@ -277,7 +301,7 @@ export class SymbolPicker {
 
     constructor(private readonly opts: SymbolPickerOptions) {
         const doc = (opts.host ?? document.body).ownerDocument;
-        injectStyles(STYLE_ID, CSS, doc);
+        injectStyles(STYLE_ID, CSS + WATCH_CSS, doc);
 
         this.input = doc.createElement('input');
         this.input.className = 'vela-sp-input';
@@ -520,6 +544,10 @@ export class SymbolPicker {
         this.rows = this.computeRows();
         this.highlighted = 0;
         this.list.replaceChildren();
+        // The watchlist greets an empty query: the trader's own shortlist before the
+        // venue's 13k rows. Typing anything puts it away — the list is a STARTING point,
+        // not a second list to scroll past on every search.
+        if (!this.input.value.trim() && this.activeTab === 'All') this.renderWatchlist(doc);
         if (!this.rows.length) {
             const empty = doc.createElement('div');
             empty.className = 'vela-sp-empty';
@@ -536,6 +564,69 @@ export class SymbolPicker {
         const already = this.rows.length;
         this.rows = this.computeRows();
         this.rows.slice(already).forEach((s, j) => this.list.appendChild(this.rowEl(s, already + j)));
+    }
+
+    /** The watchlist block at the top of an empty query. */
+    private renderWatchlist(doc: Document): void {
+        const list = this.opts.watchlist?.();
+        if (!list || list.length === 0) return;
+        const wrap = doc.createElement('div');
+        wrap.className = 'vela-sp-watch';
+        wrap.setAttribute('role', 'group');
+        wrap.setAttribute('aria-label', 'Watchlist');
+        const head = doc.createElement('div');
+        head.className = 'vela-sp-watchhead';
+        const title = doc.createElement('span');
+        title.textContent = 'Watchlist';
+        const count = doc.createElement('span');
+        count.className = 'vela-sp-watchcount';
+        count.textContent = String(list.length);
+        head.append(title, count);
+        wrap.appendChild(head);
+        for (const symbol of list) {
+            const row = doc.createElement('div');
+            row.className = 'vela-sp-watchrow';
+            row.dataset.symbol = symbol;
+            const btn = doc.createElement('button');
+            btn.type = 'button';
+            btn.className = 'vela-sp-watchpick';
+            btn.textContent = symbol.includes(':') ? symbol.slice(symbol.indexOf(':') + 1) : symbol;
+            btn.title = `Load ${symbol} on the active chart`;
+            btn.setAttribute('aria-label', `Load ${symbol}`);
+            btn.addEventListener('click', () => {
+                this.close();
+                this.opts.onSelect(symbol);
+            });
+            row.appendChild(btn);
+            if (this.opts.onApplyAll) {
+                const all = doc.createElement('button');
+                all.type = 'button';
+                all.className = 'vela-sp-watchall';
+                all.textContent = 'All charts';
+                all.title = `Load ${symbol} on every chart`;
+                all.setAttribute('aria-label', `Load ${symbol} on every chart`);
+                all.addEventListener('click', () => {
+                    this.close();
+                    this.opts.onApplyAll?.(symbol);
+                });
+                row.appendChild(all);
+            }
+            if (this.opts.onToggleWatch) {
+                const star = doc.createElement('button');
+                star.type = 'button';
+                star.className = 'vela-sp-star';
+                star.dataset.on = '1';
+                star.setAttribute('aria-label', `Remove ${symbol} from the watchlist`);
+                star.appendChild(iconEl('star-filled', doc));
+                star.addEventListener('click', () => {
+                    this.opts.onToggleWatch?.(symbol, false);
+                    this.refresh();
+                });
+                row.appendChild(star);
+            }
+            wrap.appendChild(row);
+        }
+        this.list.appendChild(wrap);
     }
 
     private rowEl(s: SymbolDescriptor, i: number): HTMLElement {
@@ -570,6 +661,26 @@ export class SymbolPicker {
             expander.appendChild(iconEl(this.expanded.has(groupKeyOf(s)) ? 'chevron-down' : 'chevron-right', doc));
             row.appendChild(expander);
         } else if (s.group != null && this.expanded.has(groupKeyOf(s))) row.dataset.member = '1';
+        if (this.opts.onToggleWatch) {
+            const full = venue ? `${venue}:${s.ticker}` : s.ticker;
+            const watched = (this.opts.watchlist?.() ?? []).some((w) => w === full || w === s.ticker);
+            const star = doc.createElement('button');
+            star.type = 'button';
+            star.className = 'vela-sp-star';
+            if (watched) star.dataset.on = '1';
+            star.title = watched ? 'Remove from the watchlist' : 'Add to the watchlist';
+            star.setAttribute('aria-label', `${watched ? 'Remove' : 'Add'} ${s.ticker} ${watched ? 'from' : 'to'} the watchlist`);
+            star.setAttribute('aria-pressed', String(watched));
+            star.appendChild(iconEl(watched ? 'star-filled' : 'star', doc));
+            star.addEventListener('click', (e) => {
+                e.stopPropagation(); // the row behind it loads the symbol
+                this.opts.onToggleWatch?.(full, !watched);
+                star.dataset.on = watched ? '' : '1';
+                star.setAttribute('aria-pressed', String(!watched));
+                star.replaceChildren(iconEl(watched ? 'star' : 'star-filled', doc));
+            });
+            row.appendChild(star);
+        }
         if (venue) {
             const badge = doc.createElement('span');
             badge.className = 'vela-sp-badge';

@@ -513,6 +513,17 @@ const CSS = `
 }
 .vela-md-import:active { background: var(--vela-hover); }
 .vela-md-saveas { display: flex; gap: 8px; padding: 4px 0 8px; }
+/* A saved layout's preview: 56×34 — big enough to recognise the grid at a glance. */
+.vela-md-savedthumb { flex: none; width: 56px; height: 34px; border-radius: 5px; object-fit: cover; border: 1px solid var(--vela-border); background: var(--vela-hover); }
+.vela-md-tpl .vela-md-row-label { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.vela-md-tplmeta { font-size: 10.5px; color: var(--vela-fg-faint); }
+.vela-md-tplmarket { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--vela-fg-muted); flex: none; padding: 0 2px; }
+.vela-md-tplmarket input { width: 16px; height: 16px; accent-color: var(--vela-accent, var(--vela-selected-bg)); }
+/* The legend under the matrix: mark + the name the user gave the group. */
+.vela-md-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 2px 2px 6px; }
+.vela-md-leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--vela-fg-muted); min-height: 26px; }
+.vela-md-leg button { all: unset; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.vela-md-leg input { width: 90px; height: 26px; padding: 0 6px; border: 1px solid var(--vela-selected-bg); border-radius: 6px; background: var(--vela-hover); color: var(--vela-fg-bright); font: inherit; font-size: 11.5px; }
 .vela-md-saveas input {
     flex: 1 1 auto;
     min-width: 0;
@@ -631,13 +642,25 @@ export interface MoreDrawerOptions {
         onClearPooled?: () => void;
         clearedCharts?: () => number;
         onRestorePooled?: () => void;
-        savedLayouts?: () => Array<{ name: string; active: boolean }>;
+        savedLayouts?: () => Array<{ name: string; active: boolean; thumb?: string | null; savedAt?: number | null }>;
         onSaveLayout?: (name: string) => void;
         onOpenLayout?: (name: string) => void;
         onDeleteLayout?: (name: string) => void;
         onRenameLayout?: (from: string, to: string) => boolean;
         onExportLayout?: (name: string) => string | null;
         onImportLayout?: (json: string) => string | null;
+        /** Save with a preview picture (the row then SHOWS the layout). */
+        onSaveLayoutWithThumb?: (name: string) => boolean;
+        /** Chart templates (indicator sets; drawings never travel). */
+        templates?: () => Array<{ name: string; count: number; symbol?: string; timeframe?: string }>;
+        onSaveTemplate?: (name: string, includeMarket: boolean) => boolean;
+        onApplyTemplate?: (name: string, target: 'active' | 'all') => number;
+        onDeleteTemplate?: (name: string) => void;
+        onExportTemplate?: (name: string) => string | null;
+        onImportTemplate?: (json: string) => string | null;
+        /** Groups in use with the user's names (the legend). */
+        legend?: () => Array<{ id: string; mark: string; color?: string; name: string; count: number }>;
+        onRenameGroup?: (id: string, name: string | null) => void;
         linkGroup?: () => string | null;
         onLinkGroup?: (tag: string | null) => void;
         /** The current layout's 16px glyph (`<svg>` markup) for the Layout row. Omitted
@@ -1121,6 +1144,47 @@ export class MoreDrawer {
                     ? 'Same mark, same group · scroll sideways for the rest'
                     : 'Same mark, same group · tap a cell to cycle it';
                 legend.append(legendHint);
+                // The groups IN USE, with the names the trader gave them ("🔴 scalp").
+                // The table says which chart; this says what the group is FOR. Tap a
+                // name to edit it in place — the name is stored by the stable group id,
+                // so it survives any palette change.
+                for (const g of layout.legend?.() ?? []) {
+                    const chip = doc.createElement('span');
+                    chip.className = 'vela-md-leg';
+                    chip.dataset.group = g.id;
+                    const mark = doc.createElement('span');
+                    mark.textContent = g.mark;
+                    if (g.color) mark.style.color = g.color;
+                    const nameBtn = doc.createElement('button');
+                    nameBtn.type = 'button';
+                    nameBtn.textContent = g.name;
+                    nameBtn.title = `${g.count} chart${g.count === 1 ? '' : 's'} · tap to name this group`;
+                    nameBtn.setAttribute('aria-label', `Group ${g.mark}: ${g.name}. Rename`);
+                    nameBtn.addEventListener('click', () => {
+                        if (!layout.onRenameGroup) return;
+                        const input = doc.createElement('input');
+                        input.type = 'text';
+                        input.value = g.name;
+                        input.maxLength = 24;
+                        input.setAttribute('aria-label', `Name for group ${g.mark}`);
+                        const commit = (keep: boolean): void => {
+                            if (!input.isConnected) return;
+                            if (keep) layout.onRenameGroup?.(g.id, input.value.trim() || null);
+                            this.render();
+                        };
+                        input.addEventListener('keydown', (e) => {
+                            if (e.key === 'Enter') commit(true);
+                            else if (e.key === 'Escape') commit(false);
+                            e.stopPropagation();
+                        });
+                        input.addEventListener('blur', () => commit(true));
+                        nameBtn.replaceWith(input);
+                        input.focus();
+                        input.select();
+                    });
+                    chip.append(mark, nameBtn);
+                    legend.appendChild(chip);
+                }
                 syncSec.append(legend);
             }
 
@@ -1174,6 +1238,7 @@ export class MoreDrawer {
 
         list.append(layoutsSec, syncSec);
         this.renderSavedLayouts(doc, layoutsSec, layout);
+        this.renderTemplates(doc, layoutsSec, layout);
         this.drawer.body.append(list);
 
         // Re-read the live state and repaint the nodes that already exist.
@@ -1217,9 +1282,23 @@ export class MoreDrawer {
             const rowEl = doc.createElement('div');
             rowEl.className = 'vela-md-row vela-md-saved';
             if (l.active) rowEl.dataset.checked = '1';
+            // The preview, when one was captured: the quickest way to know which
+            // layout a name stands for.
+            if (typeof l.thumb === 'string' && l.thumb.startsWith('data:image/')) {
+                const img = doc.createElement('img');
+                img.className = 'vela-md-savedthumb';
+                img.src = l.thumb;
+                img.alt = '';
+                img.loading = 'lazy';
+                img.decoding = 'async';
+                rowEl.appendChild(img);
+            }
             const label = doc.createElement('span');
             label.className = 'vela-md-row-label';
             label.textContent = l.name;
+            if (typeof l.savedAt === 'number' && l.savedAt > 0) {
+                label.title = `Saved ${new Date(l.savedAt).toLocaleString()}`;
+            }
             rowEl.append(label);
             const open = doc.createElement('button');
             open.type = 'button';
@@ -1321,7 +1400,8 @@ export class MoreDrawer {
             button.textContent = 'Save';
             button.addEventListener('click', () => {
                 const name = input.value.trim() || `Layout ${rows.length + 1}`;
-                layout.onSaveLayout?.(name);
+                if (layout.onSaveLayoutWithThumb) layout.onSaveLayoutWithThumb(name);
+                else layout.onSaveLayout?.(name);
                 this.render();
             });
             input.addEventListener('keydown', (e) => {
@@ -1347,6 +1427,137 @@ export class MoreDrawer {
                     if (!file) return;
                     void file.text().then((text) => {
                         if (layout.onImportLayout?.(text)) this.render();
+                    });
+                });
+                doc.body.appendChild(picker);
+                picker.click();
+            });
+            list.appendChild(imp);
+        }
+    }
+
+    /**
+     * Chart templates in the phone sheet — the same contract as the desktop card:
+     * applying REPLACES a chart's indicators (drawings never travel), the market is
+     * opt-in, and a multi-chart layout chooses between "this chart" and "all charts".
+     */
+    private renderTemplates(doc: Document, list: HTMLElement, layout: NonNullable<MoreDrawerOptions['layout']>): void {
+        const save = layout.onSaveTemplate;
+        const listTemplates = layout.templates;
+        if (!save || !listTemplates) return;
+        const heading = doc.createElement('div');
+        heading.className = 'vela-md-section';
+        heading.textContent = 'Chart templates';
+        list.appendChild(heading);
+        const templates = listTemplates();
+        if (templates.length === 0) {
+            const empty = doc.createElement('div');
+            empty.className = 'vela-md-section';
+            empty.style.cssText = 'text-transform:none;letter-spacing:0;font-size:12px;color:var(--vela-fg-faint);padding:0 0 6px;';
+            empty.textContent = 'None yet — save the active chart’s indicators below.';
+            list.appendChild(empty);
+        }
+        for (const t of templates) {
+            const row = doc.createElement('div');
+            row.className = 'vela-md-row vela-md-tpl';
+            const label = doc.createElement('span');
+            label.className = 'vela-md-row-label';
+            const meta = doc.createElement('span');
+            meta.className = 'vela-md-tplmeta';
+            meta.textContent = `${t.count} indicator${t.count === 1 ? '' : 's'}${t.symbol ? ` · ${t.symbol}` : ''}`;
+            label.append(doc.createTextNode(t.name), meta);
+            row.append(label);
+            const here = doc.createElement('button');
+            here.type = 'button';
+            here.className = 'vela-md-saved-open';
+            here.textContent = 'This chart';
+            here.setAttribute('aria-label', `Apply template ${t.name} to the active chart`);
+            here.addEventListener('click', () => {
+                layout.onApplyTemplate?.(t.name, 'active');
+                this.drawer.hide();
+            });
+            row.append(here);
+            if ((layout.charts?.() ?? []).length > 1) {
+                const all = doc.createElement('button');
+                all.type = 'button';
+                all.className = 'vela-md-saved-open';
+                all.textContent = 'All';
+                all.setAttribute('aria-label', `Apply template ${t.name} to every chart`);
+                all.addEventListener('click', () => {
+                    layout.onApplyTemplate?.(t.name, 'all');
+                    this.drawer.hide();
+                });
+                row.append(all);
+            }
+            if (layout.onExportTemplate) {
+                const exp = doc.createElement('button');
+                exp.type = 'button';
+                exp.className = 'vela-md-saved-del';
+                exp.setAttribute('aria-label', `Export template ${t.name}`);
+                exp.appendChild(iconEl('download', doc));
+                exp.addEventListener('click', () => {
+                    const json = layout.onExportTemplate?.(t.name);
+                    if (json) downloadText(doc, `${t.name}.vela-template.json`, json);
+                });
+                row.append(exp);
+            }
+            if (layout.onDeleteTemplate) {
+                const del = doc.createElement('button');
+                del.type = 'button';
+                del.className = 'vela-md-saved-del';
+                del.setAttribute('aria-label', `Delete template ${t.name}`);
+                del.appendChild(iconEl('trash', doc));
+                del.addEventListener('click', () => {
+                    layout.onDeleteTemplate?.(t.name);
+                    this.render();
+                });
+                row.append(del);
+            }
+            list.appendChild(row);
+        }
+        // Save: name + the opt-in market chip (unchecked by default, like the docs).
+        const form = doc.createElement('div');
+        form.className = 'vela-md-saveas';
+        const input = doc.createElement('input');
+        input.type = 'text';
+        input.placeholder = 'Save indicators as…';
+        input.setAttribute('aria-label', 'Save chart template as');
+        const chip = doc.createElement('label');
+        chip.className = 'vela-md-tplmarket';
+        const box = doc.createElement('input');
+        box.type = 'checkbox';
+        const chipText = doc.createElement('span');
+        chipText.textContent = 'market';
+        chip.append(box, chipText);
+        const button = doc.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Save';
+        button.addEventListener('click', () => {
+            const name = input.value.trim();
+            if (!name) return;
+            if (save(name, box.checked)) this.render();
+        });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') button.click();
+        });
+        form.append(input, chip, button);
+        list.appendChild(form);
+        if (layout.onImportTemplate) {
+            const imp = doc.createElement('button');
+            imp.type = 'button';
+            imp.className = 'vela-md-import';
+            imp.textContent = 'Import template file…';
+            imp.addEventListener('click', () => {
+                const picker = doc.createElement('input');
+                picker.type = 'file';
+                picker.accept = 'application/json,.json';
+                picker.style.display = 'none';
+                picker.addEventListener('change', () => {
+                    const file = picker.files?.[0];
+                    picker.remove();
+                    if (!file) return;
+                    void file.text().then((text) => {
+                        if (layout.onImportTemplate?.(text)) this.render();
                     });
                 });
                 doc.body.appendChild(picker);

@@ -744,6 +744,12 @@ export class Statusline {
         else this.fit();
     }
 
+    /** The group badge as an element — the anchor a coach mark points at. The workspace
+     *  owns the tip (and its `seenTips` record); the bar only lends the target. */
+    marksAnchor(): HTMLElement {
+        return this.marksEl;
+    }
+
     /** What a tap on the marks chip runs (the workspace's sync sheet). `null` leaves the
      *  badge purely informational — a single-chart shell has nothing to sync with. */
     setMarksHandler(fn: (() => void) | null): void {

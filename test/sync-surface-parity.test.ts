@@ -116,7 +116,12 @@ describe('gap 8 — grid semantics', () => {
         expect(el.getAttribute('aria-label')).toContain('Chart syncing');
         expect(el.getAttribute('aria-rowcount')).toBe('3'); // header + 2 links
         expect(el.getAttribute('aria-colcount')).toBe('4'); // label + 2 charts + ALL
-        expect(el.querySelector('.vela-md-matrix-row')?.getAttribute('role')).toBe('row');
+        // The header row is a row too (a grid's children must all be rows), and its cells
+        // are column headers. The label column is a row header.
+        const rows = [...el.querySelectorAll('.vela-md-matrix-row')];
+        expect(rows.length).toBe(3);
+        expect(rows.every((r) => r.getAttribute('role') === 'row')).toBe(true);
+        expect(el.querySelectorAll('[role="columnheader"]').length).toBe(4); // corner + 2 charts + ALL
         expect(el.querySelector('.vela-md-matrix-label')?.getAttribute('role')).toBe('rowheader');
     });
 
@@ -124,7 +129,10 @@ describe('gap 8 — grid semantics', () => {
         const { el } = mountMatrix();
         const chips = [...el.querySelectorAll<HTMLElement>('.vela-md-matrix-chip[data-cell]')];
         expect(chips.length).toBe(4);
-        expect(chips.every((c) => c.getAttribute('role') === 'gridcell')).toBe(true);
+        // A <button> may not be a gridcell (ARIA in HTML). The CELL is the wrapper; the
+        // control keeps its native button role.
+        expect(chips.every((c) => c.tagName === 'BUTTON' && c.getAttribute('role') === null)).toBe(true);
+        expect(chips.every((c) => c.parentElement?.getAttribute('role') === 'gridcell')).toBe(true);
         expect(chips.every((c) => c.getAttribute('aria-haspopup') === 'menu')).toBe(true);
         const red = el.querySelector<HTMLElement>('.vela-md-matrix-chip[data-kind="symbol"][data-cell="a"]')!;
         expect(red.getAttribute('aria-label')).toBe('Symbol for chart 1: 🔴');
