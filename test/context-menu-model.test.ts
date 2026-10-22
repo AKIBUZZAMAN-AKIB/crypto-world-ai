@@ -178,8 +178,10 @@ describe('contributed rows sort together with the built-in ones', () => {
     const shape = (items: MenuItemDescriptor[]): string => items.map((i) => (i.separatorBefore ? `| ${i.id}` : i.id)).join(' ');
 
     it('every built-in row has a documented rank', () => {
+        // `chart-syncing` only exists on a multi-chart grid — the rank table is checked
+        // against the shape that actually carries it.
         const zones = {
-            body: BODY,
+            body: bodyItems({ drawings: 1, indicators: 1, syncing: true }),
             'price-axis': priceAxisItems(AXIS_STATE),
             'time-axis': timeAxisItems('Etc/UTC'),
         } as const;

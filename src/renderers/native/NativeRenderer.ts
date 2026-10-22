@@ -220,6 +220,12 @@ export class NativeRenderer implements IChartRenderer {
     private readonly coords = new CoordinateSystem();
     private readonly scene = new SceneGraph();
     private backend!: IRenderBackend; // chosen at mount (WebGL2 if available, else canvas2d)
+
+    /** Which geometry backend this renderer actually mounted (`'webgl2'` or `'canvas2d'`).
+     *  Read-only diagnostic: the workspace's WebGL budget policy switches it per grid. */
+    get backendKind(): 'canvas2d' | 'webgl2' {
+        return this.backend.kind;
+    }
     private backendMode: NativeBackend = 'auto';
     private glowAmount = 0; // WebGL2 neon-glow intensity (canvas2d ignores it)
     private readonly chrome = new ChromeRenderer(this.priceAxisTicks);

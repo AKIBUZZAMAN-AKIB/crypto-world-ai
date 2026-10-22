@@ -349,6 +349,8 @@ export class VelaWorkspace {
      *  cell's countdown chip subscribe to it, so they can never read different seconds. */
     private readonly clock = new SecondClock();
     private readonly pool = new Map<string, PooledCellState>();
+    /** The batch the last `clearPooled` dropped — the housekeeping row's one-level Undo. */
+    private pooledCleared: Map<string, PooledCellState> | null = null;
     private readonly trackSizes = new Map<string, TrackSizes>(); // per layout id (splitter drags)
     private readonly splitters: SplitterLayer;
     private readonly resizeObserver: ResizeObserver | null = null;
@@ -676,16 +678,22 @@ export class VelaWorkspace {
                 onCycleGroup: (id) => this.cycleGroup(id as SyncKind),
                 charts: () => this.syncCharts(),
                 onCycleCellGroup: (kind, cellId) => this.cycleGroupFor(kind as SyncKind, cellId),
+                onSetCellGroup: (kind, cellId, mark) => this.setGroupFor(kind as SyncKind, cellId, mark),
                 onSelectChart: (cellId) => { if (this.cellsById.has(cellId)) this.setActiveCell(cellId); },
                 onAllInOneGroup: (kind) => this.syncAllInOneGroup(kind as SyncKind),
                 drawingsScope: () => this.drawingsScope,
                 onToggleDrawingsScope: () => this.setDrawingsScope(this.drawingsScope === 'global' ? 'layout' : 'global'),
                 hiddenCharts: () => this.hiddenChartCount,
                 onClearPooled: () => this.clearPooled(),
+                clearedCharts: () => this.clearedChartCount,
+                onRestorePooled: () => this.restorePooled(),
                 savedLayouts: () => this.savedLayoutList(),
                 onSaveLayout: (name) => this.saveLayout(name),
                 onOpenLayout: (name) => this.openLayout(name),
                 onDeleteLayout: (name) => this.deleteLayout(name),
+                onRenameLayout: (from, to) => this.renameLayout(from, to),
+                onExportLayout: (name) => this.exportLayout(name),
+                onImportLayout: (json) => this.importLayout(json),
                 linkGroup: () => this.linkGroup,
                 onLinkGroup: (tag) => this.setLinkGroup(tag),
                 glyph: () => layoutGlyph(this.def),
@@ -1884,6 +1892,7 @@ export class VelaWorkspace {
                 toast: (message, kind, durationMs) => this.toastHost.show(message, kind, durationMs),
                 layoutLegendActions: (indicatorId, cellId) => this.layoutLegendActions(indicatorId, cellId),
                 ...(this.def.cells.length > 1 ? { applySettingsToAll: (cellId: string) => this.applySettingsToAll(cellId) } : {}),
+                ...(this.def.cells.length > 1 && !this.monoLayout ? { openSyncGesture: (cellId: string) => this.openSyncSurface(cellId) } : {}),
             });
             cell.host.style.gridArea = perCell[slot.id]?.gridArea ?? '';
             this.cellsById.set(id, cell);
@@ -1903,11 +1912,7 @@ export class VelaWorkspace {
             // hover a chart to pick it, so the badge has to be the picker).
             // Only the phone HAS this sheet — on desktop the same links live in the
             // topbar's Layout dropdown, so the badge stays informational there.
-            cell.setSyncMarksHandler(
-                this.monoLayout ? null : () => {
-                    if (this.layoutCtl.current === 'mobile') this.openSyncDrawer(cell.id);
-                },
-            );
+            cell.setSyncMarksHandler(this.monoLayout ? null : () => this.openSyncSurface(cell.id));
             // The shared star set is a workspace pref — every newborn cell inherits it
             // silently (equal-set idempotence keeps the favorites event from echoing).
             if (this.favs.length > 0) cell.chart.drawings.setFavorites(this.favs as never[]);
@@ -1930,6 +1935,9 @@ export class VelaWorkspace {
         }
         this.mountAttributionMark(); // fresh hosts exist now — (re)claim the bottom-left one
         this.paintChartNumbers();
+        // Seed the group badges: on a grid an unmarked chart shows "◌" (the door into
+        // marking), and that state exists before any link is ever toggled.
+        this.projectGroupMarks();
     }
 
     /** Write each chart's SLOT NUMBER onto its status line. Hidden until a sync surface is
@@ -2391,6 +2399,17 @@ export class VelaWorkspace {
         this.projectGroupMarks();
     }
 
+    /** Put ONE chart in ONE group, outright — the table's palette. `null` unlinks the
+     *  chart from that link (TV's "uncheck the emoji"). The link comes on first so the
+     *  pick never leaves a half-link behind. */
+    setGroupFor(kind: SyncKind, cellId: string, mark: string | null): void {
+        if (!this.cellsById.has(cellId)) return;
+        if (mark && !syncEnabled(this.syncOpts[kind])) this.sync.set(kind, true, false);
+        this.sync.setGroup(kind, cellId, mark);
+        this.projectGroupMarks();
+        this.markStateDirty();
+    }
+
     /** Drop a link back into the all-cells form — every chart in one group (the matrix's
      *  ALL chip). `align` stays false: nothing on screen is rewritten, only what follows. */
     syncAllInOneGroup(kind: SyncKind): void {
@@ -2422,7 +2441,10 @@ export class VelaWorkspace {
                 marks.get(cellId)?.push({ kind: KIND_LABEL[kind], mark });
             }
         }
-        for (const [id, cellMarks] of marks) this.cellsById.get(id)?.setSyncMarks(cellMarks);
+        // On a multi-chart grid the badge is ALSO the door into marking, so an unmarked
+        // chart shows it (as "◌") instead of hiding the affordance entirely.
+        const linkable = !this.monoLayout && this.cellsById.size > 1;
+        for (const [id, cellMarks] of marks) this.cellsById.get(id)?.setSyncMarks(cellMarks, linkable);
     }
 
     // ── drawing scope: the cell's document, or the SYMBOL's ─────────────────────────
@@ -2463,7 +2485,7 @@ export class VelaWorkspace {
 
     // ── named layouts ("Save layout as…", "Open layout") ───────────────────────────
     /** The saved snapshots, by name, with the one opened/saved last flagged. */
-    private savedLayoutList(): Array<{ name: string; active: boolean }> {
+    savedLayoutList(): Array<{ name: string; active: boolean }> {
         return [...this.savedLayouts.keys()].map((name) => ({ name, active: name === this.activeSavedLayout }));
     }
 
@@ -2492,6 +2514,67 @@ export class VelaWorkspace {
         if (!this.savedLayouts.delete(name)) return;
         if (this.activeSavedLayout === name) this.activeSavedLayout = null;
         this.markStateDirty();
+    }
+
+    /**
+     * Rename a snapshot IN PLACE (Map order drives the picker's row order, so the row
+     * does not jump). A blank name, the same name, or a name another snapshot already
+     * owns is REFUSED — silently overwriting the other one is how a saved layout dies.
+     */
+    renameLayout(from: string, to: string): boolean {
+        const name = to.trim();
+        if (!name || name === from) return false;
+        const doc = this.savedLayouts.get(from);
+        if (!doc || this.savedLayouts.has(name)) return false;
+        const rebuilt = new Map<string, WorkspaceState>();
+        for (const [key, value] of this.savedLayouts) rebuilt.set(key === from ? name : key, value);
+        this.savedLayouts.clear();
+        for (const [key, value] of rebuilt) this.savedLayouts.set(key, value);
+        if (this.activeSavedLayout === from) this.activeSavedLayout = name;
+        this.markStateDirty();
+        this.toast(`Layout “${from}” renamed to “${name}”`, 'success');
+        return true;
+    }
+
+    /**
+     * One snapshot as portable, versioned JSON — the file a trader keeps beside their
+     * notes. `applyState` already treats snapshots as untrusted, so an imported file
+     * from another build passes the same sanitizer as a share link.
+     */
+    exportLayout(name: string): string | null {
+        const doc = this.savedLayouts.get(name);
+        if (!doc) return null;
+        return JSON.stringify({ app: 'vela', kind: 'layout', version: 1, name, state: doc }, null, 2);
+    }
+
+    /**
+     * Restore a snapshot from {@link exportLayout}'s JSON. Returns the name it landed
+     * under (the file's name, or `name (2)`… when that name is taken) or null when the
+     * text is not a layout snapshot. It does NOT open the layout — importing is an
+     * inbox action; the row appears and the trader clicks it, so a bad file cannot
+     * yank the workspace out from under them.
+     */
+    importLayout(json: string): string | null {
+        let raw: unknown;
+        try {
+            raw = JSON.parse(json);
+        } catch {
+            return null;
+        }
+        if (!raw || typeof raw !== 'object') return null;
+        const env = raw as { app?: unknown; kind?: unknown; name?: unknown; state?: unknown };
+        // Accept a bare state document too (an older hand-rolled file has no envelope) —
+        // but never the picker's own `savedLayouts` recursion.
+        const state = sanitizeState(env.kind === 'layout' || env.app === 'vela' ? env.state : raw);
+        if (!state) return null;
+        delete state.savedLayouts;
+        const base = (typeof env.name === 'string' && env.name.trim()) || 'Imported layout';
+        let name = base;
+        for (let n = 2; this.savedLayouts.has(name); n += 1) name = `${base} (${n})`;
+        this.savedLayouts.set(name, state);
+        this.markStateDirty();
+        this.toast(`Layout “${name}” imported`, 'success');
+        return name;
     }
 
     // ── tab linking (TradingView Desktop's colored tab link) ───────────────────────
@@ -2581,15 +2664,43 @@ export class VelaWorkspace {
         return this.pool.size;
     }
 
-    /** Forget every dormant (pooled) chart — the "remove hidden charts" housekeeping. */
+    /**
+     * Forget every dormant (pooled) chart — the "remove hidden charts" housekeeping.
+     * It REPLACES the previous batch's undo snapshot, so Undo always brings back the
+     * batch that was just dropped (one level, the same contract as a toast's Undo).
+     */
     clearPooled(): number {
         const n = this.pool.size;
         if (n === 0) return 0;
+        this.pooledCleared = new Map(this.pool);
         this.pool.clear();
         this.refreshRetention();
         this.markStateDirty();
-        this.toast(`Removed ${n} hidden chart${n === 1 ? '' : 's'}`, 'info');
+        this.toast(`Removed ${n} hidden chart${n === 1 ? '' : 's'} — Undo in the layout menu`, 'info');
         return n;
+    }
+
+    /** How many dormant charts the last {@link clearPooled} dropped (0 = nothing to undo). */
+    get clearedChartCount(): number {
+        return this.pooledCleared?.size ?? 0;
+    }
+
+    /** Put the last cleared batch back into the pool (the housekeeping row's Undo). */
+    restorePooled(): number {
+        const saved = this.pooledCleared;
+        if (!saved) return 0;
+        this.pooledCleared = null;
+        for (const [id, state] of saved) this.pool.set(id, state);
+        // Respect the cap without evicting a just-restored slot first-in-last-out.
+        while (this.pool.size > POOL_CAP) {
+            const oldest = this.pool.keys().next().value;
+            if (oldest == null) break;
+            this.pool.delete(oldest);
+        }
+        this.refreshRetention();
+        this.markStateDirty();
+        this.toast(`Restored ${saved.size} hidden chart${saved.size === 1 ? '' : 's'}`, 'success');
+        return saved.size;
     }
 
     /**
@@ -3013,11 +3124,12 @@ export class VelaWorkspace {
     private syncCellPresentation(): void {
         const multi = this.def.cells.length > 1;
         const overview = multi && this.layoutCtl.current === 'mobile' ? (): void => this.dock.toggle('objects', true) : null;
-        // The marks chip is the sync sheet's door, and only the phone has that sheet.
-        const markable = multi && !this.monoLayout && this.layoutCtl.current === 'mobile';
+        // The marks chip is the marking door on BOTH shells: the phone's sheet, or the
+        // desktop popover opened on that chart's column (see openSyncSurface).
+        const markable = multi && !this.monoLayout;
         for (const cell of this.cellsById.values()) {
             cell.setStatuslineFit(multi);
-            cell.setSyncMarksHandler(markable ? () => this.openSyncDrawer(cell.id) : null);
+            cell.setSyncMarksHandler(markable ? () => this.openSyncSurface(cell.id) : null);
             cell.chart.renderer.setLegendOverviewAction(overview);
         }
     }
@@ -3052,6 +3164,18 @@ export class VelaWorkspace {
             onOpenChange: (open) => this.trackDialog(open),
         });
         this.drawingsDrawer.open();
+    }
+
+    /**
+     * One door for every "mark this chart" affordance — the status-line badge and the
+     * series context menu both land here. A phone gets the sheet (a popover would fight
+     * the touch layout); a desktop gets the layout popover, opened on THAT chart's
+     * column, so the tap lands on the right cell instead of on a panel to hunt through.
+     */
+    private openSyncSurface(cellId?: string): void {
+        if (this.monoLayout || this.cellsById.size < 2) return;
+        if (this.layoutCtl.current === 'mobile') this.openSyncDrawer(cellId);
+        else this.topbar?.openLayoutPicker(cellId);
     }
 
     private openMoreDrawer(view: 'main' | 'layout' = 'main', focus?: 'sync', cellId?: string): void {
@@ -3095,6 +3219,7 @@ export class VelaWorkspace {
                 onCycleGroup: (id) => this.cycleGroup(id as SyncKind),
                 charts: () => this.syncCharts(),
                 onCycleCellGroup: (kind, cellId) => this.cycleGroupFor(kind as SyncKind, cellId),
+                onSetCellGroup: (kind, cellId, mark) => this.setGroupFor(kind as SyncKind, cellId, mark),
                 onSelectChart: (cellId) => { if (this.cellsById.has(cellId)) this.setActiveCell(cellId); },
                 onAllInOneGroup: (kind) => this.syncAllInOneGroup(kind as SyncKind),
                 onApplySettingsToAll: () => this.applySettingsToAll(),
@@ -3103,10 +3228,15 @@ export class VelaWorkspace {
                 onToggleDrawingsScope: () => this.setDrawingsScope(this.drawingsScope === 'global' ? 'layout' : 'global'),
                 hiddenCharts: () => this.hiddenChartCount,
                 onClearPooled: () => this.clearPooled(),
+                clearedCharts: () => this.clearedChartCount,
+                onRestorePooled: () => this.restorePooled(),
                 savedLayouts: () => this.savedLayoutList(),
                 onSaveLayout: (name) => this.saveLayout(name),
                 onOpenLayout: (name) => this.openLayout(name),
                 onDeleteLayout: (name) => this.deleteLayout(name),
+                onRenameLayout: (from, to) => this.renameLayout(from, to),
+                onExportLayout: (name) => this.exportLayout(name),
+                onImportLayout: (json) => this.importLayout(json),
                 linkGroup: () => this.linkGroup,
                 onLinkGroup: (tag) => this.setLinkGroup(tag),
                 glyph: () => layoutGlyph(this.def),

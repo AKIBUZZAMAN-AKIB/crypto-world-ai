@@ -32,6 +32,9 @@ export interface ContextMenuCallbacks {
     resetView: () => void;
     /** Multi-chart hosts: carry THIS chart's settings onto every other chart. */
     applySettingsToAll?: () => void;
+    /** Multi-chart hosts: open the chart-syncing surface on this chart — the right-click
+     *  door TradingView has (Series context menu → Chart Syncing). */
+    chartSyncing?: () => void;
     /** The display-timezone choice the host holds — a zone or the exchange rule (the time-axis menu checks it). */
     timezone?: () => string;
     /** Switch the display timezone through the host, so its own chrome follows.
@@ -167,6 +170,7 @@ export class ChartContextMenu {
             drawings: chart?.drawings.supported ? chart.drawings.all().length : 0,
             indicators: chart?.indicators().length ?? 0,
             multi: this.cbs.applySettingsToAll !== undefined,
+            syncing: this.cbs.chartSyncing !== undefined,
         });
     }
 
@@ -200,6 +204,8 @@ export class ChartContextMenu {
             chart.renderer.set(feature, value);
         } else if (id.startsWith('settings')) {
             chart.renderer.openSettings(settingsSectionOf(id));
+        } else if (id === 'chart-syncing') {
+            this.cbs.chartSyncing?.();
         } else if (id === 'apply-settings-all') {
             this.cbs.applySettingsToAll?.();
         } else if (id === 'reset-view') {

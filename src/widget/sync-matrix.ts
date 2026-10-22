@@ -16,8 +16,9 @@
 // pinned, columns are `minmax(38px, 1fr)`, and a mask appears only when there really is
 // more table to the right (measured after layout, never guessed).
 import { injectStyles } from '../ui/styles';
+import { Menu, type MenuItemDescriptor } from '../ui/components/menu';
 import { IMPLICIT_GROUP } from '../state/document';
-import { groupMarkColor } from '../workspace/sync-marks';
+import { SYNC_GROUP_MARKS, groupMarkColor } from '../workspace/sync-marks';
 
 const STYLE_ID = 'vela-sync-matrix';
 
@@ -202,6 +203,26 @@ export const SYNC_MATRIX_CSS = `
     .vela-md-matrix { --vela-sx-cell: 30px; --vela-sx-label: 60px; --vela-sx-all: 34px; }
     .vela-md-matrix-label { font-size: 10.5px; }
 }
+/* Visually hidden, but read: the matrix's live region (group changes). */
+.vela-md-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+/* Touch LAST — the container queries above trade size for fit, and at 320px they shrink a
+   chip to 30px. On a finger device the extra pixels win instead and the wrapper scrolls
+   (it already does). WCAG 2.2 SC 2.5.8 asks for a 24×24 minimum; 38px sits between that
+   and the 44px comfortable target without stealing a column's width. */
+@media (pointer: coarse) {
+    .vela-md-matrix { --vela-sx-cell: 38px; }
+    .vela-md-chip { min-height: 34px; }
+}
 `;
 
 export interface SyncMatrixChart {
@@ -224,6 +245,8 @@ export interface SyncMatrixLink {
 
 export interface SyncMatrixOptions {
     doc: Document;
+    /** The element the picker menu portals into (theme + clipping provenance). */
+    host?: HTMLElement;
     /** Which shell mounted it. Both may live in one document (phone sheet + desktop
      *  popover), so the element says which table it is — probes and tests scope by it. */
     shell?: 'phone' | 'desktop';
@@ -231,6 +254,9 @@ export interface SyncMatrixOptions {
     onSelectChart?: (cellId: string) => void;
     /** Tapping a cell cycles that chart through this link's groups (TV's uncheck = leave). */
     onCycleCellGroup?: (kind: string, cellId: string) => void;
+    /** Pick one group DIRECTLY. Tapping cycles, which is seven taps to reach the eighth
+     *  group; right-click / long-press opens the whole palette instead. */
+    onSetCellGroup?: (kind: string, cellId: string, mark: string | null) => void;
     /** Tapping the ALL cell drops every chart into one group for that link. */
     onAllInOneGroup?: (kind: string) => void;
     /** Re-read the owner's markup after a tap (switch rows, hero count, …). */
@@ -260,6 +286,15 @@ export class SyncMatrix {
     private readonly allChips = new Map<string, HTMLButtonElement>();
     private sig = '';
     private ro: ResizeObserver | null = null;
+    /** The direct-pick menu (built on first use — most sessions never ask for it). */
+    private palette: Menu | null = null;
+    /** What the caret/long-press is currently pointing at. */
+    private pick: { kind: string; cellId: string; label: string; current?: string } | null = null;
+    private pressTimer: number | null = null;
+    /** The mark each chip showed last paint — the diff drives the live-region message. */
+    private readonly lastMark = new Map<string, string | undefined>();
+    /** Polite screen-reader output for group changes (one line, replaced each time). */
+    private live: HTMLElement | null = null;
 
     constructor(private readonly opts: SyncMatrixOptions) {
         const doc = opts.doc;
@@ -267,13 +302,24 @@ export class SyncMatrix {
         this.el = doc.createElement('div');
         this.el.className = 'vela-md-matrixwrap';
         if (opts.shell) this.el.dataset.shell = opts.shell;
-        this.el.setAttribute('role', 'group');
+        // A layout GRID: rows of interactive cells (APG grid pattern). The cells keep
+        // their button behaviour, and `role="gridcell"` on a button is an allowed (if not
+        // recommended) override in ARIA in HTML, which is what makes row→cell valid here.
+        this.el.setAttribute('role', 'grid');
         this.el.setAttribute('aria-label', 'Chart syncing — one row per link, one column per chart');
         this.grid = doc.createElement('div');
         this.grid.className = 'vela-md-matrix';
         this.el.append(this.grid);
+        // A polite live region: a group change is a STATE change with no visual focus
+        // move, so a screen reader gets one sentence per change ("Symbol · chart 2: 🟡").
+        this.live = doc.createElement('span');
+        this.live.className = 'vela-md-sr';
+        this.live.setAttribute('aria-live', 'polite');
+        this.live.setAttribute('aria-atomic', 'true');
+        this.el.append(this.live);
         this.grid.addEventListener('scroll', this.onScroll, { passive: true } as EventListenerOptions);
         this.el.addEventListener('scroll', this.onScroll, { passive: true });
+        this.el.addEventListener('keydown', this.onKey);
     }
 
     private readonly onScroll = (): void => {
@@ -297,6 +343,105 @@ export class SyncMatrix {
             this.sig = sig;
         }
         this.paint(charts, links);
+    }
+
+    /**
+     * Arrow navigation across the table: ←/→ walk a row, ↑/↓ walk a column, Home/End
+     * jump to the row's ends. The table is one tab stop (roving tabindex), so a keyboard
+     * user crosses ten charts without ten tab presses — the same contract a spreadsheet
+     * grid has, and the reason `role="grid"` is on the scroller.
+     */
+    private readonly onKey = (e: KeyboardEvent): void => {
+        const chip = (e.target as HTMLElement | null)?.closest<HTMLElement>('.vela-md-matrix-chip');
+        if (!chip || !this.el.contains(chip)) return;
+        const kinds = this.lastLinks.map((l) => l.id);
+        const cells = this.lastCharts.map((c) => c.id);
+        const kind = chip.dataset.kind ?? '';
+        const cellId = chip.dataset.cell ?? '';
+        const k = kinds.indexOf(kind);
+        const c = cells.indexOf(cellId);
+        if (k < 0 || c < 0) return;
+        let nextK = k;
+        let nextC = c;
+        if (e.key === 'ArrowRight') nextC = Math.min(cells.length - 1, c + 1);
+        else if (e.key === 'ArrowLeft') nextC = Math.max(0, c - 1);
+        else if (e.key === 'ArrowDown') nextK = Math.min(kinds.length - 1, k + 1);
+        else if (e.key === 'ArrowUp') nextK = Math.max(0, k - 1);
+        else if (e.key === 'Home') nextC = 0;
+        else if (e.key === 'End') nextC = cells.length - 1;
+        else return;
+        e.preventDefault();
+        this.focusCell(kinds[nextK]!, cells[nextC]!, chip.dataset.all === '1');
+    };
+
+    /** Move the roving focus (and the visible scroll) to one cell of the table. */
+    private focusCell(kind: string, cellId: string, all = false): void {
+        const chip = all ? this.allChips.get(kind) : this.chips.get(`${kind}\u0000${cellId}`);
+        if (!chip) return;
+        for (const el of this.el.querySelectorAll<HTMLElement>('.vela-md-matrix-chip')) el.tabIndex = -1;
+        chip.tabIndex = 0;
+        chip.focus({ preventScroll: true });
+        try {
+            chip.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+        } catch {
+            /* jsdom has no scroller */
+        }
+    }
+
+    private cancelPress(): void {
+        if (this.pressTimer == null) return;
+        this.opts.doc.defaultView?.clearTimeout(this.pressTimer);
+        this.pressTimer = null;
+    }
+
+    /**
+     * The whole palette for one cell, anchored at the pointer. Two doors matter here:
+     * picking a group outright (the cycle is seven taps deep by the eighth group), and
+     * leaving the group the way TradingView words it ("uncheck the emoji").
+     */
+    private openPalette(kind: string, cellId: string, label: string, x: number, y: number): void {
+        const doc = this.opts.doc;
+        const link = this.lastLinks.find((l) => l.id === kind);
+        const current = link?.marks?.[cellId];
+        this.pick = { kind, cellId, label, ...(current ? { current } : {}) };
+        const host = this.opts.host ?? doc.body;
+        if (!this.palette) {
+            this.palette = new Menu({
+                host,
+                items: [],
+                placement: 'bottom-start',
+                checkmarks: true,
+                onSelect: (id) => this.runPick(id),
+            });
+        }
+        this.palette.setItems(this.paletteItems());
+        this.palette.openAt(x, y);
+    }
+
+    private paletteItems(): MenuItemDescriptor[] {
+        const cur = this.pick?.current;
+        const items: MenuItemDescriptor[] = SYNC_GROUP_MARKS.map((mark, i) => ({
+            id: `mark:${mark}`,
+            // The number is the stable half: a device without an emoji font still reads
+            // "Group 4", and the emoji rides along where it renders.
+            label: `Group ${i + 1} ${mark}`,
+            ...(mark === cur ? { checked: true } : {}),
+        }));
+        items.push({ id: 'none', label: 'No group — leave it', separatorBefore: true, ...(cur ? {} : { checked: true }) });
+        return items;
+    }
+
+    /** One sentence to the live region (polite: it waits for the current utterance). */
+    private announce(text: string): void {
+        if (this.live) this.live.textContent = text;
+    }
+
+    private runPick(id: string): void {
+        const pick = this.pick;
+        if (!pick) return;
+        if (id === 'none') this.opts.onSetCellGroup?.(pick.kind, pick.cellId, null);
+        else if (id.startsWith('mark:')) this.opts.onSetCellGroup?.(pick.kind, pick.cellId, id.slice('mark:'.length));
+        this.opts.onChange?.();
     }
 
     /** Bring one chart's column into view (used when the sheet opens on a chart). */
@@ -359,8 +504,10 @@ export class SyncMatrix {
         for (const link of links) {
             const row = doc.createElement('div');
             row.className = 'vela-md-matrix-row';
+            row.setAttribute('role', 'row');
             const label = doc.createElement('span');
             label.className = 'vela-md-matrix-label';
+            label.setAttribute('role', 'rowheader');
             label.textContent = link.label;
             row.append(label);
             for (const c of charts) {
@@ -369,10 +516,32 @@ export class SyncMatrix {
                 chip.className = 'vela-md-chip vela-md-matrix-chip';
                 chip.dataset.kind = link.id;
                 chip.dataset.cell = c.id;
+                chip.title = `${link.label} · chart ${c.label} — click to cycle, right-click for all groups`;
+                chip.setAttribute('aria-haspopup', 'menu'); // right-click / long-press opens the palette
+                chip.setAttribute('role', 'gridcell');
                 chip.addEventListener('click', () => {
                     this.opts.onCycleCellGroup?.(link.id, c.id);
                     this.opts.onChange?.();
                 });
+                // Direct pick: a right-click (or a long press on touch) offers the whole
+                // palette at once. Cycling stays the fast path for "next group please".
+                chip.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    this.openPalette(link.id, c.id, link.label, e.clientX, e.clientY);
+                });
+                chip.tabIndex = -1; // roving: the table is ONE tab stop (see installKeys)
+                chip.addEventListener('pointerdown', (e) => {
+                    if (e.pointerType === 'mouse') return;
+                    this.cancelPress();
+                    const { clientX, clientY } = e;
+                    this.pressTimer = this.opts.doc.defaultView?.setTimeout(() => {
+                        this.pressTimer = null;
+                        this.openPalette(link.id, c.id, link.label, clientX, clientY);
+                    }, 450) ?? null;
+                });
+                for (const ev of ['pointerup', 'pointercancel', 'pointerleave', 'pointermove'] as const) {
+                    chip.addEventListener(ev, () => this.cancelPress());
+                }
                 row.append(chip);
                 this.chips.set(`${link.id}\u0000${c.id}`, chip);
             }
@@ -393,10 +562,23 @@ export class SyncMatrix {
             }
             this.grid.append(row);
         }
+        // One tab stop for the whole table, seeded on its first cell: a keyboard user
+        // tabs INTO the grid and then walks it with the arrow keys.
+        const first = this.chips.values().next().value as HTMLButtonElement | undefined;
+        if (first) first.tabIndex = 0;
         this.measure();
     }
 
+    private lastLinks: readonly SyncMatrixLink[] = [];
+    private lastCharts: readonly SyncMatrixChart[] = [];
+
     private paint(charts: readonly SyncMatrixChart[], links: readonly SyncMatrixLink[]): void {
+        this.lastLinks = links;
+        this.lastCharts = charts;
+        // Grid dimensions for AT: the header row + one row per link; the label column,
+        // one column per chart, and the ALL column when the host offers it.
+        this.el.setAttribute('aria-rowcount', String(links.length + 1));
+        this.el.setAttribute('aria-colcount', String(charts.length + 1 + (this.opts.onAllInOneGroup ? 1 : 0)));
         for (const c of charts) {
             const head = this.heads.get(c.id);
             if (!head) continue;
@@ -440,6 +622,16 @@ export class SyncMatrix {
                 const mark = link.marks?.[c.id];
                 paintChip(chip, mark);
                 chip.setAttribute('aria-label', `${link.label} for chart ${c.label}: ${mark ?? 'not linked'}`);
+                // No aria-pressed: the cell's role is gridcell (the grid needs cell
+                // children), and the pressed state is already spelled out in the label
+                // above. `data-on` still drives the paint.
+                // Diff instead of re-reading: only a REAL change is announced, and only
+                // after the first paint (which is the table arriving, not an edit).
+                const key = `${link.id}\u0000${c.id}`;
+                if (this.lastMark.has(key) && this.lastMark.get(key) !== mark) {
+                    this.announce(`${link.label} · chart ${c.label}: ${mark ?? 'no group'}`);
+                }
+                this.lastMark.set(key, mark);
             }
             const all = this.allChips.get(link.id);
             if (all) {
@@ -471,7 +663,10 @@ export class SyncMatrix {
     }
 
     destroy(): void {
+        this.cancelPress();
         this.ro?.disconnect();
         this.ro = null;
+        this.palette?.destroy();
+        this.palette = null;
     }
 }

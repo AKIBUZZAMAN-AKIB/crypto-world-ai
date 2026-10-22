@@ -86,6 +86,9 @@ export function registerBuiltinLayouts(): void {
     registerLayout({ id: '2v', label: '2 stacked', cols: [1], rows: [1, 1], cells: slots(2) });
     registerLayout({ id: '4', label: '4 grid', cols: [1, 1], rows: [1, 1], cells: slots(4) });
     registerLayout({ id: '8', label: '8 grid', cols: [1, 1, 1, 1], rows: [1, 1], cells: slots(8) });
+    // The 16-chart family (TradingView's Ultimate tier calls it 16; its own help page
+    // still documents 8, so treat this as the ceiling OUR pool can hold — POOL_CAP is 16).
+    registerLayout({ id: '16', label: '16 grid', cols: [1, 1, 1, 1], rows: [1, 1, 1, 1], cells: slots(16) });
 
     // ── asymmetric presets (TradingView's 1-2 / 2-1 / 1-3 / 3-1 / 2-3 / 3-2 / 4s family) ──
     registerLayout({ id: '1-2', label: 'Main + 2 below', cols: [1, 1], rows: [1.4, 1], areas: ['a a', 'b c'], cells: areaSlots(['a', 'b', 'c']) });
@@ -171,6 +174,7 @@ const GRID_BUILTIN_IDS: Record<string, string> = {
     '2x1': '2v',
     '2x2': '4',
     '2x4': '8',
+    '4x4': '16', // the new ceiling: the canvas square and the preset row are one layout
 };
 
 const clampTrack = (n: number): number => Math.max(1, Math.min(GRID_PICKER_MAX, Math.round(n)));
@@ -181,6 +185,10 @@ const clampTrack = (n: number): number => Math.max(1, Math.min(GRID_PICKER_MAX, 
  * (id `'4'`, `'2h'`, …); anything else synthesizes a `g<rows>x<cols>` definition.
  */
 export function layoutForGrid(rows: number, cols: number): LayoutDefinition {
+    // The presets are registered by the workspace's constructor; a picker that resolves a
+    // square before any workspace booted still has to land on the SAME id (otherwise the
+    // canvas square and the preset row disagree about a 4×4). Idempotent — a Map.set.
+    registerBuiltinLayouts();
     const r = clampTrack(rows);
     const c = clampTrack(cols);
     const builtin = GRID_BUILTIN_IDS[`${r}x${c}`];

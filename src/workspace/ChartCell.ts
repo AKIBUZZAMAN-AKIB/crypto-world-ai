@@ -188,6 +188,9 @@ export interface CellDeps {
     toast(message: string, kind: 'info' | 'success' | 'error', durationMs?: number): void;
     /** Multi-chart: carry this cell's settings onto every other chart ("Apply to all"). */
     applySettingsToAll?(cellId: string): void;
+    /** Open the chart-syncing surface on THIS cell: the phone's sheet, or the desktop
+     *  popover scrolled to this chart's column. Omitted in a single-chart host. */
+    openSyncGesture?(cellId: string): void;
     /** Workspace-only legend actions for one indicator row — the "apply to the whole
      *  layout" pair. Omitted in a single-chart host. */
     layoutLegendActions?(indicatorId: string, cellId: string): import('../core/ports/IChartRenderer').LegendActionView[];
@@ -506,6 +509,7 @@ export class ChartCell {
         this.contextMenu = new ChartContextMenu(this.host, {
             resetView: () => this.resetView(),
             ...(this.deps.applySettingsToAll ? { applySettingsToAll: () => this.deps.applySettingsToAll?.(this.id) } : {}),
+            ...(this.deps.openSyncGesture ? { chartSyncing: () => this.deps.openSyncGesture?.(this.id) } : {}),
             // Checkmarks read THIS chart's effective zone; the scope row decides whether a
             // pick rewrites this cell alone or the workspace default behind every cell.
             timezone: () => this.displayTimezone,
@@ -671,8 +675,9 @@ export class ChartCell {
 
     /** The bar containing `time` — the synced-crosshair readout (null off-series). */
     barAt(time: number): OHLCV | null {
-        const renderer = this.inner?.renderer as { barAt?: (t: number) => OHLCV | null } | undefined;
-        return renderer && typeof renderer.barAt === 'function' ? renderer.barAt(time) : null;
+        // `renderer` is the RendererControl facade — its own `barAt` forwards to the
+        // renderer port (the old code read the facade's missing field and always nulled).
+        return this.inner?.renderer.barAt(time) ?? null;
     }
 
     /** Show (or clear) the bar another chart's crosshair points at — status-line readout. */
@@ -681,8 +686,8 @@ export class ChartCell {
     }
 
     /** The sync-group emoji for this chart (the workspace projects the links here). */
-    setSyncMarks(marks: ReadonlyArray<{ kind: string; mark: string }>): void {
-        this.statusline?.setSyncMarks(marks);
+    setSyncMarks(marks: ReadonlyArray<{ kind: string; mark: string }>, linkable = false): void {
+        this.statusline?.setSyncMarks(marks, linkable);
     }
 
     /** What tapping this chart's marks chip runs — the workspace opens its sync sheet on

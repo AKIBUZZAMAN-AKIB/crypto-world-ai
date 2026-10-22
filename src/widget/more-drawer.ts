@@ -7,6 +7,7 @@
 // `timezone-drawer.ts`), not here.
 import { Drawer } from '../ui/components/drawer';
 import { iconEl } from '../ui/icons';
+import { downloadText } from '../ui/download';
 import { injectStyles } from '../ui/styles';
 import { SyncMatrix } from './sync-matrix';
 import { layoutGridCanvas, paintLayoutGrid } from './layout-picker';
@@ -484,6 +485,33 @@ const CSS = `
 .vela-md-saved-open:active, .vela-md-saved-del:active { background: var(--vela-hover); }
 .vela-md-saved-del { padding: 0 8px; width: 34px; }
 .vela-md-saved-del .vela-icon { font-size: 15px; width: 15px; height: 15px; color: var(--vela-fg-muted); }
+.vela-md-row[data-danger='1'] .vela-md-row-value { color: var(--vela-danger); }
+.vela-md-rename {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--vela-hover);
+    border: 1px solid var(--vela-selected-bg);
+    border-radius: 6px;
+    color: var(--vela-fg-bright);
+    font: inherit;
+    font-size: 13px;
+    padding: 6px 8px;
+}
+.vela-md-rename[data-refused] { border-color: var(--vela-danger); }
+.vela-md-import {
+    all: unset;
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px dashed var(--vela-border-soft);
+    font-size: 12px;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+}
+.vela-md-import:active { background: var(--vela-hover); }
 .vela-md-saveas { display: flex; gap: 8px; padding: 4px 0 8px; }
 .vela-md-saveas input {
     flex: 1 1 auto;
@@ -584,6 +612,8 @@ export interface MoreDrawerOptions {
         onCycleGroup?: (id: string) => void;
         /** The charts the marking matrix lists, in slot order. Omitted ⇒ no matrix. */
         charts?: () => Array<{ id: string; label: string; symbol?: string; active: boolean }>;
+        /** Pick ONE group for a chart outright (the cell's palette). `null` = leave it. */
+        onSetCellGroup?: (kind: string, cellId: string, mark: string | null) => void;
         /** Cycle ONE chart through a link's groups (a matrix tap) — no active-cell detour. */
         onCycleCellGroup?: (id: string, cellId: string) => void;
         /** Make a chart active by tapping its matrix column header (the phone's way of
@@ -599,10 +629,15 @@ export interface MoreDrawerOptions {
         onToggleDrawingsScope?: () => void;
         hiddenCharts?: () => number;
         onClearPooled?: () => void;
+        clearedCharts?: () => number;
+        onRestorePooled?: () => void;
         savedLayouts?: () => Array<{ name: string; active: boolean }>;
         onSaveLayout?: (name: string) => void;
         onOpenLayout?: (name: string) => void;
         onDeleteLayout?: (name: string) => void;
+        onRenameLayout?: (from: string, to: string) => boolean;
+        onExportLayout?: (name: string) => string | null;
+        onImportLayout?: (json: string) => string | null;
         linkGroup?: () => string | null;
         onLinkGroup?: (tag: string | null) => void;
         /** The current layout's 16px glyph (`<svg>` markup) for the Layout row. Omitted
@@ -616,6 +651,8 @@ type MoreView = 'main' | 'style' | 'layout' | 'alerts';
 
 export class MoreDrawer {
     private readonly drawer: Drawer;
+    /** First tap arms the "hidden charts" row; the second one commits. */
+    private poolArmed = false;
     private view: MoreView = 'main';
     /** Scroll the layout sheet to its sync block on the next paint. */
     private focus: 'sync' | undefined;
@@ -679,7 +716,7 @@ export class MoreDrawer {
         this.focusCell = undefined;
     }
 
-    private row(doc: Document, label: string, opts: { icon?: string; glyph?: string; value?: string; chevron?: boolean; checked?: boolean; onClick: () => void }): HTMLElement {
+    private row(doc: Document, label: string, opts: { icon?: string; glyph?: string; value?: string; chevron?: boolean; checked?: boolean; danger?: boolean; onClick: () => void }): HTMLElement {
         const el = doc.createElement('div');
         el.className = 'vela-md-row';
         if (opts.icon) {
@@ -698,6 +735,7 @@ export class MoreDrawer {
             el.appendChild(value);
         }
         if (opts.checked) el.dataset.checked = '1';
+        if (opts.danger) el.dataset.danger = '1';
         if (opts.chevron) el.appendChild(iconEl('chevron-right', doc));
         el.addEventListener('click', opts.onClick);
         return el;
@@ -985,12 +1023,33 @@ export class MoreDrawer {
             );
         }
         const hidden = layout.hiddenCharts?.() ?? 0;
+        if (hidden === 0) this.poolArmed = false; // nothing left to arm
         if (hidden > 0 && layout.onClearPooled) {
+            // Two taps: the row destroys state the trader cannot see, so the first tap
+            // arms it and the second one commits (the drawer re-renders in between).
             layoutsSec.append(
-                this.row(doc, 'Hidden charts', {
-                    value: `remove ${hidden}`,
+                this.row(doc, this.poolArmed ? 'Hidden charts — tap to confirm' : 'Hidden charts', {
+                    value: this.poolArmed ? `remove ${hidden}?` : `remove ${hidden}`,
+                    ...(this.poolArmed ? { danger: true } : {}),
                     onClick: () => {
+                        if (!this.poolArmed) {
+                            this.poolArmed = true;
+                            this.render();
+                            return;
+                        }
+                        this.poolArmed = false;
                         layout.onClearPooled?.();
+                        this.render();
+                    },
+                }),
+            );
+        }
+        if (layout.onRestorePooled && (layout.clearedCharts?.() ?? 0) > 0) {
+            const count = layout.clearedCharts?.() ?? 0;
+            layoutsSec.append(
+                this.row(doc, `Undo — bring back ${count} hidden chart${count === 1 ? '' : 's'}`, {
+                    onClick: () => {
+                        layout.onRestorePooled?.();
                         this.render();
                     },
                 }),
@@ -1042,9 +1101,11 @@ export class MoreDrawer {
 
                 matrix = new SyncMatrix({
                     doc,
+                    host: this.opts.host,
                     shell: 'phone',
                     ...(layout.onSelectChart ? { onSelectChart: (id: string) => layout.onSelectChart?.(id) } : {}),
                     ...(layout.onCycleCellGroup ? { onCycleCellGroup: (kind: string, id: string) => layout.onCycleCellGroup?.(kind, id) } : {}),
+                    ...(layout.onSetCellGroup ? { onSetCellGroup: (kind: string, id: string, mark: string | null) => layout.onSetCellGroup?.(kind, id, mark) } : {}),
                     ...(layout.onAllInOneGroup ? { onAllInOneGroup: (kind: string) => layout.onAllInOneGroup?.(kind) } : {}),
                     onChange: () => repaint(),
                 });
@@ -1169,6 +1230,69 @@ export class MoreDrawer {
                 this.drawer.hide();
             });
             rowEl.append(open);
+            if (layout.onRenameLayout) {
+                const ren = doc.createElement('button');
+                ren.type = 'button';
+                ren.className = 'vela-md-saved-del'; // same 34px hit target as delete
+                ren.setAttribute('aria-label', `Rename layout ${l.name}`);
+                ren.title = `Rename “${l.name}”`;
+                ren.appendChild(iconEl('pen', doc));
+                ren.addEventListener('click', () => {
+                    const input = doc.createElement('input');
+                    input.type = 'text';
+                    input.className = 'vela-md-rename';
+                    input.value = l.name;
+                    input.setAttribute('aria-label', `Rename ${l.name}`);
+                    let done = false;
+                    const finish = (allowRetry: boolean): void => {
+                        if (done) return;
+                        const to = input.value.trim();
+                        if (!to || to === l.name) {
+                            done = true;
+                            this.render();
+                            return;
+                        }
+                        const ok = layout.onRenameLayout?.(l.name, to) ?? false;
+                        if (ok || !allowRetry) {
+                            done = true;
+                            this.render();
+                            return;
+                        }
+                        input.dataset.refused = to; // taken: stay editable, say why
+                        input.title = `“${to}” is already used — pick another name`;
+                        input.focus();
+                        input.select();
+                    };
+                    input.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            finish(true);
+                        } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            done = true;
+                            this.render();
+                        }
+                    });
+                    input.addEventListener('blur', () => finish(false));
+                    label.replaceWith(input);
+                    input.focus();
+                    input.select();
+                });
+                rowEl.append(ren);
+            }
+            if (layout.onExportLayout) {
+                const exp = doc.createElement('button');
+                exp.type = 'button';
+                exp.className = 'vela-md-saved-del';
+                exp.setAttribute('aria-label', `Export layout ${l.name}`);
+                exp.title = `Export “${l.name}” as JSON`;
+                exp.appendChild(iconEl('download', doc));
+                exp.addEventListener('click', () => {
+                    const json = layout.onExportLayout?.(l.name);
+                    if (json) downloadText(doc, `${l.name}.vela-layout.json`, json);
+                });
+                rowEl.append(exp);
+            }
             if (layout.onDeleteLayout) {
                 const del = doc.createElement('button');
                 del.type = 'button';
@@ -1205,6 +1329,30 @@ export class MoreDrawer {
             });
             save.append(input, button);
             list.appendChild(save);
+        }
+        if (layout.onImportLayout) {
+            const imp = doc.createElement('button');
+            imp.type = 'button';
+            imp.className = 'vela-md-import';
+            imp.textContent = 'Import layout file…';
+            imp.setAttribute('aria-label', 'Import a layout snapshot from a JSON file');
+            imp.addEventListener('click', () => {
+                const picker = doc.createElement('input');
+                picker.type = 'file';
+                picker.accept = 'application/json,.json,.vela';
+                picker.style.display = 'none';
+                picker.addEventListener('change', () => {
+                    const file = picker.files?.[0];
+                    picker.remove();
+                    if (!file) return;
+                    void file.text().then((text) => {
+                        if (layout.onImportLayout?.(text)) this.render();
+                    });
+                });
+                doc.body.appendChild(picker);
+                picker.click();
+            });
+            list.appendChild(imp);
         }
     }
 

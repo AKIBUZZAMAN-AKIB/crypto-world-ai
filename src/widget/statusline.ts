@@ -154,6 +154,9 @@ const CSS = `
 }
 .vela-statusline .vela-sl-marks:active { background: var(--vela-hover); }
 .vela-statusline .vela-sl-marks[hidden] { display: none; }
+/* Unmarked on a multi-chart grid: a hollow ring, dimmed — the affordance, honestly
+   stating that this chart follows nothing yet. */
+.vela-statusline .vela-sl-marks[data-empty] { color: var(--vela-fg-faint, var(--vela-fg-muted)); opacity: 0.75; letter-spacing: 0; }
 .vela-statusline .vela-sl-market > [hidden] { display: none !important; }
 .vela-statusline .vela-sl-replay-badge, .vela-statusline .vela-sl-replay-badge svg { display: block; width: 16px; height: 16px; }
 /* Tabular figures: every digit has one advance, so a readout whose text changes only in
@@ -679,6 +682,17 @@ export class Statusline {
                 this.lastBar = b;
                 if (!this.hoverBar) this.render();
             }),
+            // A STATIC series (host `data`, a restored snapshot) never emits `bar`, so the
+            // readout would stay empty until the first hover. Seed the last bar off the
+            // renderer when a load settles — live streams overwrite it on the next tick.
+            chart.on('load:end', ({ bars }: { bars: number }) => {
+                if (bars <= 0 || this.lastBar) return;
+                const range = chart.getVisibleRange();
+                const last = range ? chart.renderer.barAt(range.to - 1) : null;
+                if (!last) return;
+                this.lastBar = last;
+                if (!this.hoverBar) this.render();
+            }),
             // A replay cut or restore replaces the newest bar without a `bar` event.
             chart.on('replay:start', () => {
                 this.lastBar = null;
@@ -744,24 +758,36 @@ export class Statusline {
      *  all-cells form are one group ('A'), and `AAAAAAA` would be noise — `A` is the
      *  truthful reading ("this chart is in the shared group"), while the tooltip keeps
      *  the per-axis breakdown. */
-    setSyncMarks(marks: ReadonlyArray<{ kind: string; mark: string }>): void {
+    /**
+     * The group badge. `linkable` (a multi-chart grid) makes it a permanent affordance:
+     * with no group the badge reads "◌" — this chart follows nothing, tap to pick a
+     * group — instead of vanishing. TradingView's status line always carries the chart
+     * syncing entry; hiding it left the only marking door on desktop invisible.
+     */
+    setSyncMarks(marks: ReadonlyArray<{ kind: string; mark: string }>, linkable = false): void {
         // One glyph per DISTINCT group, not per link: seven switches turned on in the
         // all-cells form are one group ('A'), and `AAAAAAA` would be noise — `A` is the
         // truthful reading ("this chart is in the shared group"), while the tooltip keeps
         // the per-axis breakdown.
         const distinct: string[] = [];
         for (const m of marks) if (!distinct.includes(m.mark)) distinct.push(m.mark);
-        const text = distinct.join('');
+        const empty = marks.length === 0;
+        const text = empty ? (linkable ? '◌' : '') : distinct.join('');
         const label = marks.map((m) => `${m.mark} ${m.kind}`).join(' • ');
-        if (this.marksEl.textContent === text && this.marksEl.hidden === (marks.length === 0)) return;
+        const hidden = empty && !linkable;
+        if (this.marksEl.textContent === text && this.marksEl.hidden === hidden) return;
         this.marksEl.textContent = text;
-        this.marksEl.hidden = marks.length === 0;
-        this.marksEl.title = label;
+        this.marksEl.hidden = hidden;
+        this.marksEl.toggleAttribute('data-empty', empty);
+        this.marksEl.title = empty ? 'Not in a sync group — click to pick one' : label;
         // One group ⇒ the badge wears that group's color, so "the red chart" can be
         // found from across the grid. Several groups stay neutral (the text says them).
         this.marksEl.style.color = distinct.length === 1 ? (groupMarkColor(distinct[0]) ?? '') : '';
         // Screen readers get the same reading, plus WHAT the tap does.
-        this.marksEl.setAttribute('aria-label', marks.length === 0 ? 'Sync groups' : `Sync groups: ${label}. Change group`);
+        this.marksEl.setAttribute(
+            'aria-label',
+            empty ? 'Not in a sync group. Click to pick one' : `Sync groups: ${label}. Change group`,
+        );
     }
 
     /** Show the bar another chart's crosshair points at (null = let go). */

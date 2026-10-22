@@ -205,6 +205,8 @@ export interface TopbarOptions {
         onCycleCellGroup?: (kind: string, cellId: string) => void;
         /** Make a chart active from the table's column header. */
         onSelectChart?: (cellId: string) => void;
+        /** Pick one group outright from a cell's palette (`null` = leave the group). */
+        onSetCellGroup?: (kind: string, cellId: string, mark: string | null) => void;
         /** The popover opened/closed (the workspace numbers its charts while it is up). */
         onOpenChange?: (open: boolean) => void;
         onAllInOneGroup?: (kind: string) => void;
@@ -214,10 +216,15 @@ export interface TopbarOptions {
         /** Dormant (pooled) charts, and the row that drops them. */
         hiddenCharts?: () => number;
         onClearPooled?: () => void;
+        clearedCharts?: () => number;
+        onRestorePooled?: () => void;
         savedLayouts?: () => Array<{ name: string; active: boolean }>;
         onSaveLayout?: (name: string) => void;
         onOpenLayout?: (name: string) => void;
         onDeleteLayout?: (name: string) => void;
+        onRenameLayout?: (from: string, to: string) => boolean;
+        onExportLayout?: (name: string) => string | null;
+        onImportLayout?: (json: string) => string | null;
         linkGroup?: () => string | null;
         onLinkGroup?: (tag: string | null) => void;
         /** The current layout's 16px glyph (`<svg>` markup) for the button, re-read on
@@ -499,16 +506,22 @@ export class Topbar {
                 ...(layout.charts ? { charts: () => layout.charts?.() ?? [] } : {}),
                 ...(layout.onCycleCellGroup ? { onCycleCellGroup: (kind: string, cellId: string) => layout.onCycleCellGroup?.(kind, cellId) } : {}),
                 ...(layout.onSelectChart ? { onSelectChart: (cellId: string) => layout.onSelectChart?.(cellId) } : {}),
+                ...(layout.onSetCellGroup ? { onSetCellGroup: (kind: string, cellId: string, mark: string | null) => layout.onSetCellGroup?.(kind, cellId, mark) } : {}),
                 ...(layout.onOpenChange ? { onOpenChange: (open: boolean) => layout.onOpenChange?.(open) } : {}),
                 ...(layout.onAllInOneGroup ? { onAllInOneGroup: (kind) => layout.onAllInOneGroup?.(kind) } : {}),
                 ...(layout.drawingsScope ? { drawingsScope: () => layout.drawingsScope?.() ?? 'layout' } : {}),
                 ...(layout.onToggleDrawingsScope ? { onToggleDrawingsScope: () => layout.onToggleDrawingsScope?.() } : {}),
                 ...(layout.hiddenCharts ? { hiddenCharts: () => layout.hiddenCharts?.() ?? 0 } : {}),
                 ...(layout.onClearPooled ? { onClearPooled: () => layout.onClearPooled?.() } : {}),
+                ...(layout.clearedCharts ? { clearedCharts: () => layout.clearedCharts?.() ?? 0 } : {}),
+                ...(layout.onRestorePooled ? { onRestorePooled: () => layout.onRestorePooled?.() } : {}),
                 ...(layout.savedLayouts ? { savedLayouts: () => layout.savedLayouts?.() ?? [] } : {}),
                 ...(layout.onSaveLayout ? { onSaveLayout: (name) => layout.onSaveLayout?.(name) } : {}),
                 ...(layout.onOpenLayout ? { onOpenLayout: (name) => layout.onOpenLayout?.(name) } : {}),
                 ...(layout.onDeleteLayout ? { onDeleteLayout: (name) => layout.onDeleteLayout?.(name) } : {}),
+                ...(layout.onRenameLayout ? { onRenameLayout: (from, to) => layout.onRenameLayout?.(from, to) ?? false } : {}),
+                ...(layout.onExportLayout ? { onExportLayout: (name) => layout.onExportLayout?.(name) ?? null } : {}),
+                ...(layout.onImportLayout ? { onImportLayout: (json) => layout.onImportLayout?.(json) ?? null } : {}),
                 ...(layout.linkGroup ? { linkGroup: () => layout.linkGroup?.() ?? null } : {}),
                 ...(layout.onLinkGroup ? { onLinkGroup: (tag) => layout.onLinkGroup?.(tag) } : {}),
             });
@@ -532,6 +545,12 @@ export class Topbar {
             onSelect: (id) => opts.onPriceStyle(id),
             iconBadges: true,
         });
+    }
+
+    /** Open the layout popover (optionally on one chart's column) — the workspace's door
+     *  for the status-line badge and the series context menu. */
+    openLayoutPicker(cellId?: string): void {
+        this.layoutPicker?.openFor(cellId);
     }
 
     setSymbol(symbol: string): void {

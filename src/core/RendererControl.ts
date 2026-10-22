@@ -2,6 +2,7 @@ import type { AxisLongPressEvent, ClickEvent, CrosshairEvent, DataWindowReadout,
 import type { Unsubscribe } from './util/types';
 import type { WallClock } from './util/wall-clock';
 import type { SymbolPickerFn } from './model/inputs';
+import type { OHLCV } from './model/ohlcv';
 
 /**
  * The public control surface for the active renderer — `chart.renderer`. A thin
@@ -16,6 +17,27 @@ export class RendererControl {
     /** The active renderer's identity, e.g. `'native'` or `'lwc'`. */
     get name(): string {
         return this.renderer.name;
+    }
+
+    /**
+     * The geometry backend the active renderer actually mounted, when it has one
+     * (`'webgl2'` or `'canvas2d'`). A diagnostic: the multi-chart workspace spends WebGL
+     * on at most a handful of cells and flips the whole grid to canvas2d past that.
+     */
+    get backend(): 'canvas2d' | 'webgl2' | undefined {
+        const kind = (this.renderer as { backendKind?: unknown }).backendKind;
+        return kind === 'canvas2d' || kind === 'webgl2' ? kind : undefined;
+    }
+
+    /**
+     * The bar CONTAINING `time` — the renderer's own floor-by-index lookup (a 1h instant
+     * inside a 1D bar lights that day). `null` when this renderer has no such seam or the
+     * instant is off the loaded series. Crosshair sync uses it to give every follower the
+     * leader's instant in ITS data.
+     */
+    barAt(time: number): OHLCV | null {
+        const fn = (this.renderer as { barAt?: (t: number) => OHLCV | null }).barAt;
+        return typeof fn === 'function' ? fn.call(this.renderer, time) : null;
     }
 
     /** What the active renderer can draw (drives graceful degradation). */

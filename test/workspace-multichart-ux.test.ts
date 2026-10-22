@@ -120,7 +120,13 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         }
         chip().click();
         expect(ws.sync.groupOf('symbol', 'btc')).toBeUndefined();
-        expect(ws.cell('btc')!.host.querySelector<HTMLElement>('.vela-sl-marks')!.hidden).toBe(true);
+        // Unlinked, but the badge STAYS on a multi-chart grid: it is the door into
+        // marking (TradingView keeps the chart-syncing entry in the status line too), so
+        // it reads as the empty ring instead of disappearing.
+        const badge = ws.cell('btc')!.host.querySelector<HTMLElement>('.vela-sl-marks')!;
+        expect(badge.hidden).toBe(false);
+        expect(badge.textContent).toBe('◌');
+        expect(badge.hasAttribute('data-empty')).toBe(true);
     });
 
     it('the desktop popover has the SAME table — any chart is marked without activating it', async () => {
@@ -174,6 +180,73 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         ws.root.querySelector<HTMLElement>('button[aria-label^="Layout"]')!.click(); // close
         expect(ws.root.hasAttribute('data-sync-open')).toBe(false);
     });
+
+    it('a cell offers the WHOLE palette on right-click — one pick, not seven taps', () => {
+        const ws = mountWorkspace(PAGE);
+        openPicker(ws);
+        const cell = ws.root.querySelector<HTMLElement>('.vela-lp-charts .vela-md-chip[data-kind="symbol"][data-cell="eth"]')!;
+        cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 40 }));
+        // The list portals to the floating layer (the document body here), so it is
+        // found from the document, not from the mount.
+        const palette = document.querySelector<HTMLElement>('.vela-menu-item[data-vei-id^="mark:"]')?.closest('.vela-menu');
+        expect(palette).not.toBeNull();
+        const rows = [...palette!.querySelectorAll<HTMLElement>('.vela-menu-item')];
+        expect(rows.map((r) => r.textContent?.trim().split(' ').slice(0, 2).join(' '))).toEqual([
+            'Group 1', 'Group 2', 'Group 3', 'Group 4', 'Group 5',
+            'Group 6', 'Group 7', 'Group 8', 'Group 9', 'Group 10',
+            'No group',
+        ]);
+        // The rows carry the whole palette, in order, with the emoji alongside the
+        // number (a font-less device still reads "Group 8").
+        expect(rows[7]!.textContent).toContain('⚫');
+        expect(rows[10]!.textContent).toContain('No group');
+        // The pick itself goes through the workspace's direct setter. (Zag menus select
+        // on real pointer events, which jsdom does not synthesise — the click path is
+        // covered by the browser probe, `test/browser/sync-doors.mjs`.)
+        ws.setGroupFor('symbol', 'eth', SYNC_GROUP_MARKS[7]!);
+        expect(ws.sync.groupOf('symbol', 'eth')).toBe(SYNC_GROUP_MARKS[7]);
+        expect(ws.sync.groupOf('symbol', 'btc')).toBe('A'); // everyone else untouched
+        // One call, one group — no cycle: group 8 lands in a single step.
+        ws.setGroupFor('symbol', 'sol', null);
+        expect(ws.sync.groupOf('symbol', 'sol')).toBeUndefined();
+    });
+
+    it('the table is ONE tab stop and the arrow keys walk it', () => {
+        const ws = mountWorkspace(PAGE);
+        openPicker(ws);
+        const chips = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-charts .vela-md-chip[data-cell]')];
+        // Exactly one cell is reachable with Tab; the rest are reached by arrow keys.
+        expect(chips.filter((c) => c.tabIndex === 0)).toHaveLength(1);
+        const wrap = ws.root.querySelector<HTMLElement>('.vela-lp-charts .vela-md-matrixwrap')!;
+        expect(wrap.getAttribute('role')).toBe('grid');
+        expect(chips[0]!.tabIndex).toBe(0);
+        const press = (k: string): void => {
+            (document.activeElement as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+        };
+        const focused = (): string => {
+            const el = document.activeElement as HTMLElement;
+            return `${el.dataset.kind}/${el.dataset.cell}`;
+        };
+        // Column order comes from the workspace (slot order), not from the test.
+        const cols = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-charts .vela-md-chip[data-kind="viewport"][data-cell]')].map((c) => c.dataset.cell);
+        expect(cols).toHaveLength(4);
+        ws.root.querySelector<HTMLElement>(`.vela-lp-charts .vela-md-chip[data-kind="viewport"][data-cell="${cols[0]}"]`)!.focus();
+        // Right moves along the row; Down moves down the column (the row order is the
+        // workspace's: Date range, Time, Symbol, …).
+        press('ArrowRight');
+        press('ArrowRight');
+        expect(focused()).toBe(`viewport/${cols[2]}`);
+        press('ArrowDown');
+        press('ArrowDown');
+        expect(focused()).toBe(`symbol/${cols[2]}`);
+        expect(ws.root.querySelector<HTMLElement>(`.vela-lp-charts .vela-md-chip[data-kind="symbol"][data-cell="${cols[2]}"]`)!.tabIndex).toBe(0);
+        // Home/End jump to the row's ends.
+        press('Home');
+        expect(focused()).toBe(`symbol/${cols[0]}`);
+        press('End');
+        expect(focused()).toBe(`symbol/${cols[3]}`);
+    });
+
 
     it('the drawable scope chip flips the drawing scope in place', () => {
         const ws = mountWorkspace(PAGE);
@@ -406,6 +479,93 @@ describe('named layouts', () => {
         row.querySelector<HTMLElement>('.vela-lp-name')!.click();
         expect(ws.getState().layout).toBe('4');
     });
+
+    it('rename keeps the row order and refuses a name another snapshot owns', () => {
+        const ws = mountWorkspace(PAGE);
+        ws.saveLayout('One');
+        ws.saveLayout('Two');
+        ws.saveLayout('Three');
+
+        expect(ws.renameLayout('Two', 'Deux')).toBe(true);
+        expect(Object.keys(ws.getState().savedLayouts!)).toEqual(['One', 'Deux', 'Three']);
+
+        // Taken / blank / unchanged are refused, and nothing is overwritten.
+        expect(ws.renameLayout('Deux', 'Three')).toBe(false);
+        expect(ws.renameLayout('Deux', '   ')).toBe(false);
+        expect(ws.renameLayout('Deux', 'Deux')).toBe(false);
+        expect(Object.keys(ws.getState().savedLayouts!)).toEqual(['One', 'Deux', 'Three']);
+    });
+
+    it('the active flag follows a rename', () => {
+        const ws = mountWorkspace(PAGE);
+        ws.saveLayout('Live');
+        expect(ws.savedLayoutList()).toEqual([{ name: 'Live', active: true }]);
+        ws.renameLayout('Live', 'Renamed');
+        expect(ws.savedLayoutList()).toEqual([{ name: 'Renamed', active: true }]);
+    });
+
+    it('export → import round-trips the snapshot, suffixing a colliding name', () => {
+        const ws = mountWorkspace(PAGE);
+        ws.saveLayout('Scalp');
+        const json = ws.exportLayout('Scalp')!;
+        expect(JSON.parse(json)).toMatchObject({ app: 'vela', kind: 'layout', version: 1, name: 'Scalp' });
+
+        // Same workspace: the name is taken, so the import lands beside it.
+        expect(ws.importLayout(json)).toBe('Scalp (2)');
+        expect(Object.keys(ws.getState().savedLayouts!)).toEqual(['Scalp', 'Scalp (2)']);
+
+        // A different workspace gets the name back verbatim and the snapshot works.
+        const other = mountWorkspace({ layout: '1', symbol: 'AAA', timeframe: '60', bars: 400, live: false, data: BARS });
+        other.openLayout('nope'); // no-op, not a throw
+        expect(other.importLayout(json)).toBe('Scalp');
+        other.setLayout('1');
+        other.openLayout('Scalp');
+        expect(other.getState().layout).toBe('4');
+        expect(other.getState().charts.find((c) => c.id === 'btc')!.symbol).toBe('BTCUSDT');
+    });
+
+    it('import refuses garbage and a snapshot cannot smuggle in the whole set', () => {
+        const ws = mountWorkspace(PAGE);
+        expect(ws.importLayout('not json')).toBeNull();
+        expect(ws.importLayout('{"hello":1}')).toBeNull();
+        expect(ws.getState().savedLayouts).toBeUndefined();
+
+        ws.saveLayout('A');
+        ws.saveLayout('B');
+        const nested = JSON.stringify({ app: 'vela', kind: 'layout', name: 'C', state: ws.getState() });
+        expect(ws.importLayout(nested)).toBe('C');
+        const doc = ws.getState().savedLayouts as Record<string, { savedLayouts?: unknown }>;
+        expect(doc.C?.savedLayouts).toBeUndefined(); // stripped on the way in
+    });
+
+    it('the picker footer offers rename, export and import', () => {
+        const ws = mountWorkspace(PAGE);
+        ws.saveLayout('Alpha');
+        openPicker(ws);
+        const row = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-saved')].find((r) => r.dataset.layout === 'Alpha')!;
+        const labels = [...row.querySelectorAll<HTMLElement>('button')].map((b) => b.getAttribute('aria-label'));
+        expect(labels).toEqual(['Rename Alpha', 'Export Alpha as JSON', 'Delete Alpha']);
+        expect(ws.root.querySelector('.vela-lp-import')?.textContent).toBe('Import layout file…');
+    });
+
+    it('an inline rename commits on Enter and cancels on Escape', () => {
+        const ws = mountWorkspace(PAGE);
+        ws.saveLayout('Alpha');
+        openPicker(ws);
+        const row = (): HTMLElement => [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-saved')].find((r) => r.dataset.layout !== undefined && r.querySelector('.vela-lp-name, .vela-lp-rename') !== null)!;
+        row().querySelector<HTMLElement>('button[aria-label="Rename Alpha"]')!.click();
+        const input = ws.root.querySelector<HTMLInputElement>('.vela-lp-rename')!;
+        expect(input.value).toBe('Alpha');
+        input.value = 'Beta';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        expect(ws.savedLayoutList().map((l) => l.name)).toEqual(['Beta']);
+
+        row().querySelector<HTMLElement>('button[aria-label="Rename Beta"]')!.click();
+        const again = ws.root.querySelector<HTMLInputElement>('.vela-lp-rename')!;
+        again.value = 'Nope';
+        again.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        expect(ws.savedLayoutList().map((l) => l.name)).toEqual(['Beta']);
+    });
 });
 
 /** A workspace fed by a provider that resolves any ticker (a switch must go through it). */
@@ -504,6 +664,10 @@ describe('asymmetric layouts', () => {
         expect(names.size).toBe(6);
         expect(grid[0]![1]).toBe('c'); // the wide top tile (2 columns)
 
+        // The 16-chart ceiling: our pool holds 16 dormant charts, and the canvas is 4x4.
+        expect(layoutDefinition('16')!.cells).toHaveLength(16);
+        expect(occupancyGrid(layoutDefinition('16')!)).toHaveLength(4);
+        expect(occupancyGrid(layoutDefinition('16')!)[0]).toHaveLength(4);
         expect(layoutDefinition('8h')!.cells).toHaveLength(8);
         expect(occupancyGrid(layoutDefinition('8h')!)[0]).toHaveLength(8); // one row of 8
     });
@@ -702,11 +866,49 @@ describe('hidden charts (the pool)', () => {
         ws.setLayout('1');
         expect(ws.hiddenChartCount).toBe(3);
         openPicker(ws);
-        const row = ws.root.querySelector<HTMLElement>('.vela-lp-pool')!;
-        expect(row.textContent).toBe('Remove 3 hidden charts');
-        row.click();
+        const row = (): HTMLElement => ws.root.querySelector<HTMLElement>('.vela-lp-pool:not(.vela-lp-undo)')!;
+        expect(row().textContent).toBe('Remove 3 hidden charts');
+        row().click(); // arms, does not destroy
+        expect(row().textContent).toBe('Remove 3 hidden charts — click to confirm');
+        row().click();
         expect(ws.hiddenChartCount).toBe(0);
-        expect(ws.root.querySelector('.vela-lp-pool')).toBeNull();
+        expect(ws.root.querySelector('.vela-lp-pool:not(.vela-lp-undo)')).toBeNull();
+    });
+
+    it('removing hidden charts takes two clicks and can be undone', () => {
+        const ws = mountWorkspace(PAGE);
+        ws.setLayout('1');
+        expect(ws.hiddenChartCount).toBe(3);
+        openPicker(ws);
+        const row = (): HTMLElement => ws.root.querySelector<HTMLElement>('.vela-lp-pool:not(.vela-lp-undo)')!;
+
+        row().click(); // arm
+        expect(ws.hiddenChartCount).toBe(3);
+        expect(row().dataset.armed).toBe('1');
+        row().click(); // commit
+        expect(ws.hiddenChartCount).toBe(0);
+        expect(ws.clearedChartCount).toBe(3);
+
+        const undo = ws.root.querySelector<HTMLElement>('.vela-lp-undo')!;
+        expect(undo.textContent).toContain('bring back 3');
+        undo.click();
+        expect(ws.hiddenChartCount).toBe(3);
+        expect(ws.clearedChartCount).toBe(0);
+
+        // The restored state is REAL: growing back brings the old charts, not defaults.
+        ws.setLayout('4');
+        expect(ws.cell('eth')?.symbol).toBe('ETHUSDT');
+    });
+
+    it('an armed removal disarms when the row is rebuilt', () => {
+        const ws = mountWorkspace(PAGE);
+        ws.setLayout('1');
+        openPicker(ws);
+        ws.root.querySelector<HTMLElement>('.vela-lp-pool:not(.vela-lp-undo)')!.click();
+        expect(ws.root.querySelector<HTMLElement>('.vela-lp-pool:not(.vela-lp-undo)')!.dataset.armed).toBe('1');
+        ws.setLayout('4'); // the picker's footer re-reads live state
+        expect(ws.hiddenChartCount).toBe(0);
+        expect(ws.root.querySelector<HTMLElement>('.vela-lp-pool:not(.vela-lp-undo)')).toBeNull();
     });
 
     it('growing back before removal still restores the pooled charts', () => {

@@ -15,6 +15,8 @@ import { announceSurface } from '../ui/surface-events';
 import { holdForExit, type SurfaceExit } from '../ui/surface-exit';
 import { IMPLICIT_GROUP } from '../state/document';
 import { groupMarkColor } from '../workspace/sync-marks';
+import { iconEl } from '../ui/icons';
+import { downloadText } from '../ui/download';
 
 const STYLE_ID = 'vela-widget-layout-picker-v15';
 // One monochrome selection language across the panel: lit cells and sync ON
@@ -174,6 +176,45 @@ const CSS = `
 .vela-lp-saved .vela-lp-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; color: var(--vela-fg-muted); }
 .vela-lp-saved .vela-lp-name:hover { color: var(--vela-fg-bright); }
 .vela-lp-saved .vela-lp-name[data-active='1'] { color: var(--vela-fg-bright); font-weight: 500; }
+.vela-lp-saved .vela-lp-saved-act {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    color: var(--vela-fg-faint);
+    background: transparent;
+}
+.vela-lp-saved .vela-lp-saved-act:hover { color: var(--vela-fg-bright); background: var(--vela-hover-strong); }
+.vela-lp-saved .vela-lp-saved-act .vela-icon { font-size: 13px; width: 13px; height: 13px; }
+.vela-lp-rename {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--vela-hover);
+    border: 1px solid var(--vela-selected-bg);
+    border-radius: 4px;
+    color: var(--vela-fg-bright);
+    font: inherit;
+    font-size: 12px;
+    padding: 3px 6px;
+}
+.vela-lp-rename[data-refused] { border-color: var(--vela-danger); }
+.vela-lp-import {
+    all: unset;
+    display: block;
+    width: 100%;
+    margin-top: 6px;
+    padding: 6px 8px;
+    border-radius: 5px;
+    border: 1px dashed var(--vela-border-soft);
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--vela-fg-muted);
+    text-align: left;
+}
+.vela-lp-import:hover { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); }
 .vela-lp-links { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--vela-fg-faint); }
 .vela-lp-linkdot { all: unset; width: 14px; height: 14px; border-radius: 50%; cursor: pointer; border: 1px solid var(--vela-border-strong); }
 .vela-lp-linkdot[data-tag='none'] { background: transparent; }
@@ -198,6 +239,8 @@ const CSS = `
     cursor: pointer;
 }
 .vela-lp-pool:hover { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); }
+.vela-lp-pool[data-armed='1'] { color: var(--vela-danger); border-color: var(--vela-danger); }
+.vela-lp-undo { color: var(--vela-fg-muted); }
 .vela-lp-linkdot[data-on='1'] { outline: 2px solid var(--vela-fg-bright); outline-offset: 1px; }
 .vela-lp-sync-row { all: unset; display: flex; align-items: center; gap: 14px; padding: 6px 8px; border-radius: 5px; cursor: pointer; }
 .vela-lp-sync-row:hover { background: var(--vela-hover); }
@@ -289,6 +332,8 @@ export interface LayoutPickerOptions {
     charts?: () => Array<{ id: string; label: string; symbol?: string; active: boolean }>;
     /** Make a chart active from the table's column header. */
     onSelectChart?: (cellId: string) => void;
+    /** Pick one group outright (the cell's palette). `null` leaves the group. */
+    onSetCellGroup?: (kind: string, cellId: string, mark: string | null) => void;
     /** Cycle ANY chart through a link's groups — the desktop twin of the phone's chart
      *  row, so a chart does not have to be made active to be marked. */
     onCycleCellGroup?: (kind: string, cellId: string) => void;
@@ -302,10 +347,19 @@ export interface LayoutPickerOptions {
     onSaveLayout?: (name: string) => void;
     onOpenLayout?: (name: string) => void;
     onDeleteLayout?: (name: string) => void;
+    /** Rename in place. Returns false when the name is blank/taken (row keeps its name). */
+    onRenameLayout?: (from: string, to: string) => boolean;
+    /** The snapshot as portable JSON — the picker turns it into a download. */
+    onExportLayout?: (name: string) => string | null;
+    /** Restore a snapshot from a picked file; returns the name it landed under. */
+    onImportLayout?: (json: string) => string | null;
     /** Dormant (pooled) charts — the smaller layouts the workspace has visited. Their
      *  state is kept so the slot restores; the row below offers to drop them. */
     hiddenCharts?: () => number;
     onClearPooled?: () => void;
+    /** How many dormant charts the last clear dropped — 0 hides the Undo row. */
+    clearedCharts?: () => number;
+    onRestorePooled?: () => void;
     /** Tab-link tag (TradingView Desktop's colored tab link): null = unlinked. */
     linkGroup?: () => string | null;
     onLinkGroup?: (tag: string | null) => void;
@@ -325,6 +379,8 @@ export class LayoutPicker {
     private readonly footEl: HTMLElement;
 
     private isOpen = false;
+    /** First click arms the "remove hidden charts" row; the second one commits. */
+    private poolArmed = false;
     /** The card's exit animation after a close; a reopen cancels it. */
     private exit: SurfaceExit | null = null;
     /** Hover preview (1-based rows/cols), null = show current shape. */
@@ -433,9 +489,11 @@ export class LayoutPicker {
         chartsScroll.className = 'vela-lp-chartscroll';
         this.matrix = new SyncMatrix({
             doc,
+            host: opts.host,
             shell: 'desktop',
             ...(opts.onSelectChart ? { onSelectChart: (id: string) => opts.onSelectChart?.(id) } : {}),
             ...(opts.onCycleCellGroup ? { onCycleCellGroup: (kind: string, id: string) => opts.onCycleCellGroup?.(kind, id) } : {}),
+            ...(opts.onSetCellGroup ? { onSetCellGroup: (kind: string, id: string, mark: string | null) => opts.onSetCellGroup?.(kind, id, mark) } : {}),
             ...(opts.onAllInOneGroup ? { onAllInOneGroup: (kind: string) => opts.onAllInOneGroup?.(kind) } : {}),
             onChange: () => this.renderSyncs(),
         });
@@ -486,6 +544,13 @@ export class LayoutPicker {
         else this.open();
     }
 
+    /** Open and bring one chart's column into view — the status-line badge's entry: the
+     *  chart you tapped is already the one you mean. */
+    openFor(cellId?: string): void {
+        this.open();
+        if (cellId) this.matrix?.focus(cellId);
+    }
+
     open(): void {
         if (this.isOpen) return;
         this.isOpen = true;
@@ -506,6 +571,7 @@ export class LayoutPicker {
     close(): void {
         if (!this.isOpen) return;
         this.isOpen = false;
+        this.poolArmed = false; // an armed destructive row never survives a close
         // Still showing — the close bubbles before the layer hides.
         announceSurface(this.panel, false, 'popover', this.opts.trigger);
         this.exit = holdForExit(this.panel, () => {
@@ -664,6 +730,103 @@ export class LayoutPicker {
         }
     }
 
+    /** The row of a named snapshot (`data-layout`), for focus/scroll after an import. */
+    private savedRow(name: string): HTMLElement | null {
+        for (const row of this.footEl.querySelectorAll<HTMLElement>('.vela-lp-saved')) {
+            if (row.dataset.layout === name) return row;
+        }
+        return null;
+    }
+
+    /** One 24×24-ish action button in a saved-layout row (icon carries the label). */
+    private savedAction(icon: string, label: string, run: () => void): HTMLButtonElement {
+        const b = this.doc.createElement('button');
+        b.type = 'button';
+        b.className = 'vela-lp-saved-act';
+        b.title = label;
+        b.setAttribute('aria-label', label);
+        b.appendChild(iconEl(icon, this.doc));
+        b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            run();
+        });
+        return b;
+    }
+
+    /**
+     * Turn the row's label into an input, in place. Enter commits, Escape cancels, blur
+     * commits — the same contract as the Save field, and the row keeps its position so
+     * the eye does not have to re-find it.
+     */
+    private beginRename(row: HTMLElement, label: HTMLElement, from: string): void {
+        const doc = this.doc;
+        const input = doc.createElement('input');
+        input.type = 'text';
+        input.className = 'vela-lp-rename';
+        input.value = from;
+        input.setAttribute('aria-label', `Rename ${from}`);
+        let done = false;
+        // Enter may RETRY a refused name in place; focus loss (blur) only leaves the row
+        // alone — a refused blur must never trap the pointer inside the field.
+        const finish = (allowRetry: boolean): void => {
+            if (done) return;
+            const to = input.value.trim();
+            if (!to || to === from) {
+                done = true;
+                this.renderFooter();
+                return;
+            }
+            const ok = this.opts.onRenameLayout?.(from, to) ?? false;
+            if (ok || !allowRetry) {
+                done = true;
+                this.renderFooter();
+                return;
+            }
+            input.dataset.refused = to;
+            input.title = `“${to}” is already used — pick another name`;
+            input.focus();
+            input.select();
+        };
+        input.addEventListener('keydown', (e) => {
+            e.stopPropagation(); // the panel's Escape must not close the picker mid-edit
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                finish(true);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                done = true;
+                this.renderFooter();
+            }
+        });
+        input.addEventListener('blur', () => finish(false));
+        label.replaceWith(input);
+        input.focus();
+        input.select();
+        row.dataset.editing = '1';
+    }
+
+    /** Open the OS file picker for an imported snapshot (no drag-drop needed). */
+    private pickImportFile(): void {
+        const input = this.doc.createElement('input');
+        input.type = 'file';
+        input.accept = 'application/json,.json,.vela';
+        input.style.display = 'none';
+        input.addEventListener('change', () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            void file.text().then((text) => {
+                const name = this.opts.onImportLayout?.(text) ?? null;
+                if (name) {
+                    this.renderFooter();
+                    this.savedRow(name)?.scrollIntoView({ block: 'nearest' });
+                }
+            });
+            input.remove();
+        });
+        this.doc.body.appendChild(input);
+        input.click();
+    }
+
     /** Saved layouts + the tab link — the card's footer. */
     private renderFooter(): void {
         const doc = this.doc;
@@ -696,40 +859,78 @@ export class LayoutPicker {
             for (const l of saved()) {
                 const row = doc.createElement('div');
                 row.className = 'vela-lp-saved';
+                row.dataset.layout = l.name;
                 const name = doc.createElement('span');
                 name.className = 'vela-lp-name';
                 name.textContent = l.name;
                 name.title = `Open “${l.name}”`;
                 if (l.active) name.dataset.active = '1';
                 name.addEventListener('click', () => this.opts.onOpenLayout?.(l.name));
-                const del = doc.createElement('button');
-                del.type = 'button';
-                del.textContent = '✕';
-                del.title = `Delete “${l.name}”`;
-                del.setAttribute('aria-label', `Delete ${l.name}`);
-                del.addEventListener('click', () => {
+                row.append(name);
+                if (this.opts.onRenameLayout) row.appendChild(this.savedAction('pen', `Rename ${l.name}`, () => {
+                    this.beginRename(row, name, l.name);
+                }));
+                if (this.opts.onExportLayout) row.appendChild(this.savedAction('download', `Export ${l.name} as JSON`, () => {
+                    const json = this.opts.onExportLayout?.(l.name);
+                    if (json) downloadText(this.doc, `${l.name}.vela-layout.json`, json);
+                }));
+                const del = this.savedAction('trash', `Delete ${l.name}`, () => {
                     this.opts.onDeleteLayout?.(l.name);
                     this.renderFooter();
                 });
-                row.append(name, del);
+                row.appendChild(del);
                 this.footEl.appendChild(row);
+            }
+            if (this.opts.onImportLayout) {
+                const imp = doc.createElement('button');
+                imp.type = 'button';
+                imp.className = 'vela-lp-import';
+                imp.textContent = 'Import layout file…';
+                imp.title = 'Restore a layout snapshot from a .json file';
+                imp.setAttribute('aria-label', imp.title);
+                imp.addEventListener('click', () => this.pickImportFile());
+                this.footEl.appendChild(imp);
             }
         }
         if (this.opts.hiddenCharts && this.opts.onClearPooled) {
             const hidden = this.opts.hiddenCharts();
+            if (hidden === 0) this.poolArmed = false;
             if (hidden > 0) {
+                const noun = `hidden chart${hidden === 1 ? '' : 's'}`;
                 const row = doc.createElement('button');
                 row.type = 'button';
                 row.className = 'vela-lp-pool';
-                row.textContent = `Remove ${hidden} hidden chart${hidden === 1 ? '' : 's'}`;
-                row.title = 'Free the charts the smaller layouts left dormant';
+                // Two-step: this throws away state the trader cannot see, so one stray
+                // click must not be enough. Armed ⇒ same row, danger tint, commit.
+                row.textContent = this.poolArmed ? `Remove ${hidden} ${noun} — click to confirm` : `Remove ${hidden} ${noun}`;
+                row.title = this.poolArmed ? 'This forgets their symbols, drawings and indicators' : 'Free the charts the smaller layouts left dormant';
+                if (this.poolArmed) row.dataset.armed = '1';
                 row.setAttribute('aria-label', row.title);
                 row.addEventListener('click', () => {
+                    if (!this.poolArmed) {
+                        this.poolArmed = true;
+                        this.renderFooter();
+                        return;
+                    }
+                    this.poolArmed = false;
                     this.opts.onClearPooled?.();
                     this.renderFooter();
                 });
                 this.footEl.appendChild(row);
             }
+        }
+        if (this.opts.onRestorePooled && (this.opts.clearedCharts?.() ?? 0) > 0) {
+            const count = this.opts.clearedCharts?.() ?? 0;
+            const undo = doc.createElement('button');
+            undo.type = 'button';
+            undo.className = 'vela-lp-pool vela-lp-undo';
+            undo.textContent = `Undo — bring back ${count} hidden chart${count === 1 ? '' : 's'}`;
+            undo.setAttribute('aria-label', undo.textContent);
+            undo.addEventListener('click', () => {
+                this.opts.onRestorePooled?.();
+                this.renderFooter();
+            });
+            this.footEl.appendChild(undo);
         }
         if (this.opts.onLinkGroup) {
             const links = doc.createElement('div');

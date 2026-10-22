@@ -148,9 +148,12 @@ export function timeAxisItems(timezone: string, scope?: { scope: 'cell' | 'all';
 
 /** Chart-body items. The two removals stay VISIBLE with nothing to remove — disabled, so
  *  the menu keeps its shape. */
-export function bodyItems(counts: { drawings: number; indicators: number; multi?: boolean }): MenuItemDescriptor[] {
+export function bodyItems(counts: { drawings: number; indicators: number; multi?: boolean; syncing?: boolean }): MenuItemDescriptor[] {
     return [
         { id: 'reset-view', label: 'Reset chart view', icon: 'reset' },
+        // TradingView's other door into chart syncing: Series context menu → Chart
+        // Syncing. The status-line badge opens the same surface.
+        ...(counts.syncing ? [{ id: 'chart-syncing', label: 'Chart syncing…', icon: 'layout' } as MenuItemDescriptor] : []),
         // TradingView's "Apply to all": one press carries THIS chart's settings (the
         // whole style slice) onto every other chart in the layout.
         ...(counts.multi ? [{ id: 'apply-settings-all', label: 'Apply settings to all charts', icon: 'layout' } as MenuItemDescriptor] : []),
@@ -171,7 +174,7 @@ export function bodyItems(counts: { drawings: number; indicators: number; multi?
 export const CONTEXT_MENU_BUILTIN_ORDER = {
     // `apply-settings-all` carries no rank on purpose: the row only exists on a
     // multi-chart grid, so it takes the default 0 and lands with the other actions.
-    body: { 'reset-view': -30, 'remove-drawings': -20, 'remove-indicators': -10, settings: 1000 },
+    body: { 'reset-view': -30, 'chart-syncing': -25, 'remove-drawings': -20, 'remove-indicators': -10, settings: 1000 },
     'price-axis': {
         auto: -80,
         invert: -70,

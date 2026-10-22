@@ -93,7 +93,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
-    "playground": "vite"
+    "playground": "vite",
+    "test:browser": "node test/browser/run.mjs"
   },
   "devDependencies": {
     "eslint": "^9.0.0",
