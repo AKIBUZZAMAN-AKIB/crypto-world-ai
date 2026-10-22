@@ -519,6 +519,9 @@ export class VelaWorkspace {
     private manifestSettled = false;
     private timezone: string;
     private openDialogs = 0;
+    /** The layout sheet is open (it is a popover, not a dialog, so it does not count in
+     *  `openDialogs` — but it covers the grid a coach mark points at). */
+    private syncSurfaceOpen = false;
     private alerts: Array<{ cellId: string; source: string; title: string; message: string; time: number }> = [];
     /** Bell retention — `alertCap` option, default {@link ALERT_CAP}. */
     private readonly alertCap: number;
@@ -2153,8 +2156,12 @@ export class VelaWorkspace {
     /** The sync surfaces (phone sheet, desktop popover) number the charts while they are
      *  up — a number with nothing to match it against is just noise. */
     private setSyncSurfaceOpen(open: boolean): void {
+        this.syncSurfaceOpen = open;
         if (open) this.root.setAttribute('data-sync-open', '1');
         else this.root.removeAttribute('data-sync-open');
+        // The layout sheet COVERS the badge a coach mark points at: retire it on the way
+        // in (the open itself is the journey the mark was advertising).
+        if (open && this.groupTip) this.dismissGroupTip(true);
     }
 
     /** Per-cell chart subscriptions (trigger ② — the chart instance is stable for the
@@ -3059,10 +3066,10 @@ export class VelaWorkspace {
      */
     private maybeShowGroupTip(): void {
         if (this.destroyed || this.monoLayout || this.cellsById.size < 2) return;
-        // Never while a popover or dialog is open: the card points at a badge INSIDE the
-        // grid, and a coach mark floating over the layout sheet points at nothing. Closing
-        // the last dialog re-arms it (see `trackDialog`).
-        if (this.openDialogs > 0) return;
+        // Never while a popover, dialog or the layout sheet is open: the card points at a
+        // badge INSIDE the grid, and a coach mark floating over the sheet points at
+        // nothing. Closing the last one re-arms it (see `trackDialog`).
+        if (this.openDialogs > 0 || this.syncSurfaceOpen) return;
         if (this.groupTip || this.groupTipTimer != null || this.hasSeenTip('group-badge')) return;
         const first = this.cellsById.get(this.order[0] ?? '') ?? this.cellsById.values().next().value;
         const anchor = first?.groupBadgeAnchor();
@@ -3074,7 +3081,7 @@ export class VelaWorkspace {
         this.groupTipTimer = win.setTimeout(() => {
             this.groupTipTimer = null;
             if (this.destroyed || this.hasSeenTip('group-badge')) return;
-            if (this.openDialogs > 0) return; // a sheet opened while we waited
+            if (this.openDialogs > 0 || this.syncSurfaceOpen) return; // a sheet opened while we waited
             // The badge may have gained a group during the beat — re-check, do not guess.
             if (anchor.hidden || !anchor.hasAttribute('data-empty') || !anchor.isConnected) return;
             this.groupTip = new Tip({

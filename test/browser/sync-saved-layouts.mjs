@@ -49,7 +49,7 @@ try {
 
     // 4. Import the same file back: the taken name gets a suffix, the row appears.
     const chooser = page.waitForEvent('filechooser');
-    await page.evaluate(() => document.querySelector('.vela-lp-import').click());
+    await page.evaluate(() => document.querySelector('.vela-lp-save .vela-lp-importbtn').click());
     const picked = await chooser;
     await picked.setFiles({ name: filename, mimeType: 'application/json', buffer: Buffer.from(json) });
     await page.waitForFunction(() => window.__ws.savedLayoutList().length === 2, null, { timeout: 5000 });

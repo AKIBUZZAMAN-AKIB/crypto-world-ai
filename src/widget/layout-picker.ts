@@ -36,8 +36,11 @@ const STYLE_ID = 'vela-widget-layout-picker-v15';
 const CSS = `
 .vela-lp-layer { position: absolute; z-index: var(--vela-z-menu); }
 .vela-lp {
-    /* Responsive by construction: the popover never grows past the window, and when the
-       three columns cannot share one line the table column wraps under them. */
+    /* Responsive by construction: the popover never grows past the window. It is a COLUMN
+       because it owns the only scrollbar — the table used to scroll inside a scrolling
+       panel, which meant two bars for one gesture and a bar even when everything fit. */
+    display: flex;
+    flex-direction: column;
     max-width: min(900px, calc(100vw - 24px));
     max-height: calc(100vh - 24px);
     overflow: auto;
@@ -56,7 +59,7 @@ const CSS = `
     from { opacity: 0; transform: translateY(-4px) scale(0.98); }
     to { opacity: 1; transform: translateY(0) scale(1); }
 }
-.vela-lp-cols { display: flex; align-items: stretch; gap: 14px; flex-wrap: wrap; }
+.vela-lp-cols { display: flex; align-items: stretch; gap: 14px; flex-wrap: wrap; flex: 0 1 auto; }
 .vela-lp-heading {
     display: flex;
     align-items: center;
@@ -138,18 +141,39 @@ const CSS = `
 .vela-lp-charts[hidden], .vela-lp-vsep[hidden] { display: none !important; }
 .vela-lp-charthint { margin: -4px 0 6px; font-size: 10.5px; line-height: 1.35; color: var(--vela-fg-muted); }
 .vela-lp-chartscroll {
-    overflow-y: auto;
-    overflow-x: hidden;
-    max-height: 286px;
-    margin-right: -6px;
-    padding-right: 6px;
-    overscroll-behavior: contain;
+    /* No cap and no bar of its own: a table is at most one row per LINK (≤ 9), so it is
+       short by construction. The panel scrolls when — and only when — the whole card is
+       taller than the window. */
+    overflow: visible;
 }
 .vela-lp-charts .vela-md-matrix-label,
 .vela-lp-charts .vela-md-matrix-corner { background: var(--vela-surface); }
 /* Full-width row (narrow window): the table keeps a readable width instead of stretching
    four columns across the whole popover. */
 .vela-lp-charts .vela-md-matrixwrap { max-width: 430px; }
+/* Narrow window: the table used to WRAP under the switches at its 430px cap and leave a
+   hundred-odd pixels of empty panel beside it. Two columns instead — the layout grid on
+   the left, switches over table on the right — so the table fills the width it has and
+   the card gets shorter, not just narrower. */
+@media (max-width: 900px) {
+    /* A grid needs a width to divide: without this the card shrinks to its content and the
+       "1fr" table column is whatever the table happens to be. */
+    .vela-lp { width: min(880px, calc(100vw - 24px)); }
+    .vela-lp-cols {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: start;
+        column-gap: 14px;
+        row-gap: 10px;
+    }
+    .vela-lp-layout { grid-column: 1; grid-row: 1 / span 2; }
+    .vela-lp-cols > .vela-lp-vsep { display: none; }
+    .vela-lp-synccol { grid-column: 2; grid-row: 1; max-width: 380px; justify-self: start; width: 100%; }
+    .vela-lp-chartspane { grid-column: 2; grid-row: 2; min-width: 0; }
+    .vela-lp-chartspane > .vela-lp-vsep { display: none; }
+    .vela-lp-charts { width: auto; flex: 1 1 auto; }
+    .vela-lp-charts .vela-md-matrixwrap { max-width: none; }
+}
 /* Preset glyphs: a compact 4-up grid of icon buttons (the canvas cannot draw them). */
 .vela-lp-presets[data-icons='1'] { display: block; max-height: 232px; overflow-y: auto; overflow-x: hidden; margin-right: -4px; padding-right: 4px; }
 .vela-lp-presetcount { margin: 6px 0 2px; font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--vela-fg-muted); opacity: 0.8; }
@@ -263,20 +287,27 @@ const CSS = `
     padding: 3px 6px;
 }
 .vela-lp-rename[data-refused] { border-color: var(--vela-danger); }
-.vela-lp-import {
+/* Import = one action in the row it belongs to (not a dashed bar with its own line). */
+.vela-lp-importbtn {
     all: unset;
-    display: block;
-    width: 100%;
-    margin-top: 6px;
-    padding: 6px 8px;
+    box-sizing: border-box;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    align-self: center;
     border-radius: 5px;
-    border: 1px dashed var(--vela-border-soft);
-    cursor: pointer;
-    font-size: 11px;
+    border: 1px solid var(--vela-border-soft);
     color: var(--vela-fg-muted);
-    text-align: left;
+    cursor: pointer;
+    transition: color var(--vela-dur-fast) var(--vela-ease), border-color var(--vela-dur-fast) var(--vela-ease),
+        background var(--vela-dur-fast) var(--vela-ease);
 }
-.vela-lp-import:hover { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); }
+.vela-lp-importbtn svg { width: 13px; height: 13px; }
+.vela-lp-importbtn:hover { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); background: var(--vela-hover); }
+.vela-lp-importbtn:focus-visible { outline: 2px solid var(--vela-accent, var(--vela-fg-bright)); outline-offset: 1px; }
 .vela-lp-links { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--vela-fg-faint); }
 .vela-lp-linkdot {
     all: unset;
@@ -813,14 +844,9 @@ export class LayoutPicker {
             });
             this.syncEl.appendChild(row);
         }
-        // One line of plain language, the same contract the phone sheet states.
-        if (table) {
-            const hint = doc.createElement('div');
-            hint.className = 'vela-lp-markhint';
-            hint.textContent = 'Same mark, same group · a cell tap moves that chart';
-            this.syncEl.appendChild(hint);
-            this.renderLegend(doc);
-        }
+        // The legend only. The plain-language line lives ONCE, in the table column beside
+        // this one — two sentences starting "Same mark, same group" a row apart is noise.
+        if (table) this.renderLegend(doc);
     }
 
     /** The row of a named snapshot (`data-layout`), for focus/scroll after an import. */
@@ -1056,6 +1082,9 @@ export class LayoutPicker {
         btn.textContent = 'Save';
         btn.addEventListener('click', commit);
         form.append(input, withMarket, btn);
+        if (this.opts.onImportTemplate) {
+            form.appendChild(this.importButton('Import template file…', 'Import a chart template from a .json file', () => this.pickTemplateFile()));
+        }
         this.footEl.appendChild(form);
 
         for (const t of list()) {
@@ -1086,15 +1115,18 @@ export class LayoutPicker {
             }));
             this.footEl.appendChild(row);
         }
-        if (this.opts.onImportTemplate) {
-            const imp = doc.createElement('button');
-            imp.type = 'button';
-            imp.className = 'vela-lp-import';
-            imp.textContent = 'Import template file…';
-            imp.setAttribute('aria-label', 'Import a chart template from a .json file');
-            imp.addEventListener('click', () => this.pickTemplateFile());
-            this.footEl.appendChild(imp);
-        }
+    }
+
+    /** A file-import action: one icon in the row that owns it (label in title + aria). */
+    private importButton(label: string, title: string, run: () => void): HTMLButtonElement {
+        const b = this.doc.createElement('button');
+        b.type = 'button';
+        b.className = 'vela-lp-importbtn';
+        b.title = title;
+        b.setAttribute('aria-label', label);
+        b.appendChild(iconEl('upload', this.doc));
+        b.addEventListener('click', run);
+        return b;
     }
 
     /** The template file picker — same contract as the layout importer. */
@@ -1148,6 +1180,14 @@ export class LayoutPicker {
                 e.stopPropagation(); // the panel's Escape/typing must not reach the shell
             });
             form.append(input, save);
+            // Import sits HERE, as a trailing action of the same row, instead of a
+            // full-width dashed row of its own: restoring a snapshot and saving one are
+            // the same gesture from the user's side, and the panel gains 70px of height
+            // it was spending on two empty bars.
+            if (this.opts.onImportLayout) {
+                const imp = this.importButton('Import layout file…', 'Restore a layout snapshot from a .json file', () => this.pickImportFile());
+                form.appendChild(imp);
+            }
             this.footEl.appendChild(form);
             for (const l of saved()) {
                 const row = doc.createElement('div');
@@ -1197,16 +1237,6 @@ export class LayoutPicker {
                 });
                 row.appendChild(del);
                 this.footEl.appendChild(row);
-            }
-            if (this.opts.onImportLayout) {
-                const imp = doc.createElement('button');
-                imp.type = 'button';
-                imp.className = 'vela-lp-import';
-                imp.textContent = 'Import layout file…';
-                imp.title = 'Restore a layout snapshot from a .json file';
-                imp.setAttribute('aria-label', imp.title);
-                imp.addEventListener('click', () => this.pickImportFile());
-                this.footEl.appendChild(imp);
             }
         }
         this.renderTemplates(doc);

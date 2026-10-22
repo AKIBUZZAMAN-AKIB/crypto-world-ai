@@ -549,7 +549,9 @@ describe('named layouts', () => {
         const row = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-saved')].find((r) => r.dataset.layout === 'Alpha')!;
         const labels = [...row.querySelectorAll<HTMLElement>('button')].map((b) => b.getAttribute('aria-label'));
         expect(labels).toEqual(['Rename Alpha', 'Export Alpha as JSON', 'Delete Alpha']);
-        expect(ws.root.querySelector('.vela-lp-import')?.textContent).toBe('Import layout file…');
+        // The importer is a compact action in the Save-layout row (it used to be a
+        // full-width dashed bar of its own, which cost the panel a whole line).
+        expect(ws.root.querySelector('.vela-lp-save .vela-lp-importbtn')?.getAttribute('aria-label')).toBe('Import layout file…');
     });
 
     it('an inline rename commits on Enter and cancels on Escape', () => {

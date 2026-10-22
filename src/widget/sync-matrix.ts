@@ -58,10 +58,14 @@ export const SYNC_MATRIX_CSS = `
 
 /* ── the table ─────────────────────────────────────────────────────────────── */
 .vela-md-matrixwrap {
-    --vela-sx-cell: 34px;
-    --vela-sx-cell-max: 64px;
-    --vela-sx-label: 78px;
-    --vela-sx-all: 44px;
+    /* A 30px row is a dense table, not a toy: a chip is a STATE ("this chart is in the
+       red group"), and a chip twice the glyph's height is a billboard. The desktop cell
+       stays comfortably over the WCAG 2.2 AA floor (24px); the coarse-pointer block at
+       the bottom of this sheet puts the finger-sized 44px back. */
+    --vela-sx-cell: 30px;
+    --vela-sx-cell-max: 52px;
+    --vela-sx-label: 74px;
+    --vela-sx-all: 40px;
     margin: 0 -2px;
     padding: 0 2px 4px;
     overflow-x: auto;
