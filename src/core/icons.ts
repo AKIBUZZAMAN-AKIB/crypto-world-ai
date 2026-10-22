@@ -135,6 +135,14 @@ registerIcon('chevrons-right', S('<path d="m4 3.5 4.5 4.5L4 12.5"/><path d="m8.5
 registerIcon('chevrons-left', S('<path d="M12 3.5 7.5 8l4.5 4.5"/><path d="M7.5 3.5 3 8l4.5 4.5"/>'));
 // Bar replay: two left-pointing triangles.
 registerIcon('replay', S('<path d="M14 4.2v7.6L8.6 8z"/><path d="M7.4 4.2v7.6L2 8z"/>'));
+// Transport controls for the bar-replay toolbar. Filled shapes, not strokes: at 13–14px
+// a stroked triangle closes up into a blob, while a solid glyph keeps its shape.
+registerIcon('play', S('<path d="M5.2 3.1 12.6 8l-7.4 4.9z" fill="currentColor" stroke="none"/>'));
+registerIcon('pause', S('<path d="M5.4 3.2h1.9v9.6H5.4zM8.7 3.2h1.9v9.6H8.7z" fill="currentColor" stroke="none"/>'));
+registerIcon('step-forward', S('<path d="M4 3.4 10.1 8 4 12.6z" fill="currentColor" stroke="none"/><path d="M11.6 3.2v9.6"/>'));
+// "Jump to real time": two chevrons into a wall — the replay session's exit ramp.
+registerIcon('jump-realtime', S('<path d="m2.6 4.2 4 3.8-4 3.8M8.2 4.2l4 3.8-4 3.8"/><path d="M13.4 3.4v9.2"/>'));
+
 registerIcon('check', S('<path d="m2.8 8.4 3.4 3.4 7-7.6"/>'));
 registerIcon('close', S('<path d="m3.8 3.8 8.4 8.4M12.2 3.8l-8.4 8.4"/>'));
 // A pushpin — outline while something floats (press to pin it), filled once pinned.

@@ -68,13 +68,89 @@ function slots(n: number): Array<{ id: string }> {
     return Array.from({ length: n }, (_, i) => ({ id: `c${i + 1}` }));
 }
 
-/** Register the built-in presets (idempotent — called by the workspace entry point). */
+/** Slots bound to named grid areas (`c1`…`cN` in the order given). */
+function areaSlots(areas: readonly string[]): Array<{ id: string; area: string }> {
+    return areas.map((area, i) => ({ id: `c${i + 1}`, area }));
+}
+
+/** Register the built-in presets (idempotent — called by the workspace entry point).
+ *
+ *  The five uniform presets came first; the ASYMMETRIC ones below are the shapes a
+ *  four-chart trader actually wants and the canvas cannot express (a canvas square is
+ *  either lit or not — it has no notion of a tall main chart). They ride the same
+ *  `areas` machinery plugin layouts use, so nothing downstream changed: the glyph,
+ *  the splitters' seam segments and the maximize overlay all read `occupancyGrid`. */
 export function registerBuiltinLayouts(): void {
     registerLayout({ id: '1', label: 'Single', cols: [1], rows: [1], cells: slots(1) });
     registerLayout({ id: '2h', label: '2 side by side', cols: [1, 1], rows: [1], cells: slots(2) });
     registerLayout({ id: '2v', label: '2 stacked', cols: [1], rows: [1, 1], cells: slots(2) });
     registerLayout({ id: '4', label: '4 grid', cols: [1, 1], rows: [1, 1], cells: slots(4) });
     registerLayout({ id: '8', label: '8 grid', cols: [1, 1, 1, 1], rows: [1, 1], cells: slots(8) });
+
+    // ── asymmetric presets (TradingView's 1-2 / 2-1 / 1-3 / 3-1 / 2-3 / 3-2 / 4s family) ──
+    registerLayout({ id: '1-2', label: 'Main + 2 below', cols: [1, 1], rows: [1.4, 1], areas: ['a a', 'b c'], cells: areaSlots(['a', 'b', 'c']) });
+    registerLayout({ id: '2-1', label: '2 above + main', cols: [1, 1], rows: [1, 1.4], areas: ['a b', 'c c'], cells: areaSlots(['a', 'b', 'c']) });
+    registerLayout({ id: '1-3', label: 'Main + 3 below', cols: [1, 1, 1], rows: [1.4, 1], areas: ['a a a', 'b c d'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    registerLayout({ id: '3-1', label: '3 above + main', cols: [1, 1, 1], rows: [1, 1.4], areas: ['a b c', 'd d d'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    registerLayout({ id: '2-3', label: '2 above + 3 below', cols: [1, 1, 1, 1, 1, 1], rows: [1, 1.2], areas: ['a a a b b b', 'c c d d e e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    registerLayout({ id: '3-2', label: '3 above + 2 below', cols: [1, 1, 1, 1, 1, 1], rows: [1.2, 1], areas: ['a a b b c c', 'd d d e e e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    registerLayout({ id: '4s', label: 'Main left + 3', cols: [2, 1], rows: [1, 1, 1], areas: ['a b', 'a c', 'a d'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    registerLayout({ id: '4s-r', label: 'Main right + 3', cols: [1, 2], rows: [1, 1, 1], areas: ['a b', 'c b', 'd b'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    // TradingView spells the main-on-the-left family `4s-l`; both ids stay registered so a
+    // share link written against either name opens.
+    registerLayout({ id: '4s-l', label: 'Main left + 3 (4s-l)', cols: [2, 1], rows: [1, 1, 1], areas: ['a b', 'a c', 'a d'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    // 6-c: six charts around a big centre (TV's `6c`).
+    registerLayout({
+        id: '6c',
+        label: '6 around a centre',
+        cols: [1, 1, 1, 1],
+        rows: [1, 1, 1],
+        areas: ['b c c d', 'b a a d', 'e a a f'],
+        cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f']),
+    });
+    // 8-h: eight charts in one horizontal row (TV's `8h`; `8` is the 4×2 grid).
+    registerLayout({ id: '8h', label: '8 across', cols: [1, 1, 1, 1, 1, 1, 1, 1], rows: [1], cells: slots(8) });
+
+    // ── the rest of TradingView's layout vocabulary ──────────────────────────────
+    // Ids match TradingView's `MultipleChartsLayoutType` names so a layout id copied
+    // from their UI opens here. The SHAPES are Vela's reading of each name (their exact
+    // proportions are not public); every one is a real grid, not an alias.
+    //
+    // 3 charts: rows, columns, and the two "main + 2" shapes.
+    registerLayout({ id: '3h', label: '3 across', cols: [1, 1, 1], rows: [1], cells: slots(3) });
+    registerLayout({ id: '3v', label: '3 stacked', cols: [1], rows: [1, 1, 1], cells: slots(3) });
+    registerLayout({ id: '3s', label: 'Main left + 2', cols: [2, 1], rows: [1, 1], areas: ['a b', 'a c'], cells: areaSlots(['a', 'b', 'c']) });
+    registerLayout({ id: '3r', label: 'Main right + 2', cols: [1, 2], rows: [1, 1], areas: ['a b', 'c b'], cells: areaSlots(['a', 'b', 'c']) });
+    // 4 charts, unweighted rows/columns and the left/right-weighted 2+2 variants.
+    registerLayout({ id: '4h', label: '4 across', cols: [1, 1, 1, 1], rows: [1], cells: slots(4) });
+    registerLayout({ id: '4v', label: '4 stacked', cols: [1], rows: [1, 1, 1, 1], cells: slots(4) });
+    registerLayout({ id: '2-2', label: '2 above + 2 below', cols: [1, 1], rows: [1, 1], areas: ['a b', 'c d'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    registerLayout({ id: '2-2-l', label: '2 above + 2 below (left wide)', cols: [2, 1], rows: [1, 1], areas: ['a b', 'c d'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    registerLayout({ id: '2-2-r', label: '2 above + 2 below (right wide)', cols: [1, 2], rows: [1, 1], areas: ['a b', 'c d'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    // 5 charts: 1 above + 4 below, 4 above + 1 below, and the two "main + 4" shapes.
+    registerLayout({ id: '1-4', label: 'Main above + 4', cols: [1, 1, 1, 1], rows: [1.4, 1], areas: ['a a a a', 'b c d e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    registerLayout({ id: '4-1', label: '4 above + main below', cols: [1, 1, 1, 1], rows: [1, 1.4], areas: ['a b c d', 'e e e e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    registerLayout({ id: '5h', label: '5 across', cols: [1, 1, 1, 1, 1], rows: [1], cells: slots(5) });
+    registerLayout({ id: '5v', label: '5 stacked', cols: [1], rows: [1, 1, 1, 1, 1], cells: slots(5) });
+    registerLayout({ id: '5s', label: 'Main above + 4 (wide)', cols: [1, 1, 1, 1], rows: [1.6, 1], areas: ['a a a a', 'b c d e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    registerLayout({ id: '5s-l', label: 'Main left + 4', cols: [2, 1], rows: [1, 1, 1, 1], areas: ['a b', 'a c', 'a d', 'a e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    // 5 charts, 2+3 with the weights on each side.
+    registerLayout({ id: '2-3-l', label: '2 above + 3 below (left wide)', cols: [1, 1, 1, 1, 1], rows: [1, 1.2], areas: ['a a a b b', 'c c d e e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    registerLayout({ id: '2-3-r', label: '2 above + 3 below (right wide)', cols: [1, 1, 1, 1, 1], rows: [1, 1.2], areas: ['a a b b b', 'c c d e e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    // 6 charts: 3×2, a row, a column, and the big-centre shape.
+    registerLayout({ id: '6', label: '6 grid', cols: [1, 1, 1], rows: [1, 1], cells: slots(6) });
+    registerLayout({ id: '6h', label: '6 across', cols: [1, 1, 1, 1, 1, 1], rows: [1], cells: slots(6) });
+    registerLayout({ id: '6v', label: '6 stacked', cols: [1], rows: [1, 1, 1, 1, 1, 1], cells: slots(6) });
+    // 7 charts: a row, and main + 6 in a column.
+    registerLayout({ id: '7h', label: '7 across', cols: [1, 1, 1, 1, 1, 1, 1], rows: [1], cells: slots(7) });
+    registerLayout({ id: '7s', label: 'Main left + 6', cols: [2, 1], rows: [1, 1, 1, 1, 1, 1], areas: ['a b', 'a c', 'a d', 'a e', 'a f', 'a g'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f', 'g']) });
+    // 6/8-chart asymmetric splits.
+    registerLayout({ id: '2-4', label: '2 above + 4 below', cols: [1, 1, 1, 1], rows: [1, 1.2], areas: ['a a b b', 'c d e f'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f']) });
+    registerLayout({ id: '4-2', label: '4 above + 2 below', cols: [1, 1, 1, 1], rows: [1.2, 1], areas: ['a b c d', 'e e f f'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f']) });
+    registerLayout({ id: '4-3', label: '4 above + 3 below', cols: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], rows: [1, 1], areas: ['a a a b b b c c c d d d', 'e e e e f f f f g g g g'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f', 'g']) });
+    // 8 charts: a column, and the big-centre shape.
+    registerLayout({ id: '8v', label: '8 stacked', cols: [1], rows: [1, 1, 1, 1, 1, 1, 1, 1], cells: slots(8) });
+    registerLayout({ id: '8c', label: '8 around a centre', cols: [1, 1, 1, 1], rows: [1, 1, 1], areas: ['b c c d', 'e a a f', 'g a a h'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) });
 }
 
 // ── dynamic layouts (the topbar's grid picker) ──────────────────────────────

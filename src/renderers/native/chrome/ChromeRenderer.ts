@@ -277,7 +277,11 @@ export class ChromeRenderer {
         if (!scene.showAxisLabels) return;
         ctx.fillStyle = this.axisTextColor;
         ctx.textAlign = 'left';
-        const font = `${scene.style.fontSize}px ${theme.fontFamily}`;
+        // A phone cell's column is 34px wide: the labels step down two sizes and hug the
+        // border, or an 84.4K would be clipped by the canvas edge.
+        const axisSize = scene.priceCompact ? Math.max(8, scene.style.fontSize - 2) : scene.style.fontSize;
+        const inset = scene.priceCompact ? 3 : 6;
+        const font = `${axisSize}px ${theme.fontFamily}`;
         const majorFont = `600 ${font}`;
         const alpha = ctx.globalAlpha;
         for (const pane of panes) {
@@ -287,7 +291,7 @@ export class ChromeRenderer {
                 if (y < pane.bounds.top + 6 || y > pane.bounds.top + pane.bounds.height - 4) continue;
                 if (t.major === true) ctx.font = majorFont;
                 else if (t.major === false) ctx.globalAlpha = alpha * MINOR_LABEL_ALPHA;
-                ctx.fillText(t.label, dataW + 6, y);
+                ctx.fillText(t.label, dataW + inset, y);
                 if (t.major === true) ctx.font = font;
                 else if (t.major === false) ctx.globalAlpha = alpha;
             }
@@ -297,7 +301,7 @@ export class ChromeRenderer {
                 for (const b of pane.axisBands) {
                     const y = pane.bounds.top + b.frac * pane.bounds.height;
                     if (y < pane.bounds.top + 6 || y > pane.bounds.top + pane.bounds.height - 4) continue;
-                    ctx.fillText(b.label, dataW + 6, y);
+                    ctx.fillText(b.label, dataW + inset, y);
                 }
             }
         }
@@ -338,10 +342,10 @@ export class ChromeRenderer {
                 const sc = scene.indicatorScales.get(model.id)?.scale;
                 if (!sc) return;
                 const x = axisColumnX(dataW, k + 1); // column 0 is the master scale
-                for (const t of paneAxisTicks(sc, pane.bounds.height, undefined, scene.priceMintick)) {
+                for (const t of paneAxisTicks(sc, pane.bounds.height, undefined, scene.priceMintick, undefined, scene.priceCompact)) {
                     const y = coords.priceToY(t.price, sc, pane.bounds);
                     if (y < pane.bounds.top + 6 || y > pane.bounds.top + pane.bounds.height - 4) continue;
-                    ctx.fillText(t.label, x + 5, y);
+                    ctx.fillText(t.label, x + (scene.priceCompact ? 3 : 5), y);
                 }
             });
         }
@@ -383,14 +387,29 @@ export class ChromeRenderer {
         }
 
         // ── axis chips: last-price label and/or countdown ──
-        const cdText = scene.showCountdown ? countdownText(last.time, coords.barInterval, Date.now()) : null;
+        // A narrow column shows the PRICE only: the two-row label+countdown block is
+        // wider than the whole gutter, and a clipped "45:5…" reads worse than nothing.
+        const cdText = scene.showCountdown && !scene.priceCompact ? countdownText(last.time, coords.barInterval, Date.now()) : null;
         const showCountdown = cdText !== null;
         const showLabel = scene.showPriceLabel;
         if (!showLabel && !showCountdown) return;
 
-        const priceText = formatAxisValue(pricePane.scale, pricePane.bounds.height, last.close, percentScaleFor(scene, pricePane), scene.priceMintick);
-        const PAD = 8;
+        const priceText = formatAxisValue(pricePane.scale, pricePane.bounds.height, last.close, percentScaleFor(scene, pricePane), scene.priceMintick, pricePane.axisFormat, scene.priceCompact);
+        const PAD = scene.priceCompact ? 4 : 8;
         const x = dataW + 1;
+        // The chip may not spill into the next cell: on a narrow column it is clipped to
+        // its own gutter (text is shortened by `priceCompact` first, so the clip is a
+        // belt-and-braces for a long price like 123.45678).
+        const fullW = (this.canvas?.width ?? 0) / coords.dpr;
+        const fullH = (this.canvas?.height ?? 0) / coords.dpr;
+        const chipMaxW = Math.max(12, fullW - x);
+        const clipChip = (w: number): void => {
+            if (!scene.priceCompact) return;
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(x, 0, Math.min(w, chipMaxW), fullH);
+            ctx.clip();
+        };
         // Text color chosen for contrast against the chip's own color (so a white candle
         // color yields dark text, a dark color yields light text).
         const textColor = tagTextColor(color, theme.background);
@@ -406,9 +425,11 @@ export class ChromeRenderer {
             ctx.fillRect(x, top, w, 32);
             ctx.fillStyle = textColor;
             ctx.textAlign = 'left';
+            clipChip(w);
             ctx.fillText(priceText, tx, top + 8);
             ctx.fillText(cdText, tx, top + 24);
             ctx.textAlign = 'start';
+            if (scene.priceCompact) ctx.restore();
             return;
         }
 
@@ -419,8 +440,10 @@ export class ChromeRenderer {
         ctx.fillRect(x, y - 8, w, 16);
         ctx.fillStyle = textColor;
         ctx.textAlign = 'center';
+        clipChip(w);
         ctx.fillText(text, x + w / 2, y);
         ctx.textAlign = 'start';
+        if (scene.priceCompact) ctx.restore();
     }
 
     /**

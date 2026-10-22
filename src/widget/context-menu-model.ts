@@ -129,22 +129,31 @@ export function priceAxisItems(s: PriceAxisState): MenuItemDescriptor[] {
 }
 
 /** `timezone` is the host's STORED choice — an IANA zone, or the exchange rule. */
-export function timeAxisItems(timezone: string): MenuItemDescriptor[] {
+export function timeAxisItems(timezone: string, scope?: { scope: 'cell' | 'all'; scoped: boolean }): MenuItemDescriptor[] {
+    const rows: MenuItemDescriptor[] = [];
+    // TradingView's model: the zone belongs to the CHART. The scope row makes the
+    // workspace-wide write an explicit choice instead of the only behaviour.
+    if (scope?.scoped) {
+        rows.push(
+            { id: 'tzscope:cell', label: 'This chart only', checked: scope.scope === 'cell' },
+            { id: 'tzscope:all', label: 'All charts', checked: scope.scope === 'all' },
+        );
+    }
+    rows.push(...timezoneMenuRows(timezone).map((r) => ({ id: `tz:${r.value}`, label: r.label, checked: r.checked, separatorBefore: rows.length === 0 && r === timezoneMenuRows(timezone)[0] })));
     return [
-        {
-            id: 'timezone',
-            label: 'Time zone',
-            submenu: timezoneMenuRows(timezone).map((r) => ({ id: `tz:${r.value}`, label: r.label, checked: r.checked })),
-        },
+        { id: 'timezone', label: 'Time zone', submenu: rows },
         settingsItem('time-axis', 'More settings…'),
     ];
 }
 
 /** Chart-body items. The two removals stay VISIBLE with nothing to remove — disabled, so
  *  the menu keeps its shape. */
-export function bodyItems(counts: { drawings: number; indicators: number }): MenuItemDescriptor[] {
+export function bodyItems(counts: { drawings: number; indicators: number; multi?: boolean }): MenuItemDescriptor[] {
     return [
         { id: 'reset-view', label: 'Reset chart view', icon: 'reset' },
+        // TradingView's "Apply to all": one press carries THIS chart's settings (the
+        // whole style slice) onto every other chart in the layout.
+        ...(counts.multi ? [{ id: 'apply-settings-all', label: 'Apply settings to all charts', icon: 'layout' } as MenuItemDescriptor] : []),
         { id: 'remove-drawings', label: 'Remove drawings', icon: 'eraser', disabled: counts.drawings === 0, separatorBefore: true },
         { id: 'remove-indicators', label: 'Remove indicators', icon: 'indicators', disabled: counts.indicators === 0 },
         settingsItem('body', 'Settings…', 'gear'),
@@ -160,6 +169,8 @@ export function bodyItems(counts: { drawings: number; indicators: number }): Men
  * settings row, and `order: -100` leads the menu.
  */
 export const CONTEXT_MENU_BUILTIN_ORDER = {
+    // `apply-settings-all` carries no rank on purpose: the row only exists on a
+    // multi-chart grid, so it takes the default 0 and lands with the other actions.
     body: { 'reset-view': -30, 'remove-drawings': -20, 'remove-indicators': -10, settings: 1000 },
     'price-axis': {
         auto: -80,

@@ -17,8 +17,12 @@ import { MultiProviderFeed } from '../data/MultiProviderFeed';
 import { sharedBarStore } from '../data/BarStore';
 import { ensureUIHost, injectStyles, registerIcon, svg16 } from '../ui';
 import { isEditableTarget, KeymapManager } from '../ui/keymap';
-import { Menu } from '../ui/components/menu';
+import { Menu, type MenuItemDescriptor } from '../ui/components/menu';
+import { Popover } from '../ui/components/popover';
+import { DatePicker, isoDate } from '../ui/components/date-picker';
+import { ReplayToolbar, REPLAY_CALENDAR_CLASS, REPLAY_DEFAULT_SPEED } from '../widget/replay-toolbar';
 import type { Vela } from '../Vela';
+import { joinWorkspaceLink } from './link';
 import { Topbar, priceStyleLabel, priceStyleIcon } from '../widget/topbar';
 import { Bottombar, RANGE_PRESETS } from '../widget/bottombar';
 import { SecondClock } from '../core/util/wall-clock';
@@ -53,12 +57,39 @@ import { timeframeToMs } from '../data/timeframe';
 import { timeframeLabel } from '../widget/timeframe';
 import { registerBuiltinChartTypes } from '../chart-types/builtins';
 import { parseSymbol } from '../data/ProviderRegistry';
-import { syncTargets, rangesWithin, styleConfigPatch, SYNC_KINDS, type SyncKind, type SyncOptions, type SyncSetting } from './sync';
-import { encodeState, decodeState, sanitizeState, type DrawingToolsState, type WorkspaceState, type WorkspaceStorage } from './persist';
+import {
+    alignedRangeAround,
+    groupOf,
+    groupSetting,
+    rangesWithin,
+    nextGroupMark,
+    styleConfigPatch,
+    syncEnabled,
+    syncGroups,
+    syncTargets,
+    SYNC_KINDS,
+    type SyncKind,
+    type SyncOptions,
+    type SyncSetting,
+} from './sync';
+import { encodeState, decodeState, sanitizeState, type CellState, type DrawingToolsState, type WorkspaceState, type WorkspaceStorage } from './persist';
 import { localStorageAdapter } from '../widget/persist';
+
+/** The links in TradingView's reading order — the picker's rows and the badge's order. */
+const SYNC_ROW_ORDER: ReadonlyArray<readonly [SyncKind, string]> = [
+    ['viewport', 'Date range'],
+    ['time', 'Time'],
+    ['symbol', 'Symbol'],
+    ['timeframe', 'Interval'],
+    ['crosshair', 'Crosshair'],
+    ['drawings', 'Drawings'],
+    ['style', 'Style'],
+];
+/** The same labels as a lookup, for the status-line badge's tooltip. */
+const KIND_LABEL = Object.fromEntries(SYNC_ROW_ORDER) as Record<SyncKind, string>;
 import { ChartCell, seedDefaults, cellChartDefaults, type CellSeed, type CellBoot, type PooledCellState } from './ChartCell';
 import { buildContext, type WorkspaceWidgetContext } from './context';
-import { WorkspaceReplay } from './WorkspaceReplay';
+import { WorkspaceReplay, lastOpenClosedBy } from './WorkspaceReplay';
 import {
     registerBuiltinLayouts,
     layouts,
@@ -122,6 +153,27 @@ export interface VelaWorkspaceOptions extends Omit<VelaOptions, 'height'>, VelaS
     maxWebglCells?: number;
     /** How many alerts the topbar bell keeps (the oldest drop beyond it). Default 50. */
     alertCap?: number;
+    /** New charts inherit the FIRST chart's live indicator set (TradingView's rule) —
+     *  add a chart to a grid whose leader carries SMA + RSI and it arrives with both.
+     *  Chart settings stay per cell. Default true; a pooled cell always keeps its own. */
+    inheritIndicators?: boolean;
+    /**
+     * What a drawing belongs to. `'layout'` (default) keeps today's model: the cell owns
+     * its drawings and the `drawings` link mirrors them onto same-group cells. `'global'`
+     * makes them belong to the SYMBOL (TradingView's global scope): switching a chart's
+     * symbol parks the drawings under the old symbol and restores the new one's, and the
+     * store survives layout switches and reloads.
+     */
+    drawingsScope?: 'layout' | 'global';
+    /** The `drawings` link follows only charts on the SAME symbol — TradingView's rule
+     *  (a BTC trend line has no meaning on an ETH chart). Default true. */
+    drawingsSameSymbol?: boolean;
+    /** The bar-replay CHROME: the topbar's `'replay'` slot, the floating transport bar
+     *  (play/pause, step, speed, jump-to-real-time, exit), the entry menu (select bar /
+     *  select date / random bar) and the `Shift+↓` / `Shift+→` chords. Default true.
+     *  `false` removes only the chrome — `ws.replay` and `ctx.replay` stay whole, so a
+     *  host that drives replay from its own controls loses nothing. */
+    replay?: boolean;
 }
 
 /** A cell's {@link ScriptRun}, tagged with the cell it ran in. */
@@ -161,6 +213,9 @@ const GAP_PX = 2; // grid gap — the visible seam between cells (splitter strip
 const POOL_CAP = 16; // dormant slot states kept across layout shrinks
 const TIME_AXIS_H = 22; // px the renderer reserves for a time axis (mirrors NativeRenderer's)
 const ALERT_CAP = 50;
+/** Fraction of the visible width "jump to real time" pans — many screens wide, so the
+ *  renderer's own pan limit (the bounded whitespace past the newest bar) lands it. */
+const REPLAY_JUMP_PANS = 8;
 
 const STYLE_ID = 'vela-workspace';
 const CSS = `
@@ -269,6 +324,19 @@ export class VelaWorkspace {
     readonly keymap: KeymapManager;
     /** Bar replay across every cell on one clock (see {@link WorkspaceReplay}). */
     readonly replay: WorkspaceReplay;
+    /** The floating replay transport bar (`null` when `replay: false`). */
+    private replayBar: ReplayToolbar | null = null;
+    /** The pace a PAUSED session resumes on — the core keeps `intervalMs` only on a live
+     *  session, and picking a speed while paused must not start playback. */
+    private replaySpeed = REPLAY_DEFAULT_SPEED;
+    /** "Select bar" is armed: the next click on any plot starts the session there. */
+    private replayArmed = false;
+    /** Teardown for the armed state's listeners (cell clicks, crosshair previews, Esc). */
+    private replayArmOffs: Array<() => void> = [];
+    private replayMenu: Menu | null = null;
+    private replayDatePop: Popover | null = null;
+    /** A drawer Replay tap waiting for the sheet to finish closing (see the opener). */
+    private pendingReplayAnchor: HTMLElement | null = null;
 
     private readonly gridEl: HTMLElement;
     private readonly stripsEl: HTMLElement;
@@ -338,6 +406,34 @@ export class VelaWorkspace {
     private tfFavs: string[] = [];
     /** Live sync configuration (mutable copy of the option). */
     private readonly syncOpts: SyncOptions = {};
+    /** New-cell indicator inheritance (see {@link VelaWorkspaceOptions.inheritIndicators}). */
+    private readonly inheritIndicators: boolean;
+    /** Drawings belong to the symbol (see {@link VelaWorkspaceOptions.drawingsScope}). */
+    private drawingsScope: 'layout' | 'global';
+    /** The drawings link never crosses symbols (see {@link VelaWorkspaceOptions.drawingsSameSymbol}). */
+    private readonly drawingsSameSymbol: boolean;
+    /** The symbol-keyed drawing store the `'global'` scope maintains. */
+    private drawingsBySymbol: Record<string, unknown> = {};
+    /** Named workspace snapshots ("Save layout as…"), by name. */
+    private readonly savedLayouts = new Map<string, WorkspaceState>();
+    /** Tab-link tag (TradingView Desktop's colored tab link); null = unlinked. */
+    private linkGroup: string | null = null;
+    /** The tab-link transport (same page synchronously, other tabs via BroadcastChannel). */
+    private readonly link = joinWorkspaceLink((m) => this.applyLinked(m));
+    /** Inside a peer's linked write: our own market echo must not broadcast again. */
+    private linkApplying = false;
+    /**
+     * The market a peer just handed us. `market:changed` and `viewport:changed` land
+     * ASYNCHRONOUSLY (after the new bars paint), long after {@link linkApplying} has
+     * dropped — so the echo is matched on its CONTENT here and never travels back. Without
+     * this, two linked tabs trade the same envelope forever (each side's stale echo
+     * overwriting the other's newest market).
+     */
+    private linkInbox: { symbol?: string; timeframe?: string; range?: { from: number; to: number } } | null = null;
+    /** The saved snapshot opened (or written) last — the picker's active row. */
+    private activeSavedLayout: string | null = null;
+    /** Inside a click-driven time alignment: viewport echoes are the controller's own. */
+    private timeBusy = false;
     // ── persistence (state surface + adapter plumbing) ──
     private readonly persistKey: string | null;
     private readonly storage: WorkspaceStorage;
@@ -388,6 +484,8 @@ export class VelaWorkspace {
     /** Writes `data-layout` on the root and pushes mode flips into every cell's renderer. */
     private layoutCtl!: LayoutModeController;
     private readonly mobileBar: MobileBar | null;
+    /** Replay scope the entry menu holds ("Replay all charts"). */
+    private replayScope: 'all' | 'cell' = 'all';
     private readonly drawingPill: DrawingPill | null;
     private tfDrawer: TimeframeDrawer | null = null;
     private drawingsDrawer: DrawingsDrawer | null = null;
@@ -418,6 +516,9 @@ export class VelaWorkspace {
         const hostEl = typeof container === 'string' ? document.querySelector<HTMLElement>(container) : container;
         if (!hostEl) throw new Error(`VelaWorkspace: container not found: ${String(container)}`);
         this.opts = opts;
+        this.inheritIndicators = opts.inheritIndicators !== false;
+        this.drawingsScope = opts.drawingsScope ?? 'layout';
+        this.drawingsSameSymbol = opts.drawingsSameSymbol !== false;
         // Before any cell exists: the replay watches every cell from its creation on.
         this.replay = new WorkspaceReplay({
             cells: () => this.cells(),
@@ -542,6 +643,9 @@ export class VelaWorkspace {
             onRedoClick: () => this.active.history.redo(),
             onScreenshotClick: () => this.downloadScreenshot(),
             onAlertsClick: (anchor) => this.openAlertsMenu(anchor),
+            // The replay slot exists only when the chrome does — a shell with
+            // `replay: false` never renders a dead button.
+            ...(opts.replay === false ? {} : { onReplayClick: (anchor: HTMLElement) => this.openReplayMenu(anchor) }),
             timeframe: '60',
             timeframes: opts.timeframes ?? DEFAULT_TIMEFRAMES,
             timeframeFavorites: this.tfFavs,
@@ -556,24 +660,25 @@ export class VelaWorkspace {
                 // The picker composes dynamic layouts on its grid canvas; registered
                 // presets the canvas cannot express (bespoke plugin areas) list as rows.
                 shape: () => layoutShape(this.def),
-                presets: () => layouts().filter((l) => layoutShape(l) === null).map((l) => ({ id: l.id, label: l.label })),
+                presets: () => this.presetRows(),
                 onSelectGrid: (rows, cols) => this.setLayout(layoutForGrid(rows, cols)),
                 onSelectPreset: (id) => this.setLayout(id),
-                // The SYNC switches reflect the simple all-cells form; flipping one
-                // OVERRIDES a host-set group record with plain on/off (groups stay an
-                // API-only shape).
-                syncs: () => [
-                    { id: 'symbol', label: 'Symbol', checked: this.syncOpts.symbol === true },
-                    { id: 'timeframe', label: 'Interval', checked: this.syncOpts.timeframe === true },
-                    { id: 'crosshair', label: 'Crosshair', checked: this.syncOpts.crosshair === true },
-                    { id: 'style', label: 'Style', checked: this.syncOpts.style === true },
-                ],
-                onToggleSync: (id) => {
-                    const kind = id as SyncKind;
-                    // `align = false`: the switch links what happens NEXT — it must not
-                    // collapse the group onto the active cell's market (see sync.set).
-                    this.sync.set(kind, this.syncOpts[kind] ? false : true, false);
-                },
+                // One row list for BOTH shells (see syncRows): every link the model
+                // carries is exposed, and a group record reads as ON — the old list
+                // showed four switches and lied about grouped links.
+                syncs: () => this.syncRows(),
+                onToggleSync: (id) => this.toggleSync(id as SyncKind),
+                onCycleGroup: (id) => this.cycleGroup(id as SyncKind),
+                drawingsScope: () => this.drawingsScope,
+                onToggleDrawingsScope: () => this.setDrawingsScope(this.drawingsScope === 'global' ? 'layout' : 'global'),
+                hiddenCharts: () => this.hiddenChartCount,
+                onClearPooled: () => this.clearPooled(),
+                savedLayouts: () => this.savedLayoutList(),
+                onSaveLayout: (name) => this.saveLayout(name),
+                onOpenLayout: (name) => this.openLayout(name),
+                onDeleteLayout: (name) => this.deleteLayout(name),
+                linkGroup: () => this.linkGroup,
+                onLinkGroup: (tag) => this.setLinkGroup(tag),
                 glyph: () => layoutGlyph(this.def),
             },
             getContext: () => this.context(),
@@ -621,6 +726,7 @@ export class VelaWorkspace {
         this.stripsEl.className = 'vela-ws-strips';
         this.root.appendChild(this.stripsEl);
         this.toastHost = new Toast(this.gridEl);
+        this.mountReplayBar();
 
         // ONE attribution mark for the whole grid (bottom-left, floating above the
         // bottom-left cell's time axis) — the cells disable their per-chart marks, and
@@ -904,6 +1010,7 @@ export class VelaWorkspace {
         if (id) {
             this.projectActiveCell(); // trigger ① — the chrome rebinds to the new active cell
             this.events.emit('cell:active', { id, prev });
+            this.broadcastLink(); // linked tabs follow the ACTIVE chart's market
             this.markStateDirty();
         }
     }
@@ -943,7 +1050,10 @@ export class VelaWorkspace {
         // Re-project every cell's legend rows so a late registerLegendAction /
         // registerLegendCallout (or a callout's own state change) appears there too.
         for (const cell of this.cells()) {
-            cell.chart.renderer.setLegendActions(legendActionsProviderFor(cell.chart, () => this.context()));
+            cell.chart.renderer.setLegendActions((id) => [
+                ...legendActionsProviderFor(cell.chart, () => this.context())(id),
+                ...this.layoutLegendActions(id, cell.id),
+            ]);
             cell.chart.renderer.setLegendCallouts(legendCalloutsProviderFor(cell.chart, () => this.context()));
         }
     }
@@ -967,6 +1077,20 @@ export class VelaWorkspace {
             this.applySyncSetting(kind, setting === false ? undefined : setting, align),
         get: (kind: SyncKind): SyncSetting | undefined => this.syncOpts[kind],
         state: (): SyncOptions => ({ ...this.syncOpts }),
+        /**
+         * Put one cell in a named group for one link (or take it out with `null`) — the
+         * programmatic half of TradingView's per-chart "Chart Syncing" chips. A `true`
+         * (all-cells) setting seeds every cell into group `A` first, so an upgrade never
+         * silently unlinks the grid.
+         */
+        setGroup: (kind: SyncKind, cellId: string, group: string | null): void => {
+            if (!this.cellsById.has(cellId)) return;
+            this.applySyncSetting(kind, groupSetting(this.syncOpts[kind], cellId, group, [...this.cellsById.keys()]), false);
+        },
+        /** The distinct group names a link currently uses (empty for off / all-cells). */
+        groups: (kind: SyncKind): string[] => syncGroups(this.syncOpts[kind]),
+        /** The group one cell belongs to (undefined = unlinked / all-cells form). */
+        groupOf: (kind: SyncKind, cellId: string): string | undefined => groupOf(this.syncOpts[kind], cellId),
     };
 
     // ── state surface (the SDK's read/restore of the whole grid's config + content) ──
@@ -1016,6 +1140,12 @@ export class VelaWorkspace {
         }
         this.extState = ext;
         if (Object.keys(ext).length > 0) state.ext = ext;
+        // Symbol-keyed drawings (the global scope) and the named snapshots ride the same
+        // document, so a reload / share link brings them back.
+        if (Object.keys(this.drawingsBySymbol).length > 0) state.drawingsBySymbol = { ...this.drawingsBySymbol };
+        if (this.drawingsScope !== 'layout') state.drawingsScope = this.drawingsScope;
+        if (this.savedLayouts.size > 0) state.savedLayouts = Object.fromEntries([...this.savedLayouts].map(([k, v]) => [k, v as unknown]));
+        if (this.linkGroup) state.linkedGroup = this.linkGroup;
         return state;
     }
 
@@ -1034,6 +1164,21 @@ export class VelaWorkspace {
         if (this.destroyed) return;
         const st = sanitizeState(state);
         if (!st) return;
+        if (st.drawingsBySymbol) this.drawingsBySymbol = { ...st.drawingsBySymbol };
+        // The scope itself must round-trip: restored without it, `drawingsBySymbol` would be
+        // a dead store (nothing consults it in layout scope).
+        if (st.drawingsScope) this.drawingsScope = st.drawingsScope;
+        if (st.savedLayouts) {
+            // A restored snapshot SET (not a single layout) — merge over the live map.
+            for (const [name, doc] of Object.entries(st.savedLayouts)) {
+                const parsed = sanitizeState(doc);
+                if (parsed) this.savedLayouts.set(name, parsed);
+            }
+        }
+        if (typeof st.linkedGroup === 'string') {
+            this.linkGroup = st.linkedGroup;
+            this.link.setTag(this.linkGroup);
+        }
         if (st.favorites) this.favs = [...st.favorites]; // newborn cells inherit below (buildCells)
         if (st.drawingTools) this.adoptDrawingTools(st.drawingTools); // ditto; the active cell takes the magnet/stay mirrors
         if (st.timeframeFavorites) {
@@ -1161,7 +1306,9 @@ export class VelaWorkspace {
     /** Bottom bar ⇐ the stored choice + the ACTIVE cell's market zone (labels the exchange row). */
     private projectTimezone(): void {
         const active = this.activeId ? this.cellsById.get(this.activeId) : undefined;
-        this.bottombar?.setTimezone(this.timezone, active?.exchangeTimezone);
+        // Per-chart zones: the bar labels what the ACTIVE chart actually renders in, and
+        // offers that chart's rule as the "exchange" reading.
+        this.bottombar?.setTimezone(active?.displayTimezone ?? this.timezone, active?.exchangeTimezone);
     }
 
     /**
@@ -1234,6 +1381,18 @@ export class VelaWorkspace {
         this.refreshRetention();
         this.events.emit('layout:changed', { layout: next.id });
         this.markStateDirty();
+    }
+
+    /**
+     * The next chart in slot order, wrapping at the end — `Tab`'s reducer. Skips nothing:
+     * a maximized grid still cycles (maximize follows the active cell on the next
+     * `maximizeCell`, so Tab while maximized simply selects).
+     */
+    private cycleActiveCell(): void {
+        const ids = this.order.slice(0, this.def.cells.length);
+        if (ids.length < 2) return;
+        const at = this.activeId ? ids.indexOf(this.activeId) : -1;
+        this.setActiveCell(ids[(at + 1) % ids.length] ?? ids[0]!);
     }
 
     /** The identity of the cell maximized over the whole grid, or null. */
@@ -1322,6 +1481,7 @@ export class VelaWorkspace {
         this.flushPendingState(); // the user's last edit, before anything is torn down
         this.destroyed = true;
         this.replay.destroy();
+        this.link.destroy();
         if (this.persistKey !== null && typeof window !== 'undefined') window.removeEventListener('beforeunload', this.onUnload);
         this.resizeObserver?.disconnect();
         this.splitters.destroy();
@@ -1374,6 +1534,10 @@ export class VelaWorkspace {
         this.shortcutsHelp?.destroy();
         this.toastHost.destroy();
         this.alertsMenu?.destroy();
+        this.disarmReplay();
+        this.replayDatePop?.destroy();
+        this.replayMenu?.destroy();
+        this.replayBar?.destroy();
         this.glider.stop();
         sharedBarStore.retain(new Set(), this); // release OUR declaration only — other shells on the page keep theirs
         this.root.remove();
@@ -1601,6 +1765,8 @@ export class VelaWorkspace {
     /** Rebuild every cell's view cluster (the maximize gate or state changed). */
     private refreshCellControls(): void {
         for (const cell of this.cellsById.values()) cell.refreshControls();
+        // Cells come and go here, so the group badges are re-projected with the controls.
+        this.projectGroupMarks();
     }
 
     /** Drop the transient maximize on a structural change (layout switch, state
@@ -1669,7 +1835,14 @@ export class VelaWorkspace {
             }
             if (this.cellsById.has(id)) continue;
             const pooled = this.pool.get(id);
-            const seed: CellBoot = pooled ?? { ...seedDefaults(this.opts), ...(this.opts.cells?.[id] ?? {}) };
+            // New charts inherit the FIRST chart's live indicator set (TV's rule). A pooled
+            // cell keeps its own — it is not new, it is returning.
+            const inherited = !pooled && this.inheritIndicators ? this.inheritLedger(id) : undefined;
+            const seed: CellBoot = pooled ?? {
+                ...seedDefaults(this.opts),
+                ...(this.opts.cells?.[id] ?? {}),
+                ...(inherited ? { indicators: inherited } : {}),
+            };
             this.pool.delete(id); // the slot is live again — its pooled state is consumed
             const cell = new ChartCell(id, this.gridEl, seed, {
                 feed: this.feed,
@@ -1699,6 +1872,8 @@ export class VelaWorkspace {
                 onStateDirty: () => this.markStateDirty(),
                 manifestSettled: () => this.manifestSettled,
                 toast: (message, kind, durationMs) => this.toastHost.show(message, kind, durationMs),
+                layoutLegendActions: (indicatorId, cellId) => this.layoutLegendActions(indicatorId, cellId),
+                ...(this.def.cells.length > 1 ? { applySettingsToAll: (cellId: string) => this.applySettingsToAll(cellId) } : {}),
             });
             cell.host.style.gridArea = perCell[slot.id]?.gridArea ?? '';
             this.cellsById.set(id, cell);
@@ -1721,7 +1896,7 @@ export class VelaWorkspace {
             if (Object.keys(this.toolDefs).length > 0 || Object.keys(this.toolTemplates).length > 0) this.pushToolDefaults(null, [cell]);
             // The indicator ledger: a restored cell re-adds ITS recorded set (held until
             // the manifest resolves); a fresh cell seeds the manifest's enabled entries.
-            cell.setManifest(this.manifest, pooled?.indicators == null);
+            cell.setManifest(this.manifest, seed.indicators == null);
             // Third-party state last — the cell is wired and its core state is in
             // place, so a handler's restore (e.g. re-adding external indicators) lands
             // on a cell the workspace fully knows. Runs muted (no undo entries).
@@ -1787,12 +1962,35 @@ export class VelaWorkspace {
         // The horizontal level travels only when the cursor is on the PRICE pane — a
         // study pane's `price` is that pane's indicator value, not a chart price.
         chart.renderer.onCrosshairMove((e) => this.propagateCrosshair(cell.id, e.time, e.paneKind === 'price' ? e.price : null));
+        // Click-to-align (the `time` link): a click brings the same instant into view on
+        // the followers without touching their span.
+        chart.renderer.onClick((e) => {
+            // Alt+Click maximizes/restores THIS chart (TradingView's chord) — it wins over
+            // the time link, which needs the pointer's instant, not a zoom reset.
+            if (e.alt) {
+                this.maximizeCell(this.maximizedId === cell.id ? null : cell.id);
+                return;
+            }
+            this.propagateTime(cell.id, e.time);
+        });
+        // Global drawing scope: the drawings on screen are still the OLD symbol's at this
+        // point (they are not market-bound), so this is where they get parked and the new
+        // symbol's document loads.
+        chart.on('market:changed', ({ prev }) => {
+            this.onCellMarketSwitched(cell, prev.symbol);
+            if (cell.id === this.activeId) this.broadcastLink();
+            this.markStateDirty();
+        });
+        chart.on('viewport:changed', () => {
+            if (cell.id === this.activeId) this.broadcastLink();
+        });
         // Drawing edits are cell state (the per-slot drawings document) — persistable.
         // When the drawings link is on, a CREATED drawing copies onto the same-group
         // cells and the set stays LINKED: edits and removals of any member follow
         // (the guard stops the propagated mutations from fanning out again).
         chart.on('drawing:created', ({ id }) => {
             this.propagateDrawing(cell.id, id);
+            this.syncDrawingStore(cell);
             this.markStateDirty();
         });
         // Placement progress mirrors LIVE as ghosts on the same-group cells; the end of
@@ -1866,13 +2064,17 @@ export class VelaWorkspace {
             for (const cell of this.cellsById.values()) cell.chart.drawings.setExternalGhost(null);
             // The toggle lives on the shared drawing toolbar; keep it truthful.
             this.drawToolbar?.setDrawingsSyncMode(!!setting);
+            this.projectGroupMarks();
             this.markStateDirty();
             return;
         }
         if (kind === 'crosshair') {
             // Any setting change invalidates current ghosts — they rebuild on the next
             // pointer move under the NEW grouping (and vanish entirely when disabled).
-            for (const cell of this.cellsById.values()) cell.chart.renderer.setExternalCrosshair(null);
+            for (const cell of this.cellsById.values()) {
+                cell.chart.renderer.setExternalCrosshair(null);
+                cell.setSyncedCrosshair(null);
+            }
             // A renderer without the seam silently never shows ghosts — warn only when
             // enabling while NO cell can display one (e.g. minimal custom renderers).
             if (setting && ![...this.cellsById.values()].some((c) => c.chart.renderer.supportsExternalCrosshair)) {
@@ -1880,12 +2082,22 @@ export class VelaWorkspace {
             }
             // Refresh the layout dropdown's switch state (absent during constructor boot).
             if (this.topbar && this.def) this.topbar.setLayout(this.def.id);
+            this.projectGroupMarks();
             this.markStateDirty();
             return; // no market/viewport alignment applies to a pointer link
+        }
+        if (kind === 'time') {
+            // Click-to-align carries no state to reconcile: the link simply changes what
+            // the NEXT click does. Keep the dropdown truthful and persist the choice.
+            if (this.topbar && this.def) this.topbar.setLayout(this.def.id);
+            this.projectGroupMarks();
+            this.markStateDirty();
+            return;
         }
         // Symbol/interval switches live in the layout dropdown too — keep an open
         // panel truthful when the setting flips through the API.
         if (this.topbar && this.def) this.topbar.setLayout(this.def.id);
+        this.projectGroupMarks();
         this.markStateDirty();
         if (align && setting && this.activeId) {
             if (kind === 'viewport') {
@@ -1897,6 +2109,387 @@ export class VelaWorkspace {
                 this.propagateMarket(this.activeId);
             }
         }
+    }
+
+
+    // ── "apply this indicator to the whole layout" (TV's two menu entries) ──────────
+    /**
+     * The legend-row actions no single-chart host has: copy the row's indicator onto
+     * every other chart (inputs and props included, hidden state too) and remove it from
+     * every chart. One row, one chip — the same place TradingView puts
+     * "Add this indicator to entire layout".
+     */
+    private layoutLegendActions(indicatorId: string, cellId: string): Array<{ id: string; icon: string; tooltip: string; run(): void }> {
+        if (this.def.cells.length < 2) return [];
+        const others = () => [...this.cellsById.keys()].filter((id) => id !== cellId);
+        if (others().length === 0) return [];
+        return [
+            {
+                id: 'layout.indicator-apply-all',
+                icon: 'layout',
+                tooltip: 'Add this indicator to every chart',
+                run: () => {
+                    const n = this.replicateIndicator(cellId, indicatorId, others());
+                    if (n > 0) this.toast(`Indicator added to ${n} chart${n === 1 ? '' : 's'}`, 'success');
+                },
+            },
+            {
+                id: 'layout.indicator-remove-all',
+                icon: 'eraser',
+                tooltip: 'Remove this indicator from every chart',
+                run: () => {
+                    const key = this.indicatorKey(cellId, indicatorId);
+                    let n = 0;
+                    for (const id of [cellId, ...others()]) {
+                        const cell = this.cellsById.get(id);
+                        if (!cell) continue;
+                        for (const h of cell.chart.indicators()) {
+                            if (this.indicatorKey(id, h.id) !== key) continue;
+                            h.remove();
+                            n += 1;
+                        }
+                    }
+                    if (n > 0) this.toast(`Indicator removed from ${n} chart${n === 1 ? '' : 's'}`, 'info');
+                },
+            },
+        ];
+    }
+
+    /** A stable cross-chart identity for an indicator: its native type, else its title. */
+    private indicatorKey(cellId: string, indicatorId: string): string {
+        const handle = this.cellsById.get(cellId)?.chart.indicators().find((h) => h.id === indicatorId);
+        return handle ? `n:${handle.nativeType ?? ''}|s:${handle.title}` : '';
+    }
+
+    /**
+     * Copy one indicator onto `targets` — the source handle carries what is needed (the
+     * script source, or the native type) plus its input/prop values and visibility, so
+     * the copy lands looking identical. Returns how many charts accepted it.
+     */
+    private replicateIndicator(sourceCellId: string, indicatorId: string, targets: string[]): number {
+        const source = this.cellsById.get(sourceCellId);
+        const handle = source?.chart.indicators().find((h) => h.id === indicatorId);
+        if (!source || !handle) return 0;
+        const inputs = handle.inputValues();
+        const props = handle.propValues();
+        let applied = 0;
+        for (const id of targets) {
+            const cell = this.cellsById.get(id);
+            if (!cell) continue;
+            try {
+                const copy = handle.source !== undefined
+                    ? cell.chart.addIndicator(handle.source, { inputs, props })
+                    : handle.nativeType
+                      ? cell.chart.addNativeIndicator(handle.nativeType, { inputs })
+                      : null;
+                if (!copy) continue;
+                if (!handle.visible) copy.setVisible(false);
+                applied += 1;
+            } catch (err) {
+                console.warn(`[vela] could not copy indicator onto ${id}:`, err);
+            }
+        }
+        return applied;
+    }
+
+    /** "Apply settings to all charts": one shot of the style slice, link or no link. */
+    applySettingsToAll(cellId?: string): void {
+        const from = cellId ?? this.activeId;
+        if (!from) return;
+        const origin = this.cellsById.get(from);
+        if (!origin) return;
+        const config = origin.chart.renderer.getConfig();
+        const prefs = origin.statusPrefs();
+        for (const [id, cell] of this.cellsById) {
+            if (id === from) continue;
+            const patch = styleConfigPatch(config, cell.chart.renderer.getConfig());
+            if (patch) cell.chart.renderer.applyConfig(patch);
+            cell.applyStatusPrefs(prefs);
+        }
+        this.markStateDirty();
+        this.toast('Settings applied to every chart', 'success');
+    }
+
+    /** Apply this chart's whole indicator set to every other chart. */
+    applyIndicatorsToAll(cellId?: string): void {
+        const from = cellId ?? this.activeId;
+        if (!from) return;
+        let n = 0;
+        for (const id of [...this.cellsById.keys()]) {
+            if (id === from) continue;
+            n += this.replicateIndicatorsFrom(from, id);
+        }
+        if (n > 0) this.toast(`Indicators applied to ${n} chart${n === 1 ? '' : 's'}`, 'success');
+    }
+
+    /** Replace a cell's indicator set with another cell's (native + manifest entries). */
+    private replicateIndicatorsFrom(sourceCellId: string, targetId: string): number {
+        const source = this.cellsById.get(sourceCellId);
+        const target = this.cellsById.get(targetId);
+        if (!source || !target) return 0;
+        for (const h of target.chart.indicators()) h.remove();
+        let n = 0;
+        for (const h of source.chart.indicators()) {
+            const inputs = h.inputValues();
+            const props = h.propValues();
+            try {
+                const copy = h.source !== undefined
+                    ? target.chart.addIndicator(h.source, { inputs, props })
+                    : h.nativeType
+                      ? target.chart.addNativeIndicator(h.nativeType, { inputs })
+                      : null;
+                if (copy) {
+                    if (!h.visible) copy.setVisible(false);
+                    n += 1;
+                }
+            } catch (err) {
+                console.warn(`[vela] indicator copy onto ${targetId} failed:`, err);
+            }
+        }
+        return n;
+    }
+
+    // ── the layout dropdown's sync surface (ONE list for both shells) ───────────────
+    /**
+     * Every link the model carries, in TradingView's reading order. `checked` is TRUE
+     * for both forms of on — `true` and a non-empty group record — so a grouped grid no
+     * longer renders every switch as off (`=== true` was the old bug), and `group` is
+     * the ACTIVE cell's group for that link, which the row's chip cycles.
+     */
+
+    /** The picker presets, with shapes that are IDENTICAL to an earlier entry folded away
+     *  (TradingView's `4s` and `4s-l` draw the same grid; listing both reads as a bug). */
+    private presetRows(): Array<{ id: string; label: string; icon: string; checked: boolean; cells: number }> {
+        const seen = new Set<string>();
+        const rows: Array<{ id: string; label: string; icon: string; checked: boolean; cells: number }> = [];
+        for (const l of layouts()) {
+            if (layoutShape(l) !== null) continue; // expressible on the canvas — no tile needed
+            // Ratios count: 2-2 and 2-2-l share tiles but not proportions, and their
+            // glyphs differ. Only a TRUE duplicate (4s / 4s-l) folds away.
+            const signature = `${l.cols.join(',')}|${l.rows.join(',')}|${occupancyGrid(l).map((row) => row.join('')).join('/')}`;
+            if (seen.has(signature)) continue;
+            seen.add(signature);
+            rows.push({ id: l.id, label: l.label, icon: layoutGlyph(l), checked: l.id === this.def.id, cells: l.cells.length });
+        }
+        return rows;
+    }
+
+    private syncRows(): Array<{ id: SyncKind; label: string; checked: boolean; group?: string }> {
+        return SYNC_ROW_ORDER.map(([id, label]) => {
+            const setting = this.syncOpts[id];
+            const group = this.activeId ? groupOf(setting, this.activeId) : undefined;
+            return { id, label, checked: syncEnabled(setting), ...(group ? { group } : {}) };
+        });
+    }
+
+    /** Flip one link: on ⇒ off, off ⇒ on. `align = false` — the switch decides what the
+     *  NEXT edit follows; it never rewrites the markets already on screen. */
+    private toggleSync(kind: SyncKind): void {
+        this.sync.set(kind, syncEnabled(this.syncOpts[kind]) ? false : true, false);
+    }
+
+    /** Put the ACTIVE cell through the link's groups: none → 🔴 → 🟢 → 🔵 → 🟡 → none. */
+    private cycleGroup(kind: SyncKind): void {
+        const id = this.activeId;
+        if (!id || !this.cellsById.has(id)) return;
+        const current = groupOf(this.syncOpts[kind], id);
+        const next = nextGroupMark(current, syncGroups(this.syncOpts[kind]));
+        this.sync.setGroup(kind, id, next);
+        this.projectGroupMarks();
+    }
+
+    /** Re-draw every cell's emoji badge from the live links (cheap; runs on a link edit). */
+    private projectGroupMarks(): void {
+        const marks = new Map<string, Array<{ kind: string; mark: string }>>();
+        for (const cell of this.cellsById.values()) marks.set(cell.id, []);
+        for (const kind of SYNC_KINDS) {
+            const setting = this.syncOpts[kind];
+            if (setting == null || setting === false || setting === true) continue;
+            for (const [cellId, mark] of Object.entries(setting)) {
+                if (!mark) continue;
+                marks.get(cellId)?.push({ kind: KIND_LABEL[kind], mark });
+            }
+        }
+        for (const [id, cellMarks] of marks) this.cellsById.get(id)?.setSyncMarks(cellMarks);
+    }
+
+    // ── drawing scope: the cell's document, or the SYMBOL's ─────────────────────────
+    /**
+     * Switch what drawings belong to. `'layout'` is the historical model (the cell owns
+     * them). `'global'` is TradingView's global scope: the workspace keeps a store per
+     * SYMBOL, a chart switching symbol parks its drawings under the old symbol and the
+     * new symbol's come back — so the same pair shows the same lines in every layout.
+     */
+    setDrawingsScope(scope: 'layout' | 'global'): void {
+        if (scope === this.drawingsScope) return;
+        this.drawingsScope = scope;
+        if (scope === 'global') {
+            for (const cell of this.cellsById.values()) this.syncDrawingStore(cell);
+            this.toast('Drawings now follow the symbol', 'info');
+        }
+        this.markStateDirty();
+        this.topbar.setLayout(this.def.id);
+    }
+
+    /** Park one cell's drawings under its CURRENT symbol (global scope only). */
+    private syncDrawingStore(cell: ChartCell): void {
+        if (this.drawingsScope !== 'global' || !cell.symbol) return;
+        this.drawingsBySymbol[cell.symbol] = cell.chart.drawings.toJSON();
+    }
+
+    /**
+     * A cell switched markets under the global drawing scope: the drawings on screen are
+     * still the PREVIOUS symbol's (the store is market-independent), so they are parked
+     * under `prevSymbol` and the new symbol's document is loaded in their place.
+     */
+    private onCellMarketSwitched(cell: ChartCell, prevSymbol: string): void {
+        if (this.drawingsScope !== 'global') return;
+        if (prevSymbol && prevSymbol !== cell.symbol) this.drawingsBySymbol[prevSymbol] = cell.chart.drawings.toJSON();
+        cell.chart.drawings.fromJSON(this.drawingsBySymbol[cell.symbol] ?? null);
+        this.markStateDirty();
+    }
+
+    // ── named layouts ("Save layout as…", "Open layout") ───────────────────────────
+    /** The saved snapshots, by name, with the one opened/saved last flagged. */
+    private savedLayoutList(): Array<{ name: string; active: boolean }> {
+        return [...this.savedLayouts.keys()].map((name) => ({ name, active: name === this.activeSavedLayout }));
+    }
+
+    /** Snapshot the WHOLE workspace under `name` (replacing a same-named save). */
+    saveLayout(name: string): void {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        const doc = this.getState();
+        delete doc.savedLayouts; // a snapshot never embeds the snapshots (no recursion)
+        this.savedLayouts.set(trimmed, doc);
+        this.activeSavedLayout = trimmed;
+        this.markStateDirty();
+        this.toast(`Layout “${trimmed}” saved`, 'success');
+    }
+
+    /** Restore a saved snapshot (layout, cells, links, drawings, sizing). */
+    openLayout(name: string): void {
+        const doc = this.savedLayouts.get(name);
+        if (!doc) return;
+        this.applyState(doc);
+        this.activeSavedLayout = name;
+        this.toast(`Layout “${name}” opened`, 'info');
+    }
+
+    deleteLayout(name: string): void {
+        if (!this.savedLayouts.delete(name)) return;
+        if (this.activeSavedLayout === name) this.activeSavedLayout = null;
+        this.markStateDirty();
+    }
+
+    // ── tab linking (TradingView Desktop's colored tab link) ───────────────────────
+    /** Join / leave a link tag; linked workspaces mirror their ACTIVE cell's market. */
+    setLinkGroup(tag: string | null): void {
+        this.linkGroup = tag || null;
+        this.link.setTag(this.linkGroup);
+        if (this.linkGroup) this.broadcastLink(); // seed the peers with our current market
+        this.markStateDirty();
+    }
+
+    /** Broadcast this workspace's active market + range to peers on the same tag. */
+    private broadcastLink(): void {
+        if (!this.linkGroup || !this.activeId) return;
+        const cell = this.cellsById.get(this.activeId);
+        if (!cell) return;
+        // An echo of what a peer just applied: swallow it (the peers already have it) —
+        // see `linkInbox` for why content, not a flag, is the guard.
+        const inbox = this.linkInbox;
+        if (inbox && (!inbox.symbol || inbox.symbol === cell.symbol) && (!inbox.timeframe || inbox.timeframe === cell.timeframe)) {
+            this.linkInbox = null;
+            return;
+        }
+        const range = cell.chart.getVisibleRange();
+        this.link.send({ symbol: cell.symbol, timeframe: cell.timeframe, ...(range ? { range } : {}) });
+    }
+
+    /** Apply a peer's linked change to THIS workspace's active cell. */
+    private applyLinked(market: { symbol?: string; timeframe?: string; range?: { from: number; to: number } }): void {
+        const cell = this.activeId ? this.cellsById.get(this.activeId) : undefined;
+        if (!cell || this.linkApplying) return;
+        this.linkApplying = true;
+        try {
+            this.linkInbox = { ...(market.symbol ? { symbol: market.symbol } : {}), ...(market.timeframe ? { timeframe: market.timeframe } : {}) };
+            if (market.symbol && market.symbol !== cell.symbol) cell.setSymbol(market.symbol);
+            if (market.timeframe && market.timeframe !== cell.timeframe) cell.setTimeframe(market.timeframe);
+            if (market.range) cell.chart.setVisibleRange(market.range);
+        } finally {
+            this.linkApplying = false;
+        }
+    }
+
+    // ── click-to-align (the `time` link) ───────────────────────────────────────────
+    /**
+     * Bring the clicked instant into view on the origin's same-group followers WITHOUT
+     * touching their span — TradingView's "Time" sync, the light sibling of the range
+     * link: every chart keeps its own zoom and simply re-centers on the same moment.
+     */
+    /** Public form of the click-to-align move (the same path the renderer's click takes)
+     *  — hosts driving a keyboard/menu "go to this time" use it too. */
+    alignTimeAt(originId: string, timeMs: number | null): void {
+        if (!this.cellsById.has(originId)) return;
+        this.propagateTime(originId, timeMs);
+    }
+
+    private propagateTime(originId: string, timeMs: number | null): void {
+        if (this.destroyed || this.timeBusy || timeMs == null) return;
+        const targets = syncTargets(originId, this.syncOpts.time, [...this.cellsById.keys()]);
+        if (targets.length === 0) return;
+        this.timeBusy = true;
+        this.syncBusy = true; // the followers' viewport echoes are this call's own doing
+        try {
+            for (const id of targets) {
+                const cell = this.cellsById.get(id);
+                const range = cell?.chart.getVisibleRange();
+                const next = range ? alignedRangeAround(range, timeMs) : null;
+                if (cell && next) cell.chart.setVisibleRange(next);
+            }
+        } finally {
+            this.syncBusy = false;
+            this.timeBusy = false;
+        }
+    }
+
+    // ── per-chart timezone ─────────────────────────────────────────────────────────
+    /** Set (or clear) ONE chart's timezone. The workspace default stays as it was. */
+    setCellTimezone(cellId: string, zone: string | null): void {
+        const cell = this.cellsById.get(cellId);
+        if (!cell) return;
+        cell.setTimezone(zone);
+        this.projectTimezone();
+        this.markStateDirty();
+    }
+
+    /** How many dormant (pooled) charts the smaller layouts left behind. */
+    get hiddenChartCount(): number {
+        return this.pool.size;
+    }
+
+    /** Forget every dormant (pooled) chart — the "remove hidden charts" housekeeping. */
+    clearPooled(): number {
+        const n = this.pool.size;
+        if (n === 0) return 0;
+        this.pool.clear();
+        this.refreshRetention();
+        this.markStateDirty();
+        this.toast(`Removed ${n} hidden chart${n === 1 ? '' : 's'}`, 'info');
+        return n;
+    }
+
+    /**
+     * The indicator ledger a NEW chart inherits from the existing grid: the ACTIVE cell's
+     * when it survives the switch, else the first live cell's. Undefined on the initial
+     * build (nothing to inherit) and whenever `inheritIndicators` is off.
+     */
+    private inheritLedger(newId: string): NonNullable<CellState['indicators']> | undefined {
+        const candidates = [...this.cellsById.values()].filter((c) => c.id !== newId);
+        if (candidates.length === 0) return undefined;
+        const source = candidates.find((c) => c.id === this.activeId) ?? candidates[0];
+        return source?.indicatorLedger();
     }
 
     /**
@@ -2051,6 +2644,9 @@ export class VelaWorkspace {
             if (!follower) continue;
             const comparable = originTicker !== '' && parseSymbol(follower.symbol).ticker === originTicker;
             follower.chart.renderer.setExternalCrosshair(time, comparable ? price : null);
+            // The readout half: the follower's status line shows ITS values at the
+            // leader's instant (TV's rule — crosshair sync lights every chart's values).
+            follower.setSyncedCrosshair(time == null ? null : follower.barAt(time));
         }
     }
 
@@ -2097,7 +2693,7 @@ export class VelaWorkspace {
         this.drawingSyncBusy = true;
         try {
             const group = new Map([[originId, drawingId]]);
-            for (const id of syncTargets(originId, setting, [...this.cellsById.keys()])) {
+            for (const id of this.drawingTargets(originId, setting)) {
                 const copy = this.cellsById.get(id)?.chart.drawings.add(doc.type, {
                     paneId: doc.paneId,
                     anchors: doc.anchors,
@@ -2115,6 +2711,24 @@ export class VelaWorkspace {
         }
     }
 
+    /**
+     * The cells a drawing follows: the link's group, minus — unless the host widened it —
+     * every chart on a DIFFERENT symbol. TradingView's rule: a BTC trend line means
+     * nothing on an ETH chart, so the default never paints one there.
+     */
+    private drawingTargets(originId: string, setting: SyncSetting): string[] {
+        const targets = syncTargets(originId, setting, [...this.cellsById.keys()]);
+        if (!this.drawingsSameSymbol) return targets;
+        const origin = parseSymbol(this.cellsById.get(originId)?.symbol ?? '').ticker;
+        // An empty ticker means "no market yet" (boot, offline host) — nothing to compare,
+        // so those cells keep following rather than silently dropping out of the link.
+        if (origin === '') return targets;
+        return targets.filter((id) => {
+            const ticker = parseSymbol(this.cellsById.get(id)?.symbol ?? '').ticker;
+            return ticker === '' || ticker === origin;
+        });
+    }
+
     /** Mirror an in-progress placement (its current ghost, `null` = placement ended)
      *  onto the origin's same-group followers — the live half of the drawings link;
      *  the created copy replaces the ghosts when the placement completes. One-way by
@@ -2123,7 +2737,7 @@ export class VelaWorkspace {
         if (this.destroyed) return;
         const setting = this.syncOpts.drawings;
         if (!setting) return;
-        for (const id of syncTargets(originId, setting, [...this.cellsById.keys()])) {
+        for (const id of this.drawingTargets(originId, setting)) {
             this.cellsById.get(id)?.chart.drawings.setExternalGhost(doc);
         }
     }
@@ -2343,6 +2957,8 @@ export class VelaWorkspace {
             panels: () => (has('panels') ? [...this.dock.list()] : []),
             onTogglePanel: (id) => this.dock.toggle(id),
             ...(has('alerts') ? { alerts: () => this.alerts.map((a) => ({ title: `${a.source} · ${a.title}`, message: a.message, time: a.time })) } : {}),
+            // The replay slot's mobile counterpart (the desktop topbar is hidden here).
+            ...(has('replay') && this.replayBar ? { onReplay: () => this.requestReplayMenuFromDrawer() } : {}),
             // Actions placed on the bottom bar (left-aligned by default) have their stop
             // there — only the menu-placed ones land in the drawer, or they would appear
             // twice: left (primary) ones with the primary rows, right ones at the end.
@@ -2356,27 +2972,32 @@ export class VelaWorkspace {
             // single-chart mode and a composition without 'layout' omit it here too.
             layout: this.monoLayout || !has('layout') ? undefined : {
                 shape: () => layoutShape(this.def),
-                presets: () =>
-                    layouts()
-                        .filter((l) => layoutShape(l) === null)
-                        .map((l) => ({ id: l.id, label: l.label, checked: l.id === this.def.id })),
+                presets: () => this.presetRows(),
                 onSelectGrid: (rows, cols) => this.setLayout(layoutForGrid(rows, cols)),
                 onSelectPreset: (id) => this.setLayout(id),
-                syncs: () => [
-                    { id: 'symbol', label: 'Symbol', checked: this.syncOpts.symbol === true },
-                    { id: 'timeframe', label: 'Interval', checked: this.syncOpts.timeframe === true },
-                    { id: 'crosshair', label: 'Crosshair', checked: this.syncOpts.crosshair === true },
-                    { id: 'style', label: 'Style', checked: this.syncOpts.style === true },
-                ],
-                onToggleSync: (id) => {
-                    const kind = id as SyncKind;
-                    // `align = false`: the switch links what happens NEXT — it must not
-                    // collapse the group onto the active cell's market (see sync.set).
-                    this.sync.set(kind, this.syncOpts[kind] ? false : true, false);
-                },
+                syncs: () => this.syncRows(),
+                onToggleSync: (id) => this.toggleSync(id as SyncKind),
+                onCycleGroup: (id) => this.cycleGroup(id as SyncKind),
+                drawingsScope: () => this.drawingsScope,
+                onToggleDrawingsScope: () => this.setDrawingsScope(this.drawingsScope === 'global' ? 'layout' : 'global'),
+                hiddenCharts: () => this.hiddenChartCount,
+                onClearPooled: () => this.clearPooled(),
+                savedLayouts: () => this.savedLayoutList(),
+                onSaveLayout: (name) => this.saveLayout(name),
+                onOpenLayout: (name) => this.openLayout(name),
+                onDeleteLayout: (name) => this.deleteLayout(name),
+                linkGroup: () => this.linkGroup,
+                onLinkGroup: (tag) => this.setLinkGroup(tag),
                 glyph: () => layoutGlyph(this.def),
             },
-            onOpenChange: (open) => this.trackDialog(open),
+            onOpenChange: (open) => {
+                this.trackDialog(open);
+                const anchor = this.pendingReplayAnchor;
+                if (!open && anchor) {
+                    this.pendingReplayAnchor = null;
+                    this.openReplayMenu(anchor);
+                }
+            },
         });
         this.moreDrawer.open();
     }
@@ -2411,6 +3032,242 @@ export class VelaWorkspace {
     }
 
     /** The aggregated alerts bell — entries carry their cell; selecting one activates it. */
+    // ── bar replay chrome ──
+    //
+    // The PUBLIC surface stays `ws.replay`: this chrome starts, paces and ends sessions
+    // through it and follows its `replay:*` events, so a replay started from code, a
+    // contribution or a shortcut wears the same bar. Nothing here keeps replay state of
+    // its own except the pace to resume on and whether "select bar" is armed.
+
+    /** Mount the floating transport bar and follow the session on it. */
+    private mountReplayBar(): void {
+        if (this.opts.replay === false) return;
+        this.replayBar = new ReplayToolbar({
+            host: this.gridEl,
+            onPlayPause: () => this.toggleReplay(),
+            onStep: () => this.stepReplay(),
+            onSpeed: (ms) => this.setReplaySpeed(ms),
+            onJumpToRealtime: () => this.jumpToRealtime(),
+            onExit: () => this.replay.stop(),
+            onCancelArm: () => this.disarmReplay(),
+        });
+        for (const ev of ['replay:start', 'replay:step', 'replay:tick', 'replay:play', 'replay:pause', 'replay:end'] as const) {
+            this.replay.on(ev, () => this.syncReplayUi());
+        }
+        // `state` reads the ACTIVE cell's chart — a new active cell means a new cursor.
+        this.on('cell:active', () => this.syncReplayUi());
+        this.syncReplayUi();
+    }
+
+    /** Paint the session onto the chrome (bar + topbar slot). Idempotent. */
+    private syncReplayUi(): void {
+        if (this.destroyed) return;
+        const s = this.replay.state;
+        this.topbar.setReplayActive(s.active);
+        this.replayBar?.setState({
+            active: s.active,
+            playing: s.playing,
+            cursorTime: s.cursorTime,
+            remaining: s.remaining,
+            // A live session's own pace is the truth (it may have been started with one);
+            // while paused the bar shows the pace the next play will use.
+            speedMs: s.playing ? s.intervalMs : this.replaySpeed,
+        });
+    }
+
+    /** Play/pause the session (the `Shift+↓` chord and the transport's centre button). */
+    private toggleReplay(): void {
+        const s = this.replay.state;
+        if (!s.active) return;
+        if (s.playing) this.replay.pause();
+        else this.replay.play(this.replaySpeed);
+        this.syncReplayUi();
+        this.refocusActive();
+    }
+
+    /** Reveal one update (`Shift+→` and the step button). A running session pauses first:
+     *  stepping is a deliberate read, not a race with the clock. */
+    private stepReplay(): void {
+        if (!this.replay.state.active) return;
+        if (this.replay.state.playing) this.replay.pause();
+        this.replay.step();
+        this.syncReplayUi();
+        this.refocusActive();
+    }
+
+    /** Adopt a pace. While playing it takes effect now; while paused it is what the next
+     *  play uses (picking a speed is never an implicit "play"). */
+    private setReplaySpeed(ms: number): void {
+        this.replaySpeed = ms;
+        if (this.replay.state.playing) this.replay.play(ms);
+        this.syncReplayUi();
+    }
+
+    /** Leave the replay and land on the newest bars. `panBy` clamps at the pan limit past
+     *  the last bar, so one long nudge reaches the right edge from any distance. */
+    private jumpToRealtime(): void {
+        if (this.replay.state.active) this.replay.stop();
+        this.disarmReplay();
+        this.active.chart.panBy(REPLAY_JUMP_PANS);
+        this.syncReplayUi();
+        this.refocusActive();
+    }
+
+    /** The replay entry's menu — the three ways in, plus the way out — anchored on the
+     *  button that opened it (the topbar slot on desktop, the mobile bar's kebab on a
+     *  phone; the date picker reuses the same anchor). */
+    private openReplayMenu(anchor: HTMLElement): void {
+        this.replayMenu?.destroy();
+        const active = this.replay.state.active;
+        this.replayMenu = new Menu({
+            host: this.root,
+            items: [
+                { id: 'select-bar', label: 'Select bar', icon: 'cursor' },
+                { id: 'select-date', label: 'Select date', icon: 'clock' },
+                { id: 'random-bar', label: 'Random bar', icon: 'replay' },
+                // TradingView's replay scope switch: the whole layout, or just this chart.
+                ...(this.def.cells.length > 1
+                    ? [{ id: 'scope-all', label: 'Replay all charts', checked: this.replayScope === 'all', separatorBefore: true } as MenuItemDescriptor]
+                    : []),
+                { id: 'jump-realtime', label: 'Jump to real time', icon: 'jump-realtime', separatorBefore: true, disabled: !active },
+            ],
+            onSelect: (id) => {
+                if (id === 'select-bar') this.armReplaySelect();
+                else if (id === 'select-date') this.openReplayDatePicker(anchor);
+                else if (id === 'random-bar') this.startReplayAtRandomBar();
+                else if (id === 'scope-all') this.setReplayScope(this.replayScope === 'all' ? 'cell' : 'all');
+                else if (id === 'jump-realtime') this.jumpToRealtime();
+            },
+        });
+        const r = anchor.getBoundingClientRect();
+        this.replayMenu.openAt(r.left, r.bottom + 4);
+    }
+
+    /** Replay scope: every chart (default) or the one the session starts on. */
+    setReplayScope(scope: 'all' | 'cell'): void {
+        this.replayScope = scope;
+        this.toast(scope === 'all' ? 'Replay applies to all charts' : 'Replay applies to this chart only', 'info');
+    }
+
+    /**
+     * The mobile route: the drawer's Replay action closes its sheet first, and the entry
+     * menu opens when the sheet reports closed (opening it under a closing modal would
+     * race the drawer's own dismiss chain). The anchor is the kebab that opened the
+     * drawer — it stays in the DOM, so the menu and the date picker both place on it.
+     */
+    private requestReplayMenuFromDrawer(): void {
+        this.pendingReplayAnchor = this.mobileBar?.el.querySelector<HTMLElement>('.vela-mb-more') ?? null;
+    }
+
+    /**
+     * Arm "select bar": the next click on ANY cell's plot starts the session there. The
+     * crosshair previews the cut on every other chart meanwhile (each one's last bar that
+     * closed by the hovered time), so the clipped edge is visible before committing.
+     */
+    private armReplaySelect(): void {
+        if (this.replayArmed || this.destroyed) return;
+        this.replayArmed = true;
+        this.gridEl.dataset.replayArm = '1';
+        this.replayBar?.setArmed(true);
+        for (const cell of this.cells()) {
+            const renderer = cell.chart.renderer;
+            this.replayArmOffs.push(renderer.onClick((e) => {
+                if (e.time != null) void this.startReplayAt(cell.id, e.time);
+            }));
+            if (renderer.supportsExternalCrosshair) {
+                this.replayArmOffs.push(renderer.onCrosshairMove((e) => this.previewReplayCut(cell.id, e.time ?? null)));
+            }
+        }
+        const doc = this.root.ownerDocument;
+        const onKey = (ev: KeyboardEvent): void => {
+            if (ev.key !== 'Escape') return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            this.disarmReplay();
+        };
+        // Capture: Esc cancels the pending pick instead of closing whatever sits under it.
+        doc.addEventListener('keydown', onKey, true);
+        this.replayArmOffs.push(() => doc.removeEventListener('keydown', onKey, true));
+        this.syncReplayUi();
+    }
+
+    /** Drop the armed state and every listener/preview it added (idempotent). */
+    private disarmReplay(): void {
+        if (!this.replayArmed) return;
+        this.replayArmed = false;
+        delete this.gridEl.dataset.replayArm;
+        const offs = this.replayArmOffs;
+        this.replayArmOffs = [];
+        for (const off of offs) off();
+        for (const cell of this.cells()) {
+            if (cell.chart.renderer.supportsExternalCrosshair) cell.chart.renderer.setExternalCrosshair(null);
+        }
+        this.replayBar?.setArmed(false);
+        this.syncReplayUi();
+    }
+
+    /** Ghost the cut position on the OTHER charts while a bar is being picked. */
+    private previewReplayCut(originId: string, time: number | null): void {
+        for (const cell of this.cells()) {
+            if (cell.id === originId) continue;
+            const renderer = cell.chart.renderer;
+            if (!renderer.supportsExternalCrosshair) continue;
+            renderer.setExternalCrosshair(time == null ? null : lastOpenClosedBy(time, cell.chart.market.timeframe));
+        }
+    }
+
+    /** Start the session with `from` read on `cellId` (the shared clock lands on the close
+     *  of that chart's last kept bar; every other chart keeps what closed by then). */
+    private async startReplayAt(cellId: string, from: number): Promise<void> {
+        this.disarmReplay();
+        if (!Number.isFinite(from) || from <= 0) return;
+        await this.replay.start({ from, cell: cellId, scope: this.replayScope });
+        this.syncReplayUi();
+        this.refocusActive();
+    }
+
+    /** A random moment inside the active cell's replayable history — TradingView's
+     *  "Random bar": you get a session without hunting for a spot. */
+    private startReplayAtRandomBar(): void {
+        const cellId = this.activeId ?? this.cells()[0]?.id;
+        const bounds = this.replay.bounds;
+        if (!cellId || !bounds || bounds.last <= bounds.first) return;
+        const from = bounds.first + Math.random() * (bounds.last - bounds.first);
+        void this.startReplayAt(cellId, from);
+    }
+
+    /** Calendar entry ("Select date"): the session starts at that day's first bar. */
+    private openReplayDatePicker(anchor: HTMLElement): void {
+        this.replayDatePop?.destroy();
+        const seed = this.replay.state.cursorTime ?? this.replay.bounds?.last ?? Date.now();
+        this.replayDatePop = new Popover({
+            trigger: anchor,
+            host: this.root,
+            align: 'start',
+            boundary: this.root,
+            className: REPLAY_CALENDAR_CLASS,
+            gap: 4,
+            onClose: () => {
+                this.replayDatePop = null;
+            },
+            content: (el) => {
+                const picker = new DatePicker({
+                    value: isoDate(new Date(seed)),
+                    onPick: (iso) => {
+                        this.replayDatePop?.hide();
+                        const cellId = this.activeId ?? this.cells()[0]?.id;
+                        // UTC midnight: the picker names a DAY, and the chart's own zone is
+                        // the axis it will be read against.
+                        const from = Date.parse(`${iso}T00:00:00Z`);
+                        if (cellId) void this.startReplayAt(cellId, from);
+                    },
+                });
+                el.append(picker.el);
+            },
+        });
+        this.replayDatePop.show();
+    }
+
     private openAlertsMenu(anchor: HTMLElement): void {
         this.alertsMenu?.destroy();
         const items = this.alerts.length
@@ -2466,6 +3323,30 @@ export class VelaWorkspace {
                 run: ov ? () => this.runOverride(ov) : () => this.downloadScreenshot(),
             });
         }
+        // Bar replay — the two chords TradingView's replay puts on the keyboard. Both are
+        // no-ops outside a session (arming one is the topbar menu's job, not a shortcut's).
+        if (this.replayBar) {
+            this.keymap.register({ id: 'replay.play-pause', keys: 'shift+arrowdown', label: 'Play / pause the bar replay', category: 'Replay', run: () => this.toggleReplay() });
+            this.keymap.register({ id: 'replay.step', keys: 'shift+arrowright', label: 'Step the bar replay forward', category: 'Replay', run: () => this.stepReplay() });
+        }
+        // Grid chords — TradingView's two: Tab walks the ACTIVE chart, Alt+Enter
+        // maximizes it (its Alt+Click sibling lives on the cell's renderer click).
+        this.keymap.register({
+            id: 'layout.cycle-active',
+            keys: 'tab',
+            label: 'Switch to the next chart',
+            category: 'Layout',
+            when: () => this.def.cells.length > 1,
+            run: () => this.cycleActiveCell(),
+        });
+        this.keymap.register({
+            id: 'layout.maximize',
+            keys: 'alt+enter',
+            label: 'Maximize / restore the active chart',
+            category: 'Layout',
+            when: () => this.def.cells.length > 1,
+            run: () => this.maximizeCell(this.maximizedId ? null : this.activeId),
+        });
         this.keymap.register({ id: 'chart.reset-view', keys: 'alt+r', label: 'Reset view (all history)', category: 'Chart', run: () => this.active.chart.setVisibleRangePreset('ALL') });
         this.keymap.register({ id: 'chart.toggle-log', keys: 'alt+l', label: 'Toggle logarithmic scale', category: 'Chart', run: () => this.active.chart.renderer.set('logScale', !this.active.chart.renderer.get('logScale')) });
         this.keymap.register({

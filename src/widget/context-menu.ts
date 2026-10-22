@@ -30,10 +30,15 @@ const OFF_PLOT: ContextMenuPointer = { price: null, time: null, paneKind: null }
 export interface ContextMenuCallbacks {
     /** Reset the view (all history, autoscale back on). */
     resetView: () => void;
+    /** Multi-chart hosts: carry THIS chart's settings onto every other chart. */
+    applySettingsToAll?: () => void;
     /** The display-timezone choice the host holds — a zone or the exchange rule (the time-axis menu checks it). */
     timezone?: () => string;
-    /** Switch the display timezone through the host, so its own chrome follows. */
-    setTimezone?: (zone: string) => void;
+    /** Switch the display timezone through the host, so its own chrome follows.
+     *  `scope` is the menu's "Apply to" choice: this chart alone, or every chart. */
+    setTimezone?: (zone: string, scope: 'cell' | 'all') => void;
+    /** The zone in force for THIS chart (drives the checkmarks). */
+    timezoneScope?: () => 'cell' | 'all';
     /** Live widget context for contributed `context:*` actions. */
     getContext?: () => WidgetContext;
 }
@@ -50,6 +55,8 @@ export class ChartContextMenu {
      *  menu before a row is picked, and `run` must see the right-clicked spot. */
     private pointer: ContextMenuPointer = OFF_PLOT;
     private lastZone: Zone = 'body';
+    /** The open time-axis menu's "Apply to" choice (this chart / all charts). */
+    private tzScope: 'cell' | 'all' = 'cell';
     /** The pane whose scale the open price-axis menu targets (null ⇒ the main scale). */
     private lastPane: PaneScaleInfo | null = null;
     private readonly onContextMenu = (e: MouseEvent): void => {
@@ -148,12 +155,18 @@ export class ChartContextMenu {
             });
         }
         if (zone === 'time-axis') {
-            return timeAxisItems(this.cbs.timezone?.() ?? String(this.chart?.renderer.get('timezone') ?? 'Etc/UTC'));
+            this.tzScope = this.cbs.timezoneScope?.() ?? 'cell';
+            return timeAxisItems(this.cbs.timezone?.() ?? String(this.chart?.renderer.get('timezone') ?? 'Etc/UTC'), {
+                scope: this.tzScope,
+                // A single-chart host has nothing to scope: the choice only offers "this chart".
+                scoped: this.cbs.setTimezone !== undefined,
+            });
         }
         const chart = this.chart;
         return bodyItems({
             drawings: chart?.drawings.supported ? chart.drawings.all().length : 0,
             indicators: chart?.indicators().length ?? 0,
+            multi: this.cbs.applySettingsToAll !== undefined,
         });
     }
 
@@ -170,9 +183,13 @@ export class ChartContextMenu {
             chart.renderer.set(feature, !this.flag(feature));
         } else if (id.startsWith('scale:')) {
             for (const [feature, value] of scaleWrites(id.slice('scale:'.length) as ScaleChoice, this.lastPane)) chart.renderer.set(feature, value);
+        } else if (id === 'tzscope:cell' || id === 'tzscope:all') {
+            this.tzScope = id === 'tzscope:all' ? 'all' : 'cell';
+            // Re-open with the new scope so the checkmarks move where the user just clicked.
+            this.menu.setItems(this.itemsFor(this.lastZone));
         } else if (id.startsWith('tz:')) {
             const zone = id.slice('tz:'.length);
-            if (this.cbs.setTimezone) this.cbs.setTimezone(zone);
+            if (this.cbs.setTimezone) this.cbs.setTimezone(zone, this.tzScope);
             // No host to hold (and resolve) the rule: the renderer only understands a real zone.
             else chart.renderer.set('timezone', resolveTimezone(zone, undefined));
         } else if (id === 'auto') {
@@ -183,6 +200,8 @@ export class ChartContextMenu {
             chart.renderer.set(feature, value);
         } else if (id.startsWith('settings')) {
             chart.renderer.openSettings(settingsSectionOf(id));
+        } else if (id === 'apply-settings-all') {
+            this.cbs.applySettingsToAll?.();
         } else if (id === 'reset-view') {
             this.cbs.resetView();
         } else if (id === 'remove-drawings') {

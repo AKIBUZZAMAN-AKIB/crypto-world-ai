@@ -4,6 +4,18 @@ All notable changes to Vela, newest first.
 
 ## [Unreleased]
 
+### Added
+
+- **Bar replay has its controls.** The workspace now ships the replay UI the API was
+  already waiting for: a `'replay'` topbar slot whose menu starts a session from a bar
+  (click any chart), a date, or a random bar; a floating transport bar with play/pause,
+  step, a nine-step speed menu (0.1 s → 30 s), the replay clock, bars left,
+  jump-to-real-time and exit; and the `Shift+↓` / `Shift+→` chords. Hovering while
+  "Select bar" is armed previews every chart's cut as a ghost crosshair. On a phone the
+  entry menu sits behind the kebab drawer's new **Replay** action. The chrome is a view
+  over `ws.replay`, so sessions started from code wear it too; `replay: false` keeps the
+  API and drops the UI.
+
 ### Changed
 
 - **The Symbol and Interval switches link cells; they no longer rewrite them.** Turning

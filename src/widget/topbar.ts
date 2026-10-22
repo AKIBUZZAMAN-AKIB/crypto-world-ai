@@ -190,13 +190,28 @@ export interface TopbarOptions {
         current: string;
         /** Current layout's picker-canvas shape (null = not canvas-expressible). */
         shape: () => LayoutPickerShape | null;
-        /** Registered layouts the canvas cannot express — rendered as labeled rows. */
-        presets: () => Array<{ id: string; label: string }>;
+        /** Registered layouts the canvas cannot express — glyph buttons, or labeled
+         *  rows when a preset carries no icon. */
+        presets: () => Array<{ id: string; label: string; icon?: string; checked?: boolean }>;
         onSelectGrid: (rows: number, cols: number) => void;
         onSelectPreset: (id: string) => void;
         /** SYNC switch rows (re-read on every open and after each toggle). */
-        syncs: () => Array<{ id: string; label: string; checked: boolean }>;
+        syncs: () => Array<{ id: string; label: string; checked: boolean; group?: string }>;
         onToggleSync: (id: string) => void;
+        /** Cycle the ACTIVE cell through a link's groups (the row's chip). */
+        onCycleGroup?: (id: string) => void;
+        /** The drawing scope the workspace holds (the chip on the Drawings row). */
+        drawingsScope?: () => 'layout' | 'global';
+        onToggleDrawingsScope?: () => void;
+        /** Dormant (pooled) charts, and the row that drops them. */
+        hiddenCharts?: () => number;
+        onClearPooled?: () => void;
+        savedLayouts?: () => Array<{ name: string; active: boolean }>;
+        onSaveLayout?: (name: string) => void;
+        onOpenLayout?: (name: string) => void;
+        onDeleteLayout?: (name: string) => void;
+        linkGroup?: () => string | null;
+        onLinkGroup?: (tag: string | null) => void;
         /** The current layout's 16px glyph (`<svg>` markup) for the button, re-read on
          *  every {@link Topbar.setLayout}. Omitted ⇒ the registered `'layout'` icon. */
         glyph?: () => string;
@@ -208,6 +223,10 @@ export interface TopbarOptions {
     onRedoClick?: () => void;
     onScreenshotClick?: () => void;
     onAlertsClick?: (anchor: HTMLElement) => void;
+    /** Bar-replay entry (the `'replay'` slot) — the shell opens its replay menu anchored
+     *  on the button. Omitted ⇒ the slot renders nothing (a shell with no replay API
+     *  never shows a dead button). */
+    onReplayClick?: (anchor: HTMLElement) => void;
     /** Live widget context for contributed actions (topbar target). */
     getContext?: () => WidgetContext;
     /** The host's declarative composition (see {@link TopbarComposition}) — which
@@ -241,6 +260,9 @@ export class Topbar {
     private undoBtn!: HTMLButtonElement;
     private redoBtn!: HTMLButtonElement;
     private alertsBtn!: HTMLButtonElement;
+    /** The bar-replay slot's button (`null` when the composition hides it or the host
+     *  supplied no entry handler). */
+    private replayBtn: HTMLButtonElement | null = null;
     private panelBtns = new Map<string, HTMLButtonElement>();
     private panelTooltips: Tooltip[] = [];
     private readonly host: HTMLElement;
@@ -340,6 +362,14 @@ export class Topbar {
         }
         this.setHistoryState(false, false);
         const screenshotBtn = vis('screenshot') && !topbarActionOverride('screenshot') ? tool('vela-widget-screenshot', 'camera', 'Download screenshot', opts.onScreenshotClick) : null;
+        // Bar replay sits beside the bell (the right cluster's "tools", as in TradingView's
+        // top toolbar). It only exists when the host can actually open a replay menu.
+        this.replayBtn =
+            vis('replay') && opts.onReplayClick ? tool('vela-widget-replay', 'replay', 'Bar replay') : null;
+        if (this.replayBtn && opts.onReplayClick) {
+            const open = opts.onReplayClick;
+            this.replayBtn.addEventListener('click', () => open(this.replayBtn!));
+        }
         this.alertsBtn = vis('alerts') ? tool('vela-widget-alerts', 'bell', 'Alerts') : doc.createElement('button');
         this.alertsBtn.style.position = 'relative';
         if (opts.onAlertsClick) this.alertsBtn.addEventListener('click', () => opts.onAlertsClick!(this.alertsBtn));
@@ -408,6 +438,8 @@ export class Topbar {
                     return left ? [this.leftActionsHost, this.leftActionsSep] : [this.actionsHost];
                 case 'undo-redo':
                     return [this.undoBtn, this.redoBtn];
+                case 'replay':
+                    return this.replayBtn ? [this.replayBtn] : [];
                 case 'alerts':
                     return [this.alertsBtn];
                 case 'panels':
@@ -455,6 +487,17 @@ export class Topbar {
                 onSelectPreset: (id) => layout.onSelectPreset(id),
                 syncs: () => layout.syncs(),
                 onToggleSync: (id) => layout.onToggleSync(id),
+                ...(layout.onCycleGroup ? { onCycleGroup: (id) => layout.onCycleGroup?.(id) } : {}),
+                ...(layout.drawingsScope ? { drawingsScope: () => layout.drawingsScope?.() ?? 'layout' } : {}),
+                ...(layout.onToggleDrawingsScope ? { onToggleDrawingsScope: () => layout.onToggleDrawingsScope?.() } : {}),
+                ...(layout.hiddenCharts ? { hiddenCharts: () => layout.hiddenCharts?.() ?? 0 } : {}),
+                ...(layout.onClearPooled ? { onClearPooled: () => layout.onClearPooled?.() } : {}),
+                ...(layout.savedLayouts ? { savedLayouts: () => layout.savedLayouts?.() ?? [] } : {}),
+                ...(layout.onSaveLayout ? { onSaveLayout: (name) => layout.onSaveLayout?.(name) } : {}),
+                ...(layout.onOpenLayout ? { onOpenLayout: (name) => layout.onOpenLayout?.(name) } : {}),
+                ...(layout.onDeleteLayout ? { onDeleteLayout: (name) => layout.onDeleteLayout?.(name) } : {}),
+                ...(layout.linkGroup ? { linkGroup: () => layout.linkGroup?.() ?? null } : {}),
+                ...(layout.onLinkGroup ? { onLinkGroup: (tag) => layout.onLinkGroup?.(tag) } : {}),
             });
         }
         this.tfMenu = new Menu({
@@ -633,6 +676,13 @@ export class Topbar {
     setHistoryState(canUndo: boolean, canRedo: boolean): void {
         this.undoBtn.disabled = !canUndo;
         this.redoBtn.disabled = !canRedo;
+    }
+
+    /** Light the replay slot while a session runs (and drop it back when it ends). */
+    setReplayActive(active: boolean): void {
+        if (!this.replayBtn) return;
+        if (active) this.replayBtn.dataset.active = '1';
+        else delete this.replayBtn.dataset.active;
     }
 
     setAlertCount(n: number): void {

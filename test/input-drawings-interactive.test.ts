@@ -87,7 +87,7 @@ describe('InputController with the drawings switched off', () => {
         expect(h.deps.drawingsClaim).not.toHaveBeenCalled();
         expect(h.deps.drawingsPointerDown).not.toHaveBeenCalled();
         expect(h.deps.drawingsPointerUp).not.toHaveBeenCalled();
-        expect(h.deps.onClick).toHaveBeenCalledWith(100, 100);
+        expect(h.deps.onClick).toHaveBeenCalledWith(100, 100, false);
     });
 
     it('pans on a drag over a drawing instead of moving it', () => {

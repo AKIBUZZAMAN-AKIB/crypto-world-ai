@@ -103,6 +103,9 @@ const CSS = `
  * via the kit tooltip); the session tint is applied per status in setMarketStatus. While
  * the chart replays past bars it wears the replay badge instead (the inverse chip). */
 .vela-statusline .vela-sl-market { align-self: center; display: inline-flex; }
+/* Chart-syncing marks: the group emoji this chart carries, one per linked axis. */
+.vela-statusline .vela-sl-marks { font-size: 10px; line-height: 1; letter-spacing: 1px; color: var(--vela-fg-muted); }
+.vela-statusline .vela-sl-marks[hidden] { display: none; }
 .vela-statusline .vela-sl-market > [hidden] { display: none !important; }
 .vela-statusline .vela-sl-replay-badge, .vela-statusline .vela-sl-replay-badge svg { display: block; width: 16px; height: 16px; }
 /* Tabular figures: every digit has one advance, so a readout whose text changes only in
@@ -276,6 +279,8 @@ export class Statusline {
     private readonly symbolEl: HTMLElement;
     /** The badge slot — the market bubble, or the replay badge while replaying. */
     private readonly marketEl: HTMLElement;
+    /** The sync-group marks (TradingView's chart-syncing emoji) — one per linked axis. */
+    private readonly marksEl: HTMLElement;
     /** The market status face — a kit callout bubble. */
     private readonly marketBubble: CalloutBubble;
     /** The replay face — see {@link REPLAY_BADGE_SVG}. */
@@ -297,6 +302,10 @@ export class Statusline {
     private chartHidden = false;
     private lastBar: BarLike | null = null;
     private hoverBar: BarLike | null = null;
+    /** A SYNCHRONISED crosshair's bar (another chart's pointer) — shown while it is set,
+     *  in place of the resting bar: the crosshair link's whole point is reading THIS
+     *  chart's values at the leader's instant. */
+    private syncedBar: BarLike | null = null;
     private unsubs: Array<() => void> = [];
     /** Up/down ink for the OHLC + change values — the ACTIVE price style's configured
      *  colors (candle bodies, bar ticks, the line color, …); null falls back to the theme
@@ -380,7 +389,10 @@ export class Statusline {
         });
         this.identityRow = doc.createElement('span');
         this.identityRow.className = 'vela-sl-row vela-sl-identity';
-        this.identityRow.append(this.avatarEl, this.symbolEl, this.metaEl, this.marketEl);
+        this.marksEl = doc.createElement('span');
+        this.marksEl.className = 'vela-sl-marks';
+        this.marksEl.hidden = true;
+        this.identityRow.append(this.avatarEl, this.symbolEl, this.metaEl, this.marksEl, this.marketEl);
         this.valuesRow = doc.createElement('span');
         this.valuesRow.className = 'vela-sl-row vela-sl-values';
         this.valuesRow.append(this.ohlcEl, this.changeEl, this.eyeEl);
@@ -606,6 +618,7 @@ export class Statusline {
         this.detach();
         this.lastBar = null;
         this.hoverBar = null;
+        this.syncedBar = null;
         this.unsubs.push(
             chart.on('bar', (b: OHLCV) => {
                 this.lastBar = b;
@@ -662,13 +675,30 @@ export class Statusline {
         else this.fit();
     }
 
+    /** The link marks this chart carries ('' hides the badge). Each entry is a group
+     *  emoji plus the axis it belongs to, e.g. `🔴Symbol`. */
+    setSyncMarks(marks: ReadonlyArray<{ kind: string; mark: string }>): void {
+        const text = marks.map((m) => m.mark).join('');
+        if (this.marksEl.textContent === text && this.marksEl.hidden === (marks.length === 0)) return;
+        this.marksEl.textContent = text;
+        this.marksEl.hidden = marks.length === 0;
+        this.marksEl.title = marks.map((m) => `${m.mark} ${m.kind}`).join(' • ');
+    }
+
+    /** Show the bar another chart's crosshair points at (null = let go). */
+    setSyncedCrosshair(bar: BarLike | null): void {
+        if (this.syncedBar === bar) return;
+        this.syncedBar = bar;
+        this.render();
+    }
+
     /** Everything the readout's width depends on, at every rung: its shape, and each
      *  value's sign, digit count and decimals (the digits themselves are tabular — see
      *  the CSS; the grouping commas follow from the digit count). `toFixed` carries all
      *  three at a fraction of the locale formatter's cost — this runs per pointer move.
      *  The parts, the host's size and the fonts re-fit through their own paths. */
     private widthKey(): string {
-        const bar = this.hoverBar ?? this.lastBar;
+        const bar = this.hoverBar ?? this.syncedBar ?? this.lastBar;
         if (!bar) return this.readout;
         const dp = decimalsFor(bar.close);
         const diff = bar.close - bar.open;
@@ -679,7 +709,7 @@ export class Statusline {
 
     /** Write the value readout for the current bar at the current ladder level. */
     private renderValues(): void {
-        const bar = this.hoverBar ?? this.lastBar;
+        const bar = this.hoverBar ?? this.syncedBar ?? this.lastBar;
         if (!bar) {
             this.ohlcEl.replaceChildren();
             this.changeEl.textContent = '';

@@ -385,8 +385,8 @@ action under the built-in id, and the override owns the slot's **whole surface**
 - the native machinery behind the slot is not constructed (the built-in indicator
   picker dialog, for `'indicators'`).
 
-The composite slots (`symbol`, `timeframes`, `style`, `layout`, `undo-redo`, `alerts`,
-`panels`) are stateful controls the shell pushes state into — a `{label, icon, run}`
+The composite slots (`symbol`, `timeframes`, `style`, `layout`, `undo-redo`, `replay`,
+`alerts`, `panels`) are stateful controls the shell pushes state into — a `{label, icon, run}`
 descriptor cannot stand in for them, so registering under those ids is refused with a
 console warning.
 

@@ -172,6 +172,10 @@ export class SceneGraph {
      *  price-axis decimals — the instrument's true precision instead of the zoom-derived
      *  formula. Undefined until symbol metadata loads (the formula is the fallback). */
     priceMintick: number | undefined = undefined;
+    /** The price column is narrow (a phone cell): axis labels abbreviate (84.5K) and the
+     *  last-price chip follows. Set by the renderer from its own width — see
+     *  `axisMasterWidth`. */
+    priceCompact = false;
     /** Price-axis mode on the price pane: `'price'` (absolute) or `'percent'` (change
      *  vs `percentBaseline`). Gridlines, axis labels and crosshair chip all follow it. */
     scaleMode: ScaleMode = 'price';

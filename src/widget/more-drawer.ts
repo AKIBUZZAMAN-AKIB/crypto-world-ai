@@ -81,6 +81,50 @@ const CSS = `
     color: var(--vela-fg-muted);
 }
 .vela-md-empty { padding: 18px 2px; color: var(--vela-fg-muted); font-size: 13px; }
+/* Layout sheet: glyph tiles, three across on a phone, larger where there is room. */
+/* The uniform-grid canvas, phone-sized: 20px squares keep the 4×4 block compact so the
+   asymmetric presets below it are one small scroll away, not a page. */
+.vela-md-gridwrap .vela-lp-grid { grid-template-columns: repeat(4, 20px); grid-auto-rows: 20px; gap: 3px; }
+.vela-md-gridwrap { padding: 4px 0 2px; }
+.vela-md-presets {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+    gap: 8px;
+    padding: 2px 0 4px;
+}
+.vela-md-preset {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+    min-height: 76px;
+    padding: 10px 6px 8px;
+    border: 1px solid var(--vela-border);
+    border-radius: 10px;
+    background: var(--vela-panel);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-preset:active { background: var(--vela-hover); }
+.vela-md-preset[data-checked='1'] { border-color: var(--vela-selected-bg); background: var(--vela-hover); }
+.vela-md-preset-glyph { display: block; width: 40px; height: 30px; color: var(--vela-fg-muted); }
+.vela-md-preset[data-checked='1'] .vela-md-preset-glyph { color: var(--vela-fg-bright); }
+.vela-md-preset-glyph svg { display: block; width: 100%; height: 100%; }
+.vela-md-preset-label {
+    font-size: 10.5px;
+    line-height: 1.25;
+    text-align: center;
+    color: var(--vela-fg-muted);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.vela-md-preset[data-checked='1'] .vela-md-preset-label { color: var(--vela-fg-bright); }
 `;
 
 export interface MoreDrawerAction {
@@ -97,6 +141,9 @@ export interface MoreDrawerOptions {
     onRedo?: () => void;
     /** Omitted ⇒ no screenshot action button (composition removed `'screenshot'`). */
     onScreenshot?: () => void;
+    /** Bar replay entry — opens the shell's replay menu. Omitted (with the composition's
+     *  `'replay'` removed, or a shell without replay) ⇒ no Replay action button. */
+    onReplay?: () => void;
     canUndo: () => boolean;
     canRedo: () => boolean;
     /** Chart style list + current selection (read live at open). */
@@ -119,12 +166,25 @@ export interface MoreDrawerOptions {
     layout?: {
         /** Current layout's canvas shape (null = a preset the canvas cannot express). */
         shape: () => { rows: number; cols: number } | null;
-        /** Registered layouts NOT expressible on the canvas — rendered as labeled rows. */
-        presets: () => Array<{ id: string; label: string; checked: boolean }>;
+        /** Registered layouts NOT expressible on the canvas — rendered as glyph tiles,
+         *  grouped by chart count. `icon` is 16px SVG markup; `cells` is the count. */
+        presets: () => Array<{ id: string; label: string; checked: boolean; icon?: string; cells?: number }>;
         onSelectGrid: (rows: number, cols: number) => void;
         onSelectPreset: (id: string) => void;
-        syncs?: () => Array<{ id: string; label: string; checked: boolean }>;
+        syncs?: () => Array<{ id: string; label: string; checked: boolean; group?: string }>;
         onToggleSync?: (id: string) => void;
+        /** Cycle the ACTIVE cell through a link's groups (the row's chip). */
+        onCycleGroup?: (id: string) => void;
+        drawingsScope?: () => 'layout' | 'global';
+        onToggleDrawingsScope?: () => void;
+        hiddenCharts?: () => number;
+        onClearPooled?: () => void;
+        savedLayouts?: () => Array<{ name: string; active: boolean }>;
+        onSaveLayout?: (name: string) => void;
+        onOpenLayout?: (name: string) => void;
+        onDeleteLayout?: (name: string) => void;
+        linkGroup?: () => string | null;
+        onLinkGroup?: (tag: string | null) => void;
         /** The current layout's 16px glyph (`<svg>` markup) for the Layout row. Omitted
          *  ⇒ the registered `'layout'` icon. */
         glyph?: () => string;
@@ -223,6 +283,7 @@ export class MoreDrawer {
         if (this.opts.onUndo) action('undo', 'Undo', this.opts.canUndo(), this.opts.onUndo);
         if (this.opts.onRedo) action('redo', 'Redo', this.opts.canRedo(), this.opts.onRedo);
         if (this.opts.onScreenshot) action('camera', 'Screenshot', true, this.opts.onScreenshot);
+        if (this.opts.onReplay) action('replay', 'Replay', true, this.opts.onReplay);
         if (actions.childElementCount > 0) this.drawer.body.appendChild(actions);
 
         const list = doc.createElement('div');
@@ -291,6 +352,10 @@ export class MoreDrawer {
         list.className = 'vela-md-list';
         // The desktop dropdown's grid canvas, touch-sized: the current rows×cols
         // rectangle is lit, a tap applies that grid immediately (no hover preview).
+        const caption = doc.createElement('div');
+        caption.className = 'vela-md-section';
+        caption.textContent = 'Custom grid';
+        list.appendChild(caption);
         const wrap = doc.createElement('div');
         wrap.className = 'vela-md-gridwrap';
         const { el: grid, squares } = layoutGridCanvas(doc);
@@ -303,16 +368,48 @@ export class MoreDrawer {
         });
         wrap.appendChild(grid);
         list.appendChild(wrap);
-        for (const preset of layout.presets()) {
-            list.appendChild(
-                this.row(doc, preset.label, {
-                    checked: preset.checked,
-                    onClick: () => {
-                        layout.onSelectPreset(preset.id);
-                        this.drawer.hide();
-                    },
-                }),
-            );
+        // The layouts TradingView calls "asymmetric" are the interesting ones — each gets a
+        // GLYPH TILE (the same mini-diagram the desktop dropdown draws) grouped by chart
+        // count, so a phone shows the shape of a layout instead of a wall of text rows.
+        const presets = layout.presets();
+        const byCount = new Map<number, typeof presets>();
+        for (const preset of presets) {
+            const n = preset.cells ?? 0;
+            const bucket = byCount.get(n);
+            if (bucket) bucket.push(preset);
+            else byCount.set(n, [preset]);
+        }
+        for (const n of [...byCount.keys()].sort((a, b) => a - b)) {
+            const group = byCount.get(n)!;
+            const heading = doc.createElement('div');
+            heading.className = 'vela-md-section';
+            heading.textContent = n > 0 ? `${n} chart${n === 1 ? '' : 's'}` : 'Layouts';
+            list.appendChild(heading);
+            const tiles = doc.createElement('div');
+            tiles.className = 'vela-md-presets';
+            for (const preset of group) {
+                const tile = doc.createElement('button');
+                tile.type = 'button';
+                tile.className = 'vela-md-preset';
+                tile.setAttribute('role', 'option');
+                tile.setAttribute('aria-selected', String(preset.checked));
+                tile.setAttribute('aria-label', preset.label);
+                tile.title = preset.label;
+                if (preset.checked) tile.dataset.checked = '1';
+                const glyph = doc.createElement('span');
+                glyph.className = 'vela-md-preset-glyph';
+                if (preset.icon) glyph.innerHTML = preset.icon;
+                const caption = doc.createElement('span');
+                caption.className = 'vela-md-preset-label';
+                caption.textContent = preset.label;
+                tile.append(glyph, caption);
+                tile.addEventListener('click', () => {
+                    layout.onSelectPreset(preset.id);
+                    this.drawer.hide();
+                });
+                tiles.appendChild(tile);
+            }
+            list.appendChild(tiles);
         }
         const syncs = layout.syncs?.() ?? [];
         if (syncs.length > 0) {
@@ -321,8 +418,11 @@ export class MoreDrawer {
             heading.textContent = 'Sync';
             list.appendChild(heading);
             for (const s of syncs) {
+                // The label carries the ACTIVE cell's group ("Symbol · A") — the tap
+                // cycles it, mirroring the desktop row's chip.
+                const label = s.group ? `${s.label} · ${s.group}` : s.label;
                 list.appendChild(
-                    this.row(doc, s.label, {
+                    this.row(doc, label, {
                         checked: s.checked,
                         onClick: () => {
                             layout.onToggleSync?.(s.id);
@@ -330,9 +430,82 @@ export class MoreDrawer {
                         },
                     }),
                 );
+                // Grouping is a second, explicit row: a tap never has to guess between
+                // "link on/off" and "which group" on a touch surface.
+                if (layout.onCycleGroup) {
+                    list.appendChild(
+                        this.row(doc, `${s.label} group`, {
+                            value: s.group ?? 'none',
+                            onClick: () => {
+                                layout.onCycleGroup?.(s.id);
+                                this.render();
+                            },
+                        }),
+                    );
+                }
+            }
+            if (layout.drawingsScope) {
+                list.appendChild(
+                    this.row(doc, 'Drawing scope', {
+                        value: layout.drawingsScope(),
+                        onClick: () => {
+                            layout.onToggleDrawingsScope?.();
+                            this.render();
+                        },
+                    }),
+                );
+            }
+            const hidden = layout.hiddenCharts?.() ?? 0;
+            if (hidden > 0 && layout.onClearPooled) {
+                list.appendChild(
+                    this.row(doc, 'Hidden charts', {
+                        value: `remove ${hidden}`,
+                        onClick: () => {
+                            layout.onClearPooled?.();
+                            this.render();
+                        },
+                    }),
+                );
             }
         }
+        this.renderSavedLayouts(doc, list, layout);
         this.drawer.body.appendChild(list);
+    }
+
+    /** Saved snapshots: open on tap, plus a one-tap save (auto-named). */
+    private renderSavedLayouts(
+        doc: Document,
+        list: HTMLElement,
+        layout: NonNullable<MoreDrawerOptions['layout']>,
+    ): void {
+        if (!layout.savedLayouts) return;
+        const rows = layout.savedLayouts();
+        const heading = doc.createElement('div');
+        heading.className = 'vela-md-section';
+        heading.textContent = 'Saved layouts';
+        list.appendChild(heading);
+        for (const l of rows) {
+            list.appendChild(
+                this.row(doc, l.name, {
+                    ...(l.active ? { checked: true } : {}),
+                    onClick: () => {
+                        layout.onOpenLayout?.(l.name);
+                        this.drawer.hide();
+                    },
+                }),
+            );
+        }
+        if (layout.onSaveLayout) {
+            list.appendChild(
+                this.row(doc, 'Save current layout', {
+                    value: `#${rows.length + 1}`,
+                    onClick: () => {
+                        layout.onSaveLayout?.(`Layout ${rows.length + 1}`);
+                        this.render();
+                    },
+                }),
+            );
+        }
     }
 
     private renderAlerts(doc: Document): void {

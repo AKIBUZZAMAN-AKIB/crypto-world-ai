@@ -57,7 +57,7 @@ import type { IRenderBackend } from './backend/IRenderBackend';
 import { ChromeRenderer } from './chrome/ChromeRenderer';
 import { PriceAxisTickSource } from './chrome/priceAxisTicks';
 import { LabelTooltip } from './chrome/LabelTooltip';
-import { AXIS_MASTER_W, AXIS_MERGED_W } from './chrome/axisLayout';
+import { AXIS_MASTER_W, AXIS_MERGED_W, axisCompact, axisMasterWidth } from './chrome/axisLayout';
 import { CrosshairRenderer } from './chrome/CrosshairRenderer';
 import { SettingsDialog } from './chrome/SettingsDialog';
 import { UserDrawingController } from './drawings/UserDrawingController';
@@ -330,6 +330,8 @@ export class NativeRenderer implements IChartRenderer {
     // ── pane management (merge / reorder / collapse / maximize) ──
     private maximizedPaneId: string | null = null; // pane filling the plot (others hidden), or null
     private rightAxisW = RIGHT_AXIS_W; // total right-gutter width (master column + merged-scale columns)
+    /** The master column has narrowed for a small cell — labels switch to 84.5K form. */
+    private axisLabelsCompact = false;
     private paneControls: PaneControls | null = null; // per-pane hover button cluster (top-right)
     private axisScaleButtons: AxisScaleButtons | null = null; // A/L hover buttons at the bottom of each pane's price scale
     private readonly paneActionCbs = new Set<(a: PaneAction) => void>();
@@ -1518,10 +1520,10 @@ export class NativeRenderer implements IChartRenderer {
             zoomTo: (target, anchorLogical, anchorX) => this.zoomTo(target, anchorLogical, anchorX),
             fling: (v) => this.fling(v),
             onPointerMove: (x, y) => this.handlePointerMove(x, y),
-            onClick: (x, y) => {
+            onClick: (x, y, alt) => {
                 if (this.handleMarkClick(x, y)) return; // a lane glyph takes the click whole
                 this.userDrawings?.deselect(); // a click on the empty plot ends a (multi-)selection
-                this.handleClick(x);
+                this.handleClick(x, alt);
             },
             onAxisLongPress: (axis, x, y) => {
                 for (const cb of this.axisLongPressCbs) cb({ axis, x, y });
@@ -1829,6 +1831,7 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     resize(): void {
+        this.refreshAxisWidth(); // the cell may have crossed a compact-width step
         this.syncSize();
     }
 
@@ -2127,9 +2130,18 @@ export class NativeRenderer implements IChartRenderer {
         return max;
     }
 
-    /** Recompute the right-gutter width (master column + one per merged scale). Re-sizes on change. */
-    private refreshAxisWidth(): boolean {
-        const w = RIGHT_AXIS_W + AXIS_COL_W * this.maxOwnScaleColumns();
+    /** Recompute the right-gutter width (master column + one per merged scale). Re-sizes on change.
+     *  `totalWidth` is the chart's own CSS width: the master column narrows with it so a
+     *  90px phone cell still has a plot (see {@link axisMasterWidth}). */
+    private refreshAxisWidth(totalWidth = this.wrapper?.clientWidth ?? 0): boolean {
+        const master = axisMasterWidth(totalWidth);
+        const compact = axisCompact(totalWidth);
+        const w = master + AXIS_COL_W * this.maxOwnScaleColumns();
+        if (compact !== this.axisLabelsCompact) {
+            this.axisLabelsCompact = compact;
+            this.scene.priceCompact = compact; // the axis chrome reads it while drawing
+            this.scheduler?.invalidate(InvalidateLevel.Chrome); // the tick labels re-text
+        }
         if (w === this.rightAxisW) return false;
         this.rightAxisW = w;
         this.publishGutters();
@@ -2413,6 +2425,22 @@ export class NativeRenderer implements IChartRenderer {
     onClick(cb: (e: ClickEvent) => void): Unsubscribe {
         this.clickCbs.add(cb);
         return () => this.clickCbs.delete(cb);
+    }
+
+    /** The bar CONTAINING `time` — floor by index, the same rule the external ghost uses
+     *  (a 1h instant inside a 1D bar lights that day, never the next). Null off-series. */
+    barAt(time: number): OHLCV | null {
+        const bars = this.bars;
+        if (bars.length === 0 || !Number.isFinite(time)) return null;
+        if (time < bars[0]!.time || time > bars[bars.length - 1]!.time) return null;
+        let lo = 0;
+        let hi = bars.length - 1;
+        while (lo < hi) {
+            const mid = (lo + hi + 1) >> 1;
+            if (bars[mid]!.time <= time) lo = mid;
+            else hi = mid - 1;
+        }
+        return bars[lo]!;
     }
 
     onAxisLongPress(cb: (e: AxisLongPressEvent) => void): Unsubscribe {
@@ -2740,11 +2768,11 @@ export class NativeRenderer implements IChartRenderer {
         for (const cb of this.crosshairCbs) cb(event);
     }
 
-    private handleClick(x: number): void {
+    private handleClick(x: number, alt = false): void {
         if (this.coords.barCount === 0) return;
         const logical = Math.round(this.coords.xToLogical(x));
         const onBar = logical >= 0 && logical < this.coords.barCount;
-        for (const cb of this.clickCbs) cb({ time: onBar ? this.coords.logicalToTime(logical) : null, price: null });
+        for (const cb of this.clickCbs) cb({ time: onBar ? this.coords.logicalToTime(logical) : null, price: null, alt });
     }
 
     /**
@@ -3171,7 +3199,7 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     private dataWindowFmt(v: number, pane: PaneNode | null): string {
-        return pane ? formatPriceLabel(pane.scale, pane.bounds.height, v, this.scene.priceMintick) : String(v);
+        return pane ? formatPriceLabel(pane.scale, pane.bounds.height, v, this.scene.priceMintick, this.axisLabelsCompact) : String(v);
     }
 
     private dataWindowOHLC(bar: OHLCV | undefined, pricePane: PaneNode | null): DataWindowOHLC | null {
@@ -4222,6 +4250,9 @@ export class NativeRenderer implements IChartRenderer {
         const w = this.wrapper.clientWidth;
         const h = this.wrapper.clientHeight;
         if (w <= 0 || h <= 0) return;
+        // The gutter is WIDTH-dependent (a phone cell narrows the price column), so it is
+        // re-derived here — this is the one place every resize path funnels through.
+        this.refreshAxisWidth(w);
         const dpr = window.devicePixelRatio || 1;
         // The plot area is inset to the right of the toolbar gutter; the canvases fill the plot
         // sub-container (0-based), so the coordinate system / pointer coords stay unchanged.

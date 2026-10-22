@@ -89,7 +89,100 @@ const CSS = `
 .vela-lp-preset:hover { background: var(--vela-hover); }
 .vela-lp-preset:active { transform: scale(0.98); }
 .vela-lp-preset[data-checked='1'] { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
-.vela-lp-sync { display: flex; flex-direction: column; gap: 4px; min-width: 118px; }
+.vela-lp-sync { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
+/* Preset glyphs: a compact 4-up grid of icon buttons (the canvas cannot draw them). */
+.vela-lp-presets[data-icons='1'] { display: block; max-height: 232px; overflow-y: auto; overflow-x: hidden; margin-right: -4px; padding-right: 4px; }
+.vela-lp-presetcount { margin: 6px 0 2px; font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--vela-fg-muted); opacity: 0.8; }
+.vela-lp-presetrow { display: grid; grid-template-columns: repeat(4, 24px); gap: 4px; }
+.vela-lp-preset[data-icon='1'] { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; color: var(--vela-fg-muted); background: var(--vela-hover); border: 1px solid var(--vela-border-faint); }
+.vela-lp-preset[data-icon='1'] svg { width: 16px; height: 16px; }
+.vela-lp-preset[data-icon='1']:hover { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
+/* Group chip — the per-chart assignment inside a sync row (TV's "Chart Syncing" chip). */
+.vela-lp-group {
+    all: unset;
+    flex: none;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 3px;
+    border-radius: 4px;
+    border: 1px solid var(--vela-border-soft);
+    background: var(--vela-hover);
+    color: var(--vela-fg-faint);
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 14px;
+    text-align: center;
+    cursor: pointer;
+}
+.vela-lp-group[data-on='1'] { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); background: var(--vela-selected-bg); }
+.vela-lp-group:hover { border-color: var(--vela-border-strong); }
+/* Scope chip on the Drawings row (layout ⇄ global). */
+.vela-lp-scope {
+    all: unset;
+    flex: none;
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid var(--vela-border-soft);
+    color: var(--vela-fg-muted);
+    font-size: 9px;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+.vela-lp-scope[data-global='1'] { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); }
+/* Footer: saved layouts + tab link. */
+.vela-lp-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--vela-border-faint); display: flex; flex-direction: column; gap: 6px; }
+.vela-lp-save { display: flex; gap: 6px; }
+.vela-lp-save input {
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--vela-hover);
+    border: 1px solid var(--vela-border-soft);
+    border-radius: 4px;
+    color: var(--vela-fg);
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 6px;
+}
+.vela-lp-save button, .vela-lp-saved button {
+    all: unset;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--vela-fg-muted);
+    background: var(--vela-hover);
+}
+.vela-lp-save button:hover, .vela-lp-saved button:hover { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
+.vela-lp-saved { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.vela-lp-saved .vela-lp-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; color: var(--vela-fg-muted); }
+.vela-lp-saved .vela-lp-name:hover { color: var(--vela-fg-bright); }
+.vela-lp-saved .vela-lp-name[data-active='1'] { color: var(--vela-fg-bright); font-weight: 500; }
+.vela-lp-links { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--vela-fg-faint); }
+.vela-lp-linkdot { all: unset; width: 14px; height: 14px; border-radius: 50%; cursor: pointer; border: 1px solid var(--vela-border-strong); }
+.vela-lp-linkdot[data-tag='none'] { background: transparent; }
+/* The four tab-link tags are identity colors, not theme colors: they must read the same
+   in every theme, so they are deliberately fixed. */
+.vela-lp-linkdot[data-tag='red'] { background: #e05252; border-color: #e05252; } /* palette-exempt: tab link tag */
+.vela-lp-linkdot[data-tag='green'] { background: #3fa45b; border-color: #3fa45b; } /* palette-exempt: tab link tag */
+.vela-lp-linkdot[data-tag='blue'] { background: #4a86d8; border-color: #4a86d8; } /* palette-exempt: tab link tag */
+.vela-lp-linkdot[data-tag='amber'] { background: #d8a13a; border-color: #d8a13a; } /* palette-exempt: tab link tag */
+.vela-lp-pool {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 6px 8px;
+    text-align: left;
+    font: inherit;
+    font-size: 11px;
+    color: var(--vela-fg-muted);
+    background: none;
+    border: 1px solid var(--vela-border);
+    border-radius: 4px;
+    cursor: pointer;
+}
+.vela-lp-pool:hover { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); }
+.vela-lp-linkdot[data-on='1'] { outline: 2px solid var(--vela-fg-bright); outline-offset: 1px; }
 .vela-lp-sync-row { all: unset; display: flex; align-items: center; gap: 14px; padding: 6px 8px; border-radius: 5px; cursor: pointer; }
 .vela-lp-sync-row:hover { background: var(--vela-hover); }
 .vela-lp-sync-row .vela-lp-label { flex: 1 1 auto; }
@@ -162,13 +255,33 @@ export interface LayoutPickerOptions {
     host: HTMLElement;
     /** Current layout's canvas shape (null = a preset the canvas cannot express). */
     shape: () => LayoutPickerShape | null;
-    /** Registered layouts NOT expressible on the canvas — rendered as labeled rows. */
-    presets: () => Array<{ id: string; label: string; checked: boolean }>;
+    /** Registered layouts NOT expressible on the canvas — rendered as a glyph grid when
+     *  they carry an `icon` (SVG markup), labeled rows otherwise. `cells` groups them by
+     *  chart count (the family is 40+ ids now). */
+    presets: () => Array<{ id: string; label: string; checked: boolean; icon?: string; cells?: number }>;
     onSelectGrid: (rows: number, cols: number) => void;
     onSelectPreset: (id: string) => void;
-    /** SYNC switch rows (re-read on every open and after every toggle). */
-    syncs: () => Array<{ id: string; label: string; checked: boolean }>;
+    /** SYNC switch rows (re-read on every open and after every toggle). `group` is the
+     *  ACTIVE cell's group for that link, when the link is grouped. */
+    syncs: () => Array<{ id: string; label: string; checked: boolean; group?: string }>;
     onToggleSync: (id: string) => void;
+    /** Cycle the ACTIVE cell through the link's groups (none → A → B → C → none). */
+    onCycleGroup?: (id: string) => void;
+    /** The drawing scope the workspace holds (the chip on the Drawings row). */
+    drawingsScope?: () => 'layout' | 'global';
+    onToggleDrawingsScope?: () => void;
+    /** Named snapshots: open / delete (rows), save (the input). */
+    savedLayouts?: () => Array<{ name: string; active: boolean }>;
+    onSaveLayout?: (name: string) => void;
+    onOpenLayout?: (name: string) => void;
+    onDeleteLayout?: (name: string) => void;
+    /** Dormant (pooled) charts — the smaller layouts the workspace has visited. Their
+     *  state is kept so the slot restores; the row below offers to drop them. */
+    hiddenCharts?: () => number;
+    onClearPooled?: () => void;
+    /** Tab-link tag (TradingView Desktop's colored tab link): null = unlinked. */
+    linkGroup?: () => string | null;
+    onLinkGroup?: (tag: string | null) => void;
     onOpenChange?: (open: boolean) => void;
 }
 
@@ -182,6 +295,7 @@ export class LayoutPicker {
     private readonly infoTip: Tooltip;
     private readonly presetsEl: HTMLElement;
     private readonly syncEl: HTMLElement;
+    private readonly footEl: HTMLElement;
 
     private isOpen = false;
     /** The card's exit animation after a close; a reopen cancels it. */
@@ -258,6 +372,11 @@ export class LayoutPicker {
         syncCol.appendChild(this.syncEl);
         cols.appendChild(syncCol);
 
+        // ── footer: named layouts + the tab link (both shell-level, not per cell) ──
+        this.footEl = doc.createElement('div');
+        this.footEl.className = 'vela-lp-foot';
+        panel.appendChild(this.footEl);
+
         // ── canvas interactions: hover previews the rectangle, click applies it ──
         grid.addEventListener('pointerdown', (e) => {
             const sq = this.squareAt(e);
@@ -331,6 +450,7 @@ export class LayoutPicker {
         if (!this.isOpen) return;
         this.renderPresets();
         this.renderSyncs();
+        this.renderFooter();
         this.render();
     }
 
@@ -369,40 +489,196 @@ export class LayoutPicker {
         this.presetsEl.replaceChildren();
         const presets = this.opts.presets();
         this.presetsEl.style.display = presets.length > 0 ? '' : 'none';
-        for (const p of presets) {
-            const b = doc.createElement('button');
-            b.className = 'vela-lp-preset';
-            b.textContent = p.label;
-            if (p.checked) b.dataset.checked = '1';
-            b.addEventListener('click', () => {
-                this.close();
-                this.opts.onSelectPreset(p.id);
-            });
-            this.presetsEl.appendChild(b);
+        // The asymmetric presets ship a glyph: a 4-up icon grid keeps the card compact
+        // where forty labeled rows would triple its height.
+        const iconic = presets.length > 0 && presets.every((p) => p.icon);
+        if (iconic) this.presetsEl.dataset.icons = '1';
+        else delete this.presetsEl.dataset.icons;
+        // Grouped by chart count — the id family is long enough that an ungrouped grid
+        // reads as noise; a `2 charts` caption is what the eye sorts by.
+        const counts = [...new Set(presets.map((p) => p.cells ?? 0))].sort((a, b) => a - b);
+        const grouped = counts.length > 1 && presets.some((p) => p.cells !== undefined);
+        for (const n of grouped ? counts : [null]) {
+            if (n !== null) {
+                const caption = doc.createElement('div');
+                caption.className = 'vela-lp-presetcount';
+                caption.textContent = `${n} chart${n === 1 ? '' : 's'}`;
+                this.presetsEl.appendChild(caption);
+            }
+            const row = doc.createElement('div');
+            row.className = 'vela-lp-presetrow';
+            for (const p of presets) {
+                if (n !== null && (p.cells ?? 0) !== n) continue;
+                const b = doc.createElement('button');
+                b.className = 'vela-lp-preset';
+                if (p.icon) {
+                    b.dataset.icon = '1';
+                    b.innerHTML = p.icon;
+                    b.setAttribute('aria-label', p.label);
+                } else {
+                    b.textContent = p.label;
+                }
+                b.title = p.label;
+                if (p.checked) b.dataset.checked = '1';
+                b.addEventListener('click', () => {
+                    this.close();
+                    this.opts.onSelectPreset(p.id);
+                });
+                row.appendChild(b);
+            }
+            this.presetsEl.appendChild(row);
         }
     }
 
     private renderSyncs(): void {
         const doc = this.doc;
         this.syncEl.replaceChildren();
+        const scope = this.opts.drawingsScope?.();
         for (const s of this.opts.syncs()) {
             const row = doc.createElement('button');
             row.className = 'vela-lp-sync-row';
             const label = doc.createElement('span');
             label.className = 'vela-lp-label';
             label.textContent = s.label;
+            row.setAttribute('role', 'switch');
+            row.setAttribute('aria-checked', String(s.checked));
+            // The drawing scope is a second axis on the Drawings row (layout ⇄ global):
+            // TV's "sync drawings in layout / globally" pair.
+            if (s.id === 'drawings' && this.opts.drawingsScope) {
+                const chip = doc.createElement('span');
+                chip.className = 'vela-lp-scope';
+                chip.textContent = scope === 'global' ? 'global' : 'layout';
+                if (scope === 'global') chip.dataset.global = '1';
+                chip.setAttribute('role', 'button');
+                chip.setAttribute('aria-label', `Drawing scope: ${scope ?? 'layout'} — click to switch`);
+                chip.addEventListener('click', (e) => {
+                    e.stopPropagation(); // never flips the link switch
+                    this.opts.onToggleDrawingsScope?.();
+                    this.renderSyncs();
+                });
+                row.append(label, chip);
+            } else {
+                row.append(label);
+            }
+            // Group chip: the ACTIVE cell's group for this link. Clicking cycles it, the
+            // per-chart half of TV's emoji "Chart Syncing" chips.
+            if (this.opts.onCycleGroup && scope !== 'global') {
+                const chip = doc.createElement('span');
+                chip.className = 'vela-lp-group';
+                chip.textContent = s.group ?? '–';
+                if (s.group) chip.dataset.on = '1';
+                chip.setAttribute('role', 'button');
+                chip.setAttribute('aria-label', `${s.label} group: ${s.group ?? 'none'} — click to change`);
+                chip.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.opts.onCycleGroup?.(s.id);
+                    this.renderSyncs();
+                });
+                row.appendChild(chip);
+            }
             const pill = doc.createElement('span');
             pill.className = 'vela-lp-switch' + (s.checked ? ' on' : '');
             pill.setAttribute('aria-hidden', 'true');
-            row.setAttribute('role', 'switch');
-            row.setAttribute('aria-checked', String(s.checked));
-            row.append(label, pill);
+            row.appendChild(pill);
             row.addEventListener('click', () => {
                 this.opts.onToggleSync(s.id);
                 this.renderSyncs(); // switches stay open — flip, see, flip again
             });
             this.syncEl.appendChild(row);
         }
+    }
+
+    /** Saved layouts + the tab link — the card's footer. */
+    private renderFooter(): void {
+        const doc = this.doc;
+        this.footEl.replaceChildren();
+        const saved = this.opts.savedLayouts;
+        if (saved) {
+            const form = doc.createElement('div');
+            form.className = 'vela-lp-save';
+            const input = doc.createElement('input');
+            input.type = 'text';
+            input.placeholder = 'Save layout as…';
+            input.setAttribute('aria-label', 'Save layout as');
+            const save = doc.createElement('button');
+            save.type = 'button';
+            save.textContent = 'Save';
+            const commit = (): void => {
+                const name = input.value.trim();
+                if (!name) return;
+                this.opts.onSaveLayout?.(name);
+                input.value = '';
+                this.renderFooter();
+            };
+            save.addEventListener('click', commit);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') commit();
+                e.stopPropagation(); // the panel's Escape/typing must not reach the shell
+            });
+            form.append(input, save);
+            this.footEl.appendChild(form);
+            for (const l of saved()) {
+                const row = doc.createElement('div');
+                row.className = 'vela-lp-saved';
+                const name = doc.createElement('span');
+                name.className = 'vela-lp-name';
+                name.textContent = l.name;
+                name.title = `Open “${l.name}”`;
+                if (l.active) name.dataset.active = '1';
+                name.addEventListener('click', () => this.opts.onOpenLayout?.(l.name));
+                const del = doc.createElement('button');
+                del.type = 'button';
+                del.textContent = '✕';
+                del.title = `Delete “${l.name}”`;
+                del.setAttribute('aria-label', `Delete ${l.name}`);
+                del.addEventListener('click', () => {
+                    this.opts.onDeleteLayout?.(l.name);
+                    this.renderFooter();
+                });
+                row.append(name, del);
+                this.footEl.appendChild(row);
+            }
+        }
+        if (this.opts.hiddenCharts && this.opts.onClearPooled) {
+            const hidden = this.opts.hiddenCharts();
+            if (hidden > 0) {
+                const row = doc.createElement('button');
+                row.type = 'button';
+                row.className = 'vela-lp-pool';
+                row.textContent = `Remove ${hidden} hidden chart${hidden === 1 ? '' : 's'}`;
+                row.title = 'Free the charts the smaller layouts left dormant';
+                row.setAttribute('aria-label', row.title);
+                row.addEventListener('click', () => {
+                    this.opts.onClearPooled?.();
+                    this.renderFooter();
+                });
+                this.footEl.appendChild(row);
+            }
+        }
+        if (this.opts.onLinkGroup) {
+            const links = doc.createElement('div');
+            links.className = 'vela-lp-links';
+            const caption = doc.createElement('span');
+            caption.textContent = 'Link tabs';
+            links.appendChild(caption);
+            const current = this.opts.linkGroup?.() ?? null;
+            for (const tag of [null, 'red', 'green', 'blue', 'amber']) {
+                const dot = doc.createElement('button');
+                dot.type = 'button';
+                dot.className = 'vela-lp-linkdot';
+                dot.dataset.tag = tag ?? 'none';
+                if ((current ?? null) === tag) dot.dataset.on = '1';
+                dot.title = tag ? `Link to other tabs tagged ${tag}` : 'Unlink tabs';
+                dot.setAttribute('aria-label', dot.title);
+                dot.addEventListener('click', () => {
+                    this.opts.onLinkGroup?.(tag);
+                    this.renderFooter();
+                });
+                links.appendChild(dot);
+            }
+            this.footEl.appendChild(links);
+        }
+        this.footEl.style.display = this.footEl.childElementCount > 0 ? '' : 'none';
     }
 
     /** Anchor under the trigger, clamped to the host's right edge. */

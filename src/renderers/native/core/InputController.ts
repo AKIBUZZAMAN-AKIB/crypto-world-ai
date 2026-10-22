@@ -13,7 +13,7 @@ export interface InputControllerDeps {
     fling(rightOffsetVelocity: number): void;
     /** Pointer moved over the chart (for the crosshair); null when it leaves. */
     onPointerMove(x: number | null, y: number | null): void;
-    onClick(x: number, y: number): void;
+    onClick(x: number, y: number, alt: boolean): void;
     /** Grab the price axis at (`x`,`y`) — record the scale column there + its window (for a rescale drag). */
     beginPriceScale(x: number, y: number): void;
     /** Rescale the grabbed pane vertically by the TOTAL pixel drag (down ⇒ zoom out / compress). */
@@ -216,6 +216,8 @@ export class InputController {
     private region: DragRegion = 'data';
     private verticalPan = false; // data-area drag also pans price (pane in manual-scale mode)
     private startX = 0;
+    /** Alt held at PRESS time — Alt+Click's maximize chord (read at click, not at up). */
+    private altPress = false;
     private startY = 0;
     private startRightOffset = 0;
     private startBarSpacing = 0;
@@ -400,6 +402,7 @@ export class InputController {
         this.deps.drawingsClearTransient?.(); // a finished ruler vanishes on the next press (pan still proceeds)
         this.dragging = true;
         this.moved = false;
+        this.altPress = e.altKey === true;
         this.startX = x;
         this.startY = y;
         this.prevPressDrawing = this.lastPressDrawing;
@@ -641,7 +644,7 @@ export class InputController {
         if (this.dragging && this.region === 'drawing') {
             this.deps.drawingsPointerUp?.(x, y, this.snapMode(e));
         } else if (tapRelease && this.region === 'data') {
-            this.deps.onClick(x, y);
+            this.deps.onClick(x, y, this.altPress);
         } else if (this.dragging && this.region === 'data' && wasTouch) {
             // Only a finger flicks: a mouse release stops dead, so a scrub lands exactly
             // where the pointer let go instead of coasting past it.

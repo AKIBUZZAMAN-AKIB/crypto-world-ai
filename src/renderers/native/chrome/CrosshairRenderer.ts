@@ -106,7 +106,7 @@ export class CrosshairRenderer {
         // An unscaled pane (axisFormat 'none') has no value axis, so no value chip either.
         if (horizontal && pane && pane.axisFormat !== 'none') {
             const price = coords.yToPrice(ch.y, pane.scale, pane.bounds);
-            this.chip(ctx, dataW + 1, ch.y, formatAxisValue(pane.scale, pane.bounds.height, price, percentScaleFor(scene, pane), scene.priceMintick, pane.axisFormat), chipBg, 'left', false, theme.background);
+            this.chip(ctx, dataW + 1, ch.y, formatAxisValue(pane.scale, pane.bounds.height, price, percentScaleFor(scene, pane), scene.priceMintick, pane.axisFormat, scene.priceCompact), chipBg, 'left', false, theme.background);
         }
         // time chip on the bottom axis
         if (vertical) this.chip(ctx, x, dataH + 1, formatTimeStamp(coords.logicalToTime(logical), scene.timezone, coords.barInterval), chipBg, 'center', true, theme.background);
@@ -169,7 +169,7 @@ export class CrosshairRenderer {
                 }
             }
             if (pane && pane.axisFormat !== 'none') {
-                this.chip(ctx, dataW + 1, ext.y, formatAxisValue(pane.scale, pane.bounds.height, ext.price, percentScaleFor(scene, pane), scene.priceMintick, pane.axisFormat), chipBg, 'left', false, theme.background);
+                this.chip(ctx, dataW + 1, ext.y, formatAxisValue(pane.scale, pane.bounds.height, ext.price, percentScaleFor(scene, pane), scene.priceMintick, pane.axisFormat, scene.priceCompact), chipBg, 'left', false, theme.background);
             }
         }
         this.chip(ctx, x, dataH + 1, formatTimeStamp(ext.time, scene.timezone, coords.barInterval), chipBg, 'center', true, theme.background);

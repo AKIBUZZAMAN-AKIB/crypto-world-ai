@@ -140,6 +140,8 @@ export interface CrosshairEvent {
 export interface ClickEvent {
     time: Millis | null;
     price: number | null;
+    /** Alt was held at press time — the host's Alt+Click chord (maximize the chart). */
+    alt?: boolean;
 }
 
 /** A touch long-press on an axis strip — the mobile substitute for a right-click menu. */
@@ -400,6 +402,12 @@ export interface IChartRenderer {
     /** The renderer tells core when the user toggles an indicator's visibility in-chart (the legend eye). */
     onToggleIndicatorVisible?(cb: (id: string, visible: boolean) => void): Unsubscribe;
     onCrosshairMove(cb: (e: CrosshairEvent) => void): Unsubscribe;
+    /**
+     * The bar CONTAINING `time` (epoch ms), or null when the instant is outside the
+     * loaded series — the synced-crosshair readout a follower's status line renders.
+     * OPTIONAL: a renderer without it simply leaves the follower on its resting bar.
+     */
+    barAt?(time: number): OHLCV | null;
     onClick(cb: (e: ClickEvent) => void): Unsubscribe;
     /** Touch long-press on a price or time axis strip. Optional — a renderer without
      *  touch axis gestures omits it; host chrome (timezone / price-scale sheets) keys off it. */

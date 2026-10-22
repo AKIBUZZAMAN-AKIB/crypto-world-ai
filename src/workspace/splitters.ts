@@ -32,6 +32,25 @@ export function resizeTracks(weights: readonly number[], index: number, deltaPx:
 }
 
 /**
+ * Move EVERY internal boundary by the same pixel delta — PURE. TradingView's
+ * Shift+drag: the outer tracks trade weight (the first grows by the delta, the last
+ * shrinks by it) while the inner ones keep their size, so a whole row/column band
+ * slides instead of one seam. Both ends are clamped to {@link MIN_TRACK_FRAC}.
+ */
+export function resizeAllTracks(weights: readonly number[], deltaPx: number, sizePx: number): number[] {
+    const out = [...weights];
+    if (out.length < 2 || sizePx <= 0) return out;
+    const total = out.reduce((s, w) => s + w, 0);
+    const min = total * MIN_TRACK_FRAC;
+    let deltaFr = (deltaPx / sizePx) * total;
+    deltaFr = Math.max(deltaFr, min - out[0]!); // the first track never below min
+    deltaFr = Math.min(deltaFr, out[out.length - 1]! - min); // the last never below min
+    out[0] = out[0]! + deltaFr;
+    out[out.length - 1] = out[out.length - 1]! - deltaFr;
+    return out;
+}
+
+/**
  * Pixel centers of the INTERNAL track boundaries (`n-1` entries) — where the divider
  * strips sit. PURE: cumulative weights over the gap-corrected content size.
  */
@@ -98,7 +117,12 @@ export interface SplitterDeps {
     gapPx(): number;
 }
 
-const HIT_PX = 8; // strip thickness (the visible seam is the grid gap; this is the grab target)
+/**
+ * Strip thickness (the visible seam is the grid gap; this is the grab target). A finger
+ * needs more than a mouse: coarse pointers get a 20px band. Resolved per layout() so a
+ * rotated tablet / a resized desktop window re-measures without a rebuild.
+ */
+const hitPx = (): number => (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 20 : 8);
 
 /**
  * Owns the divider strips over a grid container: one strip per seam SEGMENT of each
@@ -110,7 +134,15 @@ const HIT_PX = 8; // strip thickness (the visible seam is the grid gap; this is 
  */
 export class SplitterLayer {
     private readonly strips: HTMLDivElement[] = [];
-    private drag: { axis: 'cols' | 'rows'; index: number; startPx: number; startWeights: number[]; sizePx: number } | null = null;
+    private drag: {
+        axis: 'cols' | 'rows';
+        index: number;
+        startPx: number;
+        startWeights: number[];
+        sizePx: number;
+        /** Shift held at grab time: every boundary of the axis slides together. */
+        all: boolean;
+    } | null = null;
 
     constructor(
         private readonly container: HTMLElement,
@@ -123,6 +155,7 @@ export class SplitterLayer {
         const grid = this.deps.grid();
         const rect = this.container.getBoundingClientRect();
         const gap = this.deps.gapPx();
+        const HIT_PX = hitPx();
         const placements: Array<{ axis: 'cols' | 'rows'; index: number; css: string }> = [];
         for (const [i, x] of trackOffsets(cols, rect.width, gap).entries()) {
             for (const [from, to] of seamSegments(grid, 'cols', i)) {
@@ -187,6 +220,7 @@ export class SplitterLayer {
             startPx: axis === 'cols' ? e.clientX : e.clientY,
             startWeights: [...tracks],
             sizePx: (axis === 'cols' ? rect.width : rect.height) - gap * (tracks.length - 1),
+            all: e.shiftKey,
         };
         try {
             el.setPointerCapture(e.pointerId);
@@ -197,7 +231,7 @@ export class SplitterLayer {
             const d = this.drag;
             if (!d) return;
             const delta = (d.axis === 'cols' ? ev.clientX : ev.clientY) - d.startPx;
-            this.deps.apply(d.axis, resizeTracks(d.startWeights, d.index, delta, d.sizePx));
+            this.deps.apply(d.axis, d.all ? resizeAllTracks(d.startWeights, delta, d.sizePx) : resizeTracks(d.startWeights, d.index, delta, d.sizePx));
         };
         const up = (): void => {
             this.drag = null;

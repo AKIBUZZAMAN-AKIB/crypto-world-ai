@@ -10,7 +10,11 @@
 // the storage seam. Nothing here touches the URL — hosts wanting shareable links
 // compose them from `getState()` themselves.
 
-/** The linkable dimensions. `crosshair` mirrors the pointer time onto same-group
+/**
+ * The linkable dimensions. `time` aligns a clicked point in time across same-group
+ * cells without touching their span (TradingView's "Time" sync): the follower keeps
+ * its own zoom and is re-centered on the clicked instant. `viewport` is the heavier
+ * sibling that copies the whole from–to range. `crosshair` mirrors the pointer time onto same-group
  *  cells as GHOST crosshairs (renderers without the optional `setExternalCrosshair`
  *  seam simply never display one). `drawings` copies each NEWLY CREATED drawing onto
  *  same-group cells and keeps the set linked: edits and removals of any member
@@ -19,10 +23,10 @@
  *  independent). After a reload, every drawing is unpaired again. `style` mirrors
  *  the chart's presentation settings — the Canvas and Scales-and-lines slice of the
  *  renderer config plus the status-line display prefs — onto same-group cells. */
-export type SyncKind = 'viewport' | 'symbol' | 'timeframe' | 'crosshair' | 'drawings' | 'style';
+export type SyncKind = 'viewport' | 'time' | 'symbol' | 'timeframe' | 'crosshair' | 'drawings' | 'style';
 
 /** Every linkable dimension — the one list the codec and both shells iterate. */
-export const SYNC_KINDS = ['viewport', 'symbol', 'timeframe', 'crosshair', 'drawings', 'style'] as const;
+export const SYNC_KINDS = ['viewport', 'time', 'symbol', 'timeframe', 'crosshair', 'drawings', 'style'] as const;
 
 /**
  * One link's configuration: `false`/absent = off; `true` = ALL cells linked (one
@@ -33,6 +37,8 @@ export type SyncSetting = boolean | Readonly<Record<string, string>>;
 
 export interface SyncOptions {
     viewport?: SyncSetting;
+    /** Click-to-align a point in time (see {@link SyncKind}). */
+    time?: SyncSetting;
     symbol?: SyncSetting;
     timeframe?: SyncSetting;
     crosshair?: SyncSetting;
@@ -77,6 +83,12 @@ export interface DrawingToolsState {
  *  and the indicator ledger. The widget's whole chart state is ONE of these. */
 export interface CellState {
     symbol?: string;
+    /**
+     * This chart's own display timezone (IANA name, or `'exchange'` for the symbol's
+     * session rule). Absent ⇒ the workspace default applies. TradingView keeps the zone
+     * per chart; a layout with a US equity beside a crypto pair needs exactly that.
+     */
+    timezone?: string;
     /** The symbol's venue. Mirrors the symbol's own `EXCHANGE:` prefix on new saves;
      *  pre-prefix documents stored it beside a BARE symbol — {@link prefixedSymbol}
      *  welds the two back into the one canonical form at restore time. */
@@ -138,8 +150,25 @@ export interface WorkspaceState {
     activeCellId?: string;
     /** Sync links (workspace only). */
     sync?: SyncOptions;
-    /** Shared display timezone. */
+    /** The workspace DEFAULT display timezone (cells without their own follow it). */
     timezone?: string;
+    /**
+     * Drawings remembered per SYMBOL — the "global" drawing scope: a chart switching to
+     * a symbol whose drawings are stored here gets them back, and the drawings it leaves
+     * behind are kept under its old symbol. Only maintained while the workspace drawing
+     * scope is `'global'`; the in-layout link (`sync.drawings`) is a separate axis.
+     */
+    drawingsBySymbol?: Record<string, unknown>;
+    /** Which scope the workspace was in: `'layout'` (a cell owns its drawings) or
+     *  `'global'` (the symbol does — {@link drawingsBySymbol} is live). Absent = layout. */
+    drawingsScope?: 'layout' | 'global';
+    /** Named workspace snapshots ("Save layout as…") — opaque state documents by name. */
+    savedLayouts?: Record<string, unknown>;
+    /**
+     * Tab-linking tag: workspaces whose documents share a tag mirror their ACTIVE cell's
+     * market (symbol/timeframe) — TradingView Desktop's colored tab link. Absent = unlinked.
+     */
+    linkedGroup?: string;
     /** Favorite drawing-tool types — a SHARED preference (one star set per shell). */
     favorites?: string[];
     /** Favorite timeframes (the topbar's quick-switch chips) — a SHARED preference. */
@@ -216,6 +245,12 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
     if (tools) out.drawingTools = tools;
     const sync = sanitizeSync(d.sync);
     if (sync) out.sync = sync;
+    const bySymbol = sanitizeRecordMap(d.drawingsBySymbol);
+    if (bySymbol) out.drawingsBySymbol = bySymbol;
+    if (d.drawingsScope === 'global' || d.drawingsScope === 'layout') out.drawingsScope = d.drawingsScope;
+    const saved = sanitizeRecordMap(d.savedLayouts);
+    if (saved) out.savedLayouts = saved;
+    if (typeof d.linkedGroup === 'string' && d.linkedGroup) out.linkedGroup = d.linkedGroup;
     const tracks = sanitizeTrackSizes(d.trackSizes);
     if (tracks) out.trackSizes = tracks;
     const panels = sanitizePanels(d.panels);
@@ -271,6 +306,7 @@ function sanitizeCell(raw: unknown): CellState | null {
     if (typeof c.symbol === 'string') out.symbol = c.symbol;
     if (typeof c.provider === 'string') out.provider = c.provider;
     if (typeof c.timeframe === 'string') out.timeframe = c.timeframe;
+    if (typeof c.timezone === 'string' && c.timezone) out.timezone = c.timezone;
     if (typeof c.priceStyle === 'string') out.priceStyle = c.priceStyle;
     if (typeof c.bars === 'number' && Number.isFinite(c.bars) && c.bars > 0) out.bars = c.bars;
     if (c.session === 'regular' || c.session === 'extended') out.session = c.session;
@@ -317,6 +353,19 @@ function sanitizeCell(raw: unknown): CellState | null {
     const ext = sanitizeExt(c.ext);
     if (ext) out.ext = ext;
     return out;
+}
+
+/** A plain string-keyed map of opaque JSON values (drawings-by-symbol, saved layouts).
+ *  Entries with a null/undefined or non-object payload are dropped — every consumer
+ *  validates its own document anyway. */
+function sanitizeRecordMap(raw: unknown): Record<string, unknown> | null {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+        if (k.length === 0 || v == null || typeof v !== 'object') continue;
+        out[k] = v;
+    }
+    return Object.keys(out).length > 0 ? out : null;
 }
 
 function sanitizeSync(raw: unknown): SyncOptions | null {

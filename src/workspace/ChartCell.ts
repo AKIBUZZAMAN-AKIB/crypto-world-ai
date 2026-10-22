@@ -56,6 +56,8 @@ export interface CellSeed {
     data?: OHLCV[];
     /** Initial visible window (boot-only). */
     visibleRange?: VisibleRangePreset | VisibleRange;
+    /** This chart's own timezone (absent = follow the workspace default). */
+    timezone?: string;
 }
 
 /** A destroyed cell's state, kept by the workspace pool so its slot restores later —
@@ -184,6 +186,11 @@ export interface CellDeps {
     onStateDirty(): void;
     /** The shell's toast surface (unresolved-symbol notices land there). */
     toast(message: string, kind: 'info' | 'success' | 'error', durationMs?: number): void;
+    /** Multi-chart: carry this cell's settings onto every other chart ("Apply to all"). */
+    applySettingsToAll?(cellId: string): void;
+    /** Workspace-only legend actions for one indicator row — the "apply to the whole
+     *  layout" pair. Omitted in a single-chart host. */
+    layoutLegendActions?(indicatorId: string, cellId: string): import('../core/ports/IChartRenderer').LegendActionView[];
 }
 
 /** One live manifest/external instance and, when it deviates from declaration
@@ -259,7 +266,7 @@ export class ChartCell {
     private readonly offMarket: () => void;
     /** The cell's durable market state — the seed vocabulary plus the venue mirror the
      *  persisted document carries (`provider` = the symbol's parsed prefix). */
-    private state: CellSeed & Pick<CellState, 'provider'>;
+    private state: CellSeed & Pick<CellState, 'provider' | 'timezone'>;
     private manifest: readonly ResolvedIndicator[] = [];
     /** A restored ledger's manifest entry NAMES, waiting for the manifest to resolve
      *  (a pool/persisted cell can be built before the shared manifest has loaded). */
@@ -308,6 +315,8 @@ export class ChartCell {
             priceStyle: seed.priceStyle,
             bars: seed.bars,
             session: normalizeSession(seed.session),
+            // A cell's own display zone rides the seed (persistence, per-chart choice).
+            ...(seed.timezone ? { timezone: seed.timezone } : {}),
         };
         const doc = gridHost.ownerDocument;
         this.host = doc.createElement('div');
@@ -358,7 +367,12 @@ export class ChartCell {
         this.inner.renderer.set('dialogHost', deps.dialogHost);
         // Contributed legend-row actions — the row resolves on THIS cell's chart; the
         // context follows the workspace rule (built fresh per click, active-cell bound).
-        this.inner.renderer.setLegendActions(legendActionsProviderFor(this.inner, () => deps.context()));
+        // The host's legend actions first, then the WORKSPACE's multi-chart ones (apply
+        // this indicator to every chart / remove it everywhere) — same row, same chip row.
+        this.inner.renderer.setLegendActions((id) => [
+            ...legendActionsProviderFor(this.inner!, () => deps.context())(id),
+            ...(deps.layoutLegendActions?.(id, this.id) ?? []),
+        ]);
         this.inner.renderer.setLegendCallouts(legendCalloutsProviderFor(this.inner, () => deps.context()));
         // The cell owns ONE unified undo timeline (drawings + indicator ops), driven by
         // the workspace keymap. The drawings layer must not self-serve Ctrl+Z/Y or the
@@ -491,8 +505,11 @@ export class ChartCell {
         });
         this.contextMenu = new ChartContextMenu(this.host, {
             resetView: () => this.resetView(),
-            timezone: () => this.deps.timezone(),
-            setTimezone: (zone) => this.deps.setTimezone(zone),
+            ...(this.deps.applySettingsToAll ? { applySettingsToAll: () => this.deps.applySettingsToAll?.(this.id) } : {}),
+            // Checkmarks read THIS chart's effective zone; the scope row decides whether a
+            // pick rewrites this cell alone or the workspace default behind every cell.
+            timezone: () => this.displayTimezone,
+            setTimezone: (zone, scope) => (scope === 'cell' ? this.setTimezone(zone) : this.deps.setTimezone(zone)),
             // Right-clicking activates the cell first (capture-phase pointerdown), so the
             // context the actions receive is this cell's — the active one.
             getContext: () => this.deps.context(),
@@ -626,9 +643,46 @@ export class ChartCell {
         return this.exchangeZone;
     }
 
-    /** The IANA zone this cell's axis renders in: the workspace choice, resolved. */
+    /**
+     * The IANA zone this cell's axis renders in: its OWN choice when it has one, else the
+     * workspace default — resolved through the exchange rule. TradingView keeps the zone
+     * per chart; a US-equity cell beside a 24/7 crypto cell needs exactly that.
+     */
     get displayTimezone(): string {
-        return resolveTimezone(this.deps.timezone(), this.exchangeZone);
+        return resolveTimezone(this.state.timezone ?? this.deps.timezone(), this.exchangeZone);
+    }
+
+    /** This chart's own timezone choice (undefined = follow the workspace). */
+    get timezoneOverride(): string | undefined {
+        return this.state.timezone;
+    }
+
+    /**
+     * Set (or clear, with `null`) THIS chart's timezone — a per-cell display pref, not a
+     * reload: the renderer re-labels its axis in place. The workspace default is
+     * untouched, and other cells keep whatever they follow.
+     */
+    setTimezone(zone: string | null): void {
+        if (zone == null) delete this.state.timezone;
+        else this.state.timezone = zone;
+        this.applyTimezone();
+        this.deps.onStateDirty();
+    }
+
+    /** The bar containing `time` — the synced-crosshair readout (null off-series). */
+    barAt(time: number): OHLCV | null {
+        const renderer = this.inner?.renderer as { barAt?: (t: number) => OHLCV | null } | undefined;
+        return renderer && typeof renderer.barAt === 'function' ? renderer.barAt(time) : null;
+    }
+
+    /** Show (or clear) the bar another chart's crosshair points at — status-line readout. */
+    setSyncedCrosshair(bar: OHLCV | null): void {
+        this.statusline?.setSyncedCrosshair(bar);
+    }
+
+    /** The sync-group emoji for this chart (the workspace projects the links here). */
+    setSyncMarks(marks: ReadonlyArray<{ kind: string; mark: string }>): void {
+        this.statusline?.setSyncMarks(marks);
     }
 
     /**
@@ -1463,6 +1517,13 @@ export class ChartCell {
         if (cs.rendererConfig != null) this.inner.renderer.applyConfig(cs.rendererConfig);
         if (cs.drawings != null) this.inner.drawings.fromJSON(cs.drawings);
         if (cs.indicators) this.applyIndicatorLedger(cs.indicators as { manifest: LedgerManifestEntry[]; natives: LedgerNativeEntry[] });
+        // Per-chart timezone: the document's cell-scoped choice wins (absent = follow the
+        // workspace default), and the axis re-labels in place.
+        if (cs.timezone !== this.state.timezone) {
+            if (cs.timezone) this.state.timezone = cs.timezone;
+            else delete this.state.timezone;
+            this.applyTimezone();
+        }
         // Third-party state converges to the document too: the restored bag REPLACES
         // the baseline (absent in the document = the document carries none), then the
         // registered handlers re-apply. After the ledger — a handler re-adding external
@@ -1512,25 +1573,34 @@ export class ChartCell {
             // shared manifest settles. See {@link indicatorLedger}. External instances
             // (`ctx.addIndicator`) stay out: their names would never resolve against the
             // manifest — their plugin persists them via the `ext` seam instead.
-            indicators: indicatorLedger({
-                // Live handles carry what the registry read cannot: the input DELTAS and
-                // the hidden flag, so native settings/visibility survive the round-trip.
-                present: this.inner ? this.nativeHandles().map((h) => nativeLedgerEntry(h)) : [],
-                instanceEntries: this.instances
-                    .filter((it) => !it.external)
-                    .map((it) => {
-                        // LIVE deltas from the handle; a handle-less instance (add failed)
-                        // keeps whatever values it was restored with.
-                        const d = it.handle ? instanceDeltas(it.handle) : it.values;
-                        const hidden = it.handle ? !it.handle.visible : false;
-                        return d || hidden ? { name: it.entry.name, ...(d ?? {}), ...(hidden ? { hidden: true } : {}) } : it.entry.name;
-                    }),
-                pendingManifest: this.pendingManifestNames,
-                manifestSettled: this.deps.manifestSettled(),
-                volumePending: this.volumeMayBePending && this.volumeIntent,
-            }),
+            indicators: this.indicatorLedger(),
             ...(ext ? { ext } : {}),
         };
+    }
+
+    /**
+     * The cell's indicator ledger — what a NEW chart inherits under
+     * `inheritIndicators`, and the `indicators` field of {@link dehydrate}. Extracted so
+     * inheritance never pays for a full dehydrate (drawings, config, ext) per new cell.
+     */
+    indicatorLedger(): NonNullable<CellState['indicators']> {
+        return indicatorLedger({
+            // Live handles carry what the registry read cannot: the input DELTAS and
+            // the hidden flag, so native settings/visibility survive the round-trip.
+            present: this.inner ? this.nativeHandles().map((h) => nativeLedgerEntry(h)) : [],
+            instanceEntries: this.instances
+                .filter((it) => !it.external)
+                .map((it) => {
+                    // LIVE deltas from the handle; a handle-less instance (add failed)
+                    // keeps whatever values it was restored with.
+                    const d = it.handle ? instanceDeltas(it.handle) : it.values;
+                    const hidden = it.handle ? !it.handle.visible : false;
+                    return d || hidden ? { name: it.entry.name, ...(d ?? {}), ...(hidden ? { hidden: true } : {}) } : it.entry.name;
+                }),
+            pendingManifest: this.pendingManifestNames,
+            manifestSettled: this.deps.manifestSettled(),
+            volumePending: this.volumeMayBePending && this.volumeIntent,
+        });
     }
 
     destroy(): void {

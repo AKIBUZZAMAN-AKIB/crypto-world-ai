@@ -279,6 +279,33 @@ ws.replay.play(1000);
 ws.replay.on('replay:step', ({ cursorTime, remaining }) => updateUi(cursorTime, remaining));
 ```
 
+### The replay controls
+
+The workspace ships the whole replay UI, and it is a pure view over the API above — a
+session started from code, a contribution or a shortcut wears the same chrome:
+
+- **The topbar's replay button** (the `'replay'` entry, beside the alerts bell) opens the
+  menu: **Select bar** (the cursor arms; click any chart to start the replay there),
+  **Select date** (a calendar — the session starts at that day's first bar), **Random
+  bar**, and **Jump to real time** (ends the replay and pans to the newest bars). On a
+  phone the same menu lives behind the kebab drawer's **Replay** action, and a
+  composition without `'replay'` removes both entry points.
+- **The transport bar** floats at the top of the grid while a session runs: play/pause,
+  step forward, the speed menu (0.1 s → 30 s per update), the replay clock, how many bars
+  are left, jump-to-real-time and ✕ to exit. Stepping pauses a running session first.
+- **Keyboard:** `Shift+↓` plays/pauses, `Shift+→` steps (both no-ops outside a session).
+- While **Select bar** is armed, hovering previews the cut on the other charts as a ghost
+  crosshair (`lastOpenClosedBy`), so every chart's clipped edge is visible before the
+  click; `Esc` (or the hint's ✕) cancels.
+
+Turn the whole chrome off with `replay: false` — `ws.replay`, `ctx.replay`, the events
+and the shortcuts' targets stay intact, for a host that drives replay from its own
+controls:
+
+```ts
+new VelaWorkspace('#chart', { replay: false });
+```
+
 - **One replay time, no look-ahead.** `from` is read on one cell the way `chart.replay.start`
   reads it, and the close of that cell's last kept bar becomes the shared replay time. Every
   other chart keeps exactly the bars that had **closed** by then: next to a 1h chart rewound to
@@ -641,7 +668,7 @@ option is pure opt-in, and a shell without it behaves exactly as before.
 ```ts
 new VelaWorkspace('#chart', {
     topbar: {
-        // right undeclared ⇒ default right side (actions, alerts, panels, screenshot)
+        // right undeclared ⇒ default right side (actions, replay, alerts, panels, screenshot)
         left: ['symbol', 'timeframes', 'style', 'my-plugin.indicator-menu.open', 'undo-redo'],
     },
 });
@@ -657,6 +684,7 @@ Entries come from one shared vocabulary:
 | `'layout'` | The layout dropdown (renders on multi-chart shells only). |
 | `'indicators'` | The Indicators slot — the built-in button, or a plugin's [slot override](../contributing/plugin-sdk.md#replacing-a-built-in-button--slot-overrides). Omitting it removes the button, the mobile stop, the `/` shortcut, and skips the picker dialog. |
 | `'undo-redo'` | The undo/redo pair. |
+| `'replay'` | The bar-replay button — opens the replay menu (Select bar / Select date / Random bar). Renders only when the shell runs the replay chrome (`replay: false` removes it, and the mobile bar has no counterpart). |
 | `'alerts'` | The alerts bell (badge included). |
 | `'panels'` | The side-panel toggle group (object tree, data window, contributed panels). |
 | `'screenshot'` | The screenshot slot — the built-in download button, or a plugin's override (which then also owns `mod+alt+S` and the mobile drawer button). |

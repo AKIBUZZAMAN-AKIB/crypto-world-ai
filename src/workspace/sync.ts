@@ -8,11 +8,42 @@
 
 // The link TYPES live in the shared state document (`src/state/document.ts`) — sync
 // settings are part of the persisted format. Re-exported here unchanged.
-import type { SyncSetting } from '../state/document';
+import type { SyncKind, SyncOptions, SyncSetting } from '../state/document';
 import { CANDLE_OVERRIDE_KEYS } from '../renderers/native/core/chartConfig';
+import { SYNC_KINDS } from '../state/document';
 
 export type { SyncKind, SyncSetting, SyncOptions } from '../state/document';
 export { SYNC_KINDS } from '../state/document';
+
+/**
+ * The group MARKS, in the order the chip cycles them: TradingView's chart-syncing
+ * palette. A group id is just a string, so these read as "the red link" in the picker,
+ * in the status line, and in the shared state document alike — a host that wants its
+ * own marks can `setGroup` any other string and everything still works.
+ */
+export const SYNC_GROUP_MARKS = ['🔴', '🟢', '🔵', '🟡'] as const;
+
+/** The update rule behind the picker's group chip: unlinked ⇒ the first FREE mark (or
+ *  the first one), a mark ⇒ the next one, the last ⇒ unlinked. PURE. */
+export function nextGroupMark(current: string | undefined, inUse: readonly string[], marks: readonly string[] = SYNC_GROUP_MARKS): string | null {
+    if (current == null) {
+        const free = marks.find((m) => !inUse.includes(m));
+        return free ?? marks[0] ?? null;
+    }
+    const i = marks.indexOf(current);
+    return i >= 0 && i + 1 < marks.length ? marks[i + 1]! : null;
+}
+
+/** Every link's mark for one cell ("this chart is 🔴 for symbol, 🟢 for crosshair") —
+ *  PURE, in {@link SYNC_KINDS} order, so the badge reads the same everywhere. */
+export function cellGroupMarks(cellId: string, settings: SyncOptions): Array<{ kind: SyncKind; mark: string }> {
+    const out: Array<{ kind: SyncKind; mark: string }> = [];
+    for (const kind of SYNC_KINDS) {
+        const mark = groupOf(settings[kind], cellId);
+        if (mark) out.push({ kind, mark });
+    }
+    return out;
+}
 
 /** The cells that follow `originId` under `setting` — PURE (never includes the origin). */
 export function syncTargets(originId: string, setting: SyncSetting | undefined, cellIds: readonly string[]): string[] {
@@ -91,4 +122,69 @@ export function styleConfigPatch(origin: unknown, follower: unknown): Record<str
 
 function asRecord(v: unknown): Record<string, unknown> | null {
     return v != null && typeof v === 'object' ? (v as Record<string, unknown>) : null;
+}
+
+// ── Switch state (what the layout dropdown shows) ──────────────────────────────────
+//
+// The picker's switches are pure presentation over {@link SyncSetting}: `true` and a
+// non-empty group record are BOTH "on" — a record is just the grouped form of on. The
+// old picker compared with `=== true`, so a host-set group record rendered every switch
+// as OFF and the first click silently deleted the groups. These helpers are the one
+// truth both shells read.
+
+/** Is the link on — in either form (all-cells, or a group record with members)? */
+export function syncEnabled(setting: SyncSetting | undefined): boolean {
+    if (setting == null || setting === false) return false;
+    if (setting === true) return true;
+    return Object.keys(setting).length > 0;
+}
+
+/** The distinct group names in a record, in first-seen order (empty for `true`/off). */
+export function syncGroups(setting: SyncSetting | undefined): string[] {
+    if (setting == null || setting === false || setting === true) return [];
+    const seen: string[] = [];
+    for (const g of Object.values(setting)) if (!seen.includes(g)) seen.push(g);
+    return seen;
+}
+
+/** The group a cell belongs to (undefined when unlinked or in the all-cells form). */
+export function groupOf(setting: SyncSetting | undefined, cellId: string): string | undefined {
+    if (setting == null || setting === false || setting === true) return undefined;
+    return setting[cellId];
+}
+
+/**
+ * The setting after putting `cellId` in `group` (or taking it out with `null`) — PURE.
+ * `base` seeds the record: an existing record is edited, `true` seeds every listed cell
+ * into the FIRST group so a host's all-cells link upgrades rather than collapsing.
+ * Returns `undefined` when the last member leaves (the link is then simply off).
+ */
+export function groupSetting(
+    base: SyncSetting | undefined,
+    cellId: string,
+    group: string | null,
+    cellIds: readonly string[] = [],
+): SyncSetting | undefined {
+    const next: Record<string, string> = {};
+    if (base != null && base !== true) {
+        for (const [id, g] of Object.entries(base)) next[id] = g;
+    } else if (base === true) {
+        for (const id of cellIds) next[id] = 'A';
+    }
+    if (group == null) delete next[cellId];
+    else next[cellId] = group;
+    return Object.keys(next).length > 0 ? next : undefined;
+}
+
+/**
+ * The follower's range after aligning a clicked instant: same span, re-centered on
+ * `timeMs`. Null when the range is degenerate (nothing to preserve). The result is not
+ * clamped to history — the chart's own setters clamp, and a partially-visible target
+ * instant is still the right answer.
+ */
+export function alignedRangeAround(range: { from: number; to: number }, timeMs: number): { from: number; to: number } | null {
+    const span = range.to - range.from;
+    if (!(span > 0) || !Number.isFinite(timeMs)) return null;
+    const from = timeMs - span / 2;
+    return { from, to: from + span };
 }

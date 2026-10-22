@@ -28,6 +28,11 @@ export interface WorkspaceReplayStartOptions {
     from: number;
     /** The cell `from` is read on (default: the active cell). */
     cell?: string;
+    /**
+     * Which charts replay. `'all'` (default) is the whole-grid session; `'cell'` rewinds
+     * ONLY the reference chart — TradingView's "apply on all charts" switch, off.
+     */
+    scope?: 'all' | 'cell';
 }
 
 /** What the controller reads from its workspace. */
@@ -72,6 +77,8 @@ export class WorkspaceReplay {
     private muted = 0;
     /** A chart finished during a group step — the session ends right after it. */
     private finishedDuringStep = false;
+    /** `'cell'` scope: only this cell replays (null = the whole grid). */
+    private scopedId: string | null = null;
 
     constructor(private readonly host: WorkspaceReplayHost) {
         for (const cell of host.cells()) this.watch(cell);
@@ -93,12 +100,13 @@ export class WorkspaceReplay {
         if (!ref) return;
         if (this.playing) this.pause();
         this.rejoining.clear();
+        this.scopedId = opts.scope === 'cell' ? ref.id : null;
         await ref.chart.replay.start({ from: opts.from });
         const cursor = ref.chart.replay.state.cursorTime;
         if (cursor == null) return; // nothing to replay there — the chart warned
         const session = { clock: barClose(cursor, ref.chart.market.timeframe) };
         this.session = session;
-        await Promise.all(this.host.cells().filter((c) => c.id !== ref.id).map((c) => this.startCell(c, session.clock)));
+        await Promise.all(this.replayCells().filter((c) => c.id !== ref.id).map((c) => this.startCell(c, session.clock)));
         if (this.session !== session) return; // stopped or superseded meanwhile
         this.syncPlayback();
         const s = this.activeChart()?.replay.state;
@@ -150,7 +158,7 @@ export class WorkspaceReplay {
 
     /** `active`/`playing`/`intervalMs` for the whole workspace; the cursor fields read the ACTIVE cell's chart. */
     get state(): ReplayState {
-        const s = this.session ? this.activeChart()?.replay.state : undefined;
+        const s = this.session ? (this.scopedId ? (this.replayCells()[0]?.chart ?? this.activeChart()) : this.activeChart())?.replay.state : undefined;
         return {
             active: this.session !== null,
             playing: this.playing,
@@ -182,9 +190,16 @@ export class WorkspaceReplay {
 
     // ── internals ──
 
-    /** The one chart of a single-chart layout — it replays on its own, tick replay included. */
-    private solo(): Vela | null {
+    /** The charts this session drives: the whole grid, or the one cell of a `'cell'` scope. */
+    private replayCells(): readonly Cell[] {
         const cells = this.host.cells();
+        return this.scopedId == null ? cells : cells.filter((c) => c.id === this.scopedId);
+    }
+
+    /** The one chart of a single-chart layout (or a one-cell scope) — it replays on its
+     *  own, tick replay included. */
+    private solo(): Vela | null {
+        const cells = this.replayCells();
         return cells.length === 1 ? cells[0]!.chart : null;
     }
 
@@ -206,7 +221,7 @@ export class WorkspaceReplay {
     private stepGroup(): boolean {
         const session = this.session;
         if (!session) return false;
-        const cells = this.host.cells();
+        const cells = this.replayCells();
         let next = Infinity;
         for (const c of cells) {
             const t = c.chart.replay.state.nextTime;
@@ -278,6 +293,7 @@ export class WorkspaceReplay {
     /** End the session on every chart (idempotent). */
     private finish(reason: ReplayEndReason): void {
         const had = this.session !== null;
+        this.scopedId = null;
         this.session = null;
         this.playing = false;
         this.clearTimer();
@@ -329,6 +345,7 @@ export class WorkspaceReplay {
         this.watch(cell);
         const session = this.session;
         if (!session) return;
+        if (this.scopedId !== null && id !== this.scopedId) return; // a one-chart session stays one chart
         // A cell born mid-replay joins at the shared time once its first bars are on screen.
         this.rejoining.add(id);
         void cell.chart.ready().then(async () => {

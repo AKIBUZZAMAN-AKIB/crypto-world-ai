@@ -157,6 +157,7 @@ export function paneAxisTicks(
     pct?: PctScale,
     mintick?: number,
     format?: 'volume' | 'none',
+    compact = false,
 ): Array<{ price: number; label: string }> {
     if (format === 'none') return [];
     if (pct) {
@@ -175,7 +176,7 @@ export function paneAxisTicks(
     if (format === 'volume') {
         return paneTicks(scale, heightPx).map((price) => ({ price, label: formatCompactValue(price) }));
     }
-    return paneTicks(scale, heightPx).map((price) => ({ price, label: formatPriceLabel(scale, heightPx, price, mintick) }));
+    return paneTicks(scale, heightPx).map((price) => ({ price, label: formatPriceLabel(scale, heightPx, price, mintick, compact) }));
 }
 
 /** Format a single price for an axis chip in the pane's mode (percent / indexed vs absolute; a
@@ -187,11 +188,12 @@ export function formatAxisValue(
     pct?: PctScale,
     mintick?: number,
     format?: 'volume' | 'none',
+    compact = false,
 ): string {
     if (format === 'none') return '';
     if (pct) return pct.indexed ? formatIndex(toIndex(value, pct.baseline)) : formatPct(toPct(value, pct.baseline));
     if (format === 'volume') return formatCompactValue(value);
-    return formatPriceLabel(scale, heightPx, value, mintick);
+    return formatPriceLabel(scale, heightPx, value, mintick, compact);
 }
 
 /**
@@ -201,7 +203,22 @@ export function formatAxisValue(
  * read well. Shared by the price axis, the current-price line, and the crosshair so
  * they always agree.
  */
-export function formatPriceLabel(scale: { min: number; max: number; log?: boolean }, heightPx: number, value: number, mintick?: number): string {
+export function formatPriceLabel(
+    scale: { min: number; max: number; log?: boolean },
+    heightPx: number,
+    value: number,
+    mintick?: number,
+    /** Shorten large values to 84.5K / 1.2M — used when the price column is narrow (a
+     *  phone cell), where eight glyphs of axis would eat the plot. */
+    compact = false,
+): string {
+    if (compact && Number.isFinite(value) && Math.abs(value) >= 1_000) {
+        // Three to four significant digits, so neighbouring ticks never collapse onto the
+        // same text (2480 and 2505 must not both read 2.5K).
+        const abs = Math.abs(value);
+        if (abs >= 1e6) return `${(value / 1e6).toFixed(abs >= 1e7 ? 1 : 2)}M`;
+        return `${(value / 1e3).toFixed(abs >= 1e5 ? 1 : 2)}K`;
+    }
     const wideLog = scale.log && Math.log10(scale.max) - Math.log10(scale.min) >= 1.1;
     if (wideLog) {
         const d = valueDecimals(value);
