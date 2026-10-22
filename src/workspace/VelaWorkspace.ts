@@ -674,6 +674,9 @@ export class VelaWorkspace {
                 syncs: () => this.syncRows(),
                 onToggleSync: (id) => this.toggleSync(id as SyncKind),
                 onCycleGroup: (id) => this.cycleGroup(id as SyncKind),
+                charts: () => this.syncCharts(),
+                onCycleCellGroup: (kind, cellId) => this.cycleGroupFor(kind as SyncKind, cellId),
+                onAllInOneGroup: (kind) => this.syncAllInOneGroup(kind as SyncKind),
                 drawingsScope: () => this.drawingsScope,
                 onToggleDrawingsScope: () => this.setDrawingsScope(this.drawingsScope === 'global' ? 'layout' : 'global'),
                 hiddenCharts: () => this.hiddenChartCount,
@@ -2367,7 +2370,7 @@ export class VelaWorkspace {
      *  the tap target — you mark the chart you are looking at, not the "active" one). */
     openSyncDrawer(cellId?: string): void {
         if (cellId && this.cellsById.has(cellId) && cellId !== this.activeId) this.setActiveCell(cellId);
-        this.openMoreDrawer('layout', 'sync');
+        this.openMoreDrawer('layout', 'sync', cellId);
     }
 
     /** Re-draw every cell's emoji badge from the live links (cheap; runs on a link edit). */
@@ -3019,7 +3022,7 @@ export class VelaWorkspace {
         this.drawingsDrawer.open();
     }
 
-    private openMoreDrawer(view: 'main' | 'layout' = 'main', focus?: 'sync'): void {
+    private openMoreDrawer(view: 'main' | 'layout' = 'main', focus?: 'sync', cellId?: string): void {
         // The drawer is the mobile counterpart of the topbar's tools — composition-
         // hidden entries lose their drawer rows too (handlers omitted ⇒ rows omitted).
         const has = (id: string): boolean => topbarHas(this.topbarComp, id);
@@ -3060,6 +3063,7 @@ export class VelaWorkspace {
                 onCycleGroup: (id) => this.cycleGroup(id as SyncKind),
                 charts: () => this.syncCharts(),
                 onCycleCellGroup: (kind, cellId) => this.cycleGroupFor(kind as SyncKind, cellId),
+                onSelectChart: (cellId) => { if (this.cellsById.has(cellId)) this.setActiveCell(cellId); },
                 onAllInOneGroup: (kind) => this.syncAllInOneGroup(kind as SyncKind),
                 onApplySettingsToAll: () => this.applySettingsToAll(),
                 onApplyIndicatorsToAll: () => this.applyIndicatorsToAll(),
@@ -3084,7 +3088,7 @@ export class VelaWorkspace {
                 }
             },
         });
-        this.moreDrawer.open(view, focus ? { focus } : {});
+        this.moreDrawer.open(view, { ...(focus ? { focus } : {}), ...(cellId ? { cell: cellId } : {}) });
     }
 
     /** The contributed topbar actions the mobile menu lists, from one cluster. */

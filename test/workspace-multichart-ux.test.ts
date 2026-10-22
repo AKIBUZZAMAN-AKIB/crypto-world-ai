@@ -15,7 +15,7 @@ import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { VelaWorkspace } from '../src/workspace/VelaWorkspace';
 import { SplitterLayer } from '../src/workspace/splitters';
 import { bodyItems } from '../src/widget/context-menu-model';
-import { alignedRangeAround, groupSetting, syncEnabled, syncGroups } from '../src/workspace/sync';
+import { SYNC_GROUP_MARKS, alignedRangeAround, groupSetting, syncEnabled, syncGroups } from '../src/workspace/sync';
 import { resizeAllTracks, resizeTracks } from '../src/workspace/splitters';
 import { layoutDefinition, layouts, occupancyGrid } from '../src/workspace/layouts';
 import { decodeState, encodeState } from '../src/state/document';
@@ -114,15 +114,47 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         expect(chip().textContent).toBe('🔴');
         // …and the chart's OWN status line wears the same emoji (TV's placement).
         expect(ws.cell('btc')!.host.querySelector('.vela-sl-marks')?.textContent).toBe('🔴');
-        chip().click();
-        expect(ws.sync.groupOf('symbol', 'btc')).toBe('🟢');
-        chip().click();
-        expect(ws.sync.groupOf('symbol', 'btc')).toBe('🔵');
-        chip().click();
-        expect(ws.sync.groupOf('symbol', 'btc')).toBe('🟡');
+        // The palette is ten marks deep (one per chart of the biggest layout): the chip
+        // walks it in order and the last tap unlinks — TV's "uncheck the emoji".
+        const walked = [SYNC_GROUP_MARKS.indexOf('🔴')];
+        for (let i = 1; i < 10; i += 1) {
+            chip().click();
+            const mark = ws.sync.groupOf('symbol', 'btc');
+            expect(mark).toBe(SYNC_GROUP_MARKS[i]);
+            walked.push(i);
+        }
+        expect(walked.length).toBe(10);
         chip().click();
         expect(ws.sync.groupOf('symbol', 'btc')).toBeUndefined();
         expect(ws.cell('btc')!.host.querySelector<HTMLElement>('.vela-sl-marks')!.hidden).toBe(true);
+    });
+
+    it('the desktop picker marks ANY chart — the strip is the phone rows\' twin', () => {
+        const ws = mountWorkspace(PAGE);
+        ws.sync.set('symbol', true, false); // all-cells form
+        openPicker(ws);
+        const pills = (): HTMLElement[] => [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-target')];
+        expect(pills().map((p) => p.textContent)).toEqual(['BTC', 'ETH', 'SOL', 'BNB', 'ALL']);
+        // The ACTIVE chart is preselected, so the strip never changes what a chip means
+        // for anyone who ignores it.
+        expect(pills()[0]!.dataset.on).toBe('1');
+        expect(pills()[0]!.dataset.active).toBe('1');
+        // Mark ETH without ever making it active.
+        pills()[1]!.click();
+        expect(pills()[1]!.dataset.on).toBe('1');
+        expect(ws.active.id).toBe('btc');
+        const chip = (): HTMLElement => syncRow(ws, 'Symbol')!.querySelector<HTMLElement>('.vela-lp-group')!;
+        expect(chip().textContent).toBe('A'); // ETH follows in the implicit group
+        chip().click();
+        expect(ws.sync.groupOf('symbol', 'eth')).toBe('🔴');
+        expect(ws.sync.groupOf('symbol', 'btc')).toBe('A'); // the active chart untouched
+        expect(ws.cell('eth')!.host.querySelector('.vela-sl-marks')?.textContent).toBe('🔴');
+        expect(chip().textContent).toBe('🔴');
+        // ALL → one click drops every chart back into a single group.
+        pills()[4]!.click();
+        expect(chip().textContent).toBe('ALL');
+        chip().click();
+        expect(ws.sync.state().symbol).toBe(true);
     });
 
     it('the drawable scope chip flips the drawing scope in place', () => {

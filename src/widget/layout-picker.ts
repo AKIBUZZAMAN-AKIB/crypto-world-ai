@@ -13,6 +13,7 @@ import { Tooltip } from '../ui/components/tooltip';
 import { announceSurface } from '../ui/surface-events';
 import { holdForExit, type SurfaceExit } from '../ui/surface-exit';
 import { IMPLICIT_GROUP } from '../state/document';
+import { groupMarkColor } from '../workspace/sync-marks';
 
 const STYLE_ID = 'vela-widget-layout-picker-v15';
 // One monochrome selection language across the panel: lit cells and sync ON
@@ -115,11 +116,44 @@ const CSS = `
     text-align: center;
     cursor: pointer;
 }
-.vela-lp-group[data-on='1'] { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); background: var(--vela-selected-bg); }
+.vela-lp-group[data-on='1'] {
+    color: var(--vela-fg-bright);
+    border-color: color-mix(in srgb, var(--vela-lp-mark, var(--vela-selected-bg)) 75%, transparent);
+    background: color-mix(in srgb, var(--vela-lp-mark, var(--vela-selected-bg)) 26%, transparent);
+}
 /* The IMPLICIT group: the all-cells form is every chart in one group ('A'), not "no
    group" — the chip says so, dashed to mark it as the unnamed default. */
 .vela-lp-group[data-implicit='1'] { border-style: dashed; background: var(--vela-hover); color: var(--vela-fg); }
+.vela-lp-group[data-all='1'] { min-width: 22px; font-size: 8.5px; letter-spacing: 0.3px; }
 .vela-lp-group:hover { border-color: var(--vela-border-strong); }
+/* The MARKING strip: one pill per chart (plus ALL), so any chart can be given a group
+   without first clicking its cell — the desktop answer to the phone's chart rows. */
+.vela-lp-marking { display: flex; align-items: center; gap: 4px; margin: 0 0 6px; flex-wrap: wrap; }
+.vela-lp-marking-label { font-size: 10px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--vela-fg-muted); margin-right: 2px; }
+.vela-lp-target {
+    all: unset;
+    box-sizing: border-box;
+    min-width: 28px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 4px;
+    border: 1px solid var(--vela-border-soft);
+    background: var(--vela-hover);
+    color: var(--vela-fg-muted);
+    font-size: 10px;
+    font-weight: 600;
+    text-align: center;
+    line-height: 18px;
+    cursor: pointer;
+}
+.vela-lp-target:hover { color: var(--vela-fg-bright); border-color: var(--vela-border-strong); }
+.vela-lp-target[data-on='1'] { background: var(--vela-accent, var(--vela-selected-bg)); border-color: var(--vela-accent, var(--vela-selected-bg)); color: #fff; }
+/* The chart that is also the ACTIVE cell keeps a hairline: the strip's default is that
+   chart, so the marking target and "what I am looking at" stay legible apart. */
+.vela-lp-target[data-active='1']:not([data-on='1']) { border-color: var(--vela-border-strong); color: var(--vela-fg-bright); }
+.vela-lp-target[data-all='1'] { border-style: dashed; letter-spacing: 0.4px; }
+/* The hint under the rows: says plainly what the chips do. */
+.vela-lp-markhint { margin-top: 4px; font-size: 10px; line-height: 1.35; color: var(--vela-fg-faint); }
 /* Scope chip on the Drawings row (layout ⇄ global). */
 .vela-lp-scope {
     all: unset;
@@ -266,11 +300,20 @@ export interface LayoutPickerOptions {
     onSelectGrid: (rows: number, cols: number) => void;
     onSelectPreset: (id: string) => void;
     /** SYNC switch rows (re-read on every open and after every toggle). `group` is the
-     *  ACTIVE cell's group for that link, when the link is grouped. */
-    syncs: () => Array<{ id: string; label: string; checked: boolean; group?: string }>;
+     *  ACTIVE cell's group for that link; `marks` is the same reading for EVERY chart —
+     *  what the "Marking" strip needs to paint the selected chart's chip. */
+    syncs: () => Array<{ id: string; label: string; checked: boolean; group?: string; marks?: Record<string, string> }>;
     onToggleSync: (id: string) => void;
     /** Cycle the ACTIVE cell through the link's groups (none → A → B → C → none). */
     onCycleGroup?: (id: string) => void;
+    /** The charts the "Marking" strip lists, in slot order (the phone's sheet has the
+     *  same list). Without it the picker can only mark the active cell. */
+    charts?: () => Array<{ id: string; label: string; active: boolean }>;
+    /** Cycle ANY chart through a link's groups — the desktop twin of the phone's chart
+     *  row, so a chart does not have to be made active to be marked. */
+    onCycleCellGroup?: (kind: string, cellId: string) => void;
+    /** Put EVERY chart in one group for a link (the phone's "All charts, one group"). */
+    onAllInOneGroup?: (kind: string) => void;
     /** The drawing scope the workspace holds (the chip on the Drawings row). */
     drawingsScope?: () => 'layout' | 'global';
     onToggleDrawingsScope?: () => void;
@@ -306,6 +349,8 @@ export class LayoutPicker {
     private exit: SurfaceExit | null = null;
     /** Hover preview (1-based rows/cols), null = show current shape. */
     private hover: { rows: number; cols: number } | null = null;
+    /** Which chart the group chips mark: a cell id, or 'all' for "every chart at once". */
+    private markTarget: string | 'all' | null = null;
 
     private readonly onDocPointerDown = (e: PointerEvent): void => {
         const t = e.target as Node | null;
@@ -538,7 +583,55 @@ export class LayoutPicker {
         const doc = this.doc;
         this.syncEl.replaceChildren();
         const scope = this.opts.drawingsScope?.();
-        for (const s of this.opts.syncs()) {
+        const charts = this.opts.charts?.() ?? [];
+        const syncs = this.opts.syncs();
+        // Default the target to the ACTIVE cell, and keep it valid when the layout
+        // changes under the open picker (a chart can disappear).
+        if (this.markTarget !== 'all' && !charts.some((c) => c.id === this.markTarget)) {
+            this.markTarget = charts.find((c) => c.active)?.id ?? charts[0]?.id ?? null;
+        }
+        if (charts.length > 1 && this.opts.onCycleCellGroup) {
+            const strip = doc.createElement('div');
+            strip.className = 'vela-lp-marking';
+            strip.setAttribute('role', 'group');
+            strip.setAttribute('aria-label', 'Chart to mark');
+            const cap = doc.createElement('span');
+            cap.className = 'vela-lp-marking-label';
+            cap.textContent = 'Mark';
+            strip.appendChild(cap);
+            for (const c of charts) {
+                const b = doc.createElement('button');
+                b.type = 'button';
+                b.className = 'vela-lp-target';
+                b.textContent = c.label;
+                b.setAttribute('aria-pressed', String(this.markTarget === c.id));
+                if (c.active) b.dataset.active = '1';
+                if (this.markTarget === c.id) b.dataset.on = '1';
+                b.title = `${c.label}${c.active ? ' (active)' : ''} — then click a group chip`;
+                b.addEventListener('click', () => {
+                    this.markTarget = c.id;
+                    this.renderSyncs();
+                });
+                strip.appendChild(b);
+            }
+            if (this.opts.onAllInOneGroup) {
+                const all = doc.createElement('button');
+                all.type = 'button';
+                all.className = 'vela-lp-target';
+                all.dataset.all = '1';
+                all.textContent = 'ALL';
+                all.setAttribute('aria-pressed', String(this.markTarget === 'all'));
+                if (this.markTarget === 'all') all.dataset.on = '1';
+                all.title = 'Every chart in one group — then click a group chip';
+                all.addEventListener('click', () => {
+                    this.markTarget = 'all';
+                    this.renderSyncs();
+                });
+                strip.appendChild(all);
+            }
+            this.syncEl.appendChild(strip);
+        }
+        for (const s of syncs) {
             const row = doc.createElement('button');
             row.className = 'vela-lp-sync-row';
             const label = doc.createElement('span');
@@ -564,19 +657,33 @@ export class LayoutPicker {
             } else {
                 row.append(label);
             }
-            // Group chip: the ACTIVE cell's group for this link. Clicking cycles it, the
-            // per-chart half of TV's emoji "Chart Syncing" chips.
-            if (this.opts.onCycleGroup && scope !== 'global') {
+            // Group chip: the MARKED chart's group for this link (default: the active
+            // cell). Clicking cycles it — TV's per-chart emoji "Chart Syncing", with the
+            // target chosen from the strip so a chart never has to be activated first.
+            const markable = (this.opts.onCycleCellGroup && this.markTarget && this.markTarget !== 'all')
+                || (this.opts.onCycleGroup && this.markTarget !== 'all')
+                || (this.markTarget === 'all' && this.opts.onAllInOneGroup);
+            if (markable && scope !== 'global') {
+                const cellId = this.markTarget !== 'all' ? this.markTarget : null;
+                const mark = cellId ? (s.marks?.[cellId] ?? s.group) : undefined;
                 const chip = doc.createElement('span');
                 chip.className = 'vela-lp-group';
-                chip.textContent = s.group ?? '–';
-                if (s.group) chip.dataset.on = '1';
-                if (s.group === IMPLICIT_GROUP) chip.dataset.implicit = '1';
+                chip.textContent = cellId ? (mark ?? '–') : 'ALL';
+                if (mark) chip.dataset.on = '1';
+                if (mark === IMPLICIT_GROUP) chip.dataset.implicit = '1';
+                if (!cellId) chip.dataset.all = '1';
+                const color = groupMarkColor(mark);
+                if (color) chip.style.setProperty('--vela-lp-mark', color);
+                else chip.style.removeProperty('--vela-lp-mark');
                 chip.setAttribute('role', 'button');
-                chip.setAttribute('aria-label', `${s.label} group: ${s.group ?? 'none'} — click to change`);
+                chip.setAttribute('aria-label', cellId
+                    ? `${s.label} group for ${cellId.toUpperCase()}: ${mark ?? 'none'} — click to change`
+                    : `Put every chart in one ${s.label} group`);
                 chip.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    this.opts.onCycleGroup?.(s.id);
+                    if (cellId && this.opts.onCycleCellGroup) this.opts.onCycleCellGroup(s.id, cellId);
+                    else if (cellId) this.opts.onCycleGroup?.(s.id);
+                    else this.opts.onAllInOneGroup?.(s.id);
                     this.renderSyncs();
                 });
                 row.appendChild(chip);
@@ -590,6 +697,16 @@ export class LayoutPicker {
                 this.renderSyncs(); // switches stay open — flip, see, flip again
             });
             this.syncEl.appendChild(row);
+        }
+        // One line of plain language, the same contract the phone sheet states: links
+        // decide WHAT follows, the chips decide WHO follows whom.
+        if (charts.length > 1 && this.opts.onCycleCellGroup) {
+            const hint = doc.createElement('div');
+            hint.className = 'vela-lp-markhint';
+            hint.textContent = this.markTarget === 'all'
+                ? 'A chip tap puts every chart in one group for that link.'
+                : `A chip marks ${(charts.find((c) => c.id === this.markTarget)?.label ?? 'this chart')}; the same mark means the same group.`;
+            this.syncEl.appendChild(hint);
         }
     }
 

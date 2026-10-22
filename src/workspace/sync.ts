@@ -17,13 +17,8 @@ import { IMPLICIT_GROUP } from '../state/document';
 export type { SyncKind, SyncSetting, SyncOptions } from '../state/document';
 export { IMPLICIT_GROUP, SYNC_KINDS } from '../state/document';
 
-/**
- * The group MARKS, in the order the chip cycles them: TradingView's chart-syncing
- * palette. A group id is just a string, so these read as "the red link" in the picker,
- * in the status line, and in the shared state document alike — a host that wants its
- * own marks can `setGroup` any other string and everything still works.
- */
-export const SYNC_GROUP_MARKS = ['🔴', '🟢', '🔵', '🟡'] as const;
+import { SYNC_GROUP_MARKS } from './sync-marks';
+export { SYNC_GROUP_MARKS, groupMarkColor } from './sync-marks';
 
 /** The update rule behind the picker's group chip: unlinked ⇒ the first FREE mark (or
  *  the first one), a mark ⇒ the next one, the last ⇒ unlinked. PURE. */

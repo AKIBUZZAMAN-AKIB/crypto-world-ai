@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-// The MOBILE sync surface: the kebab's Sync view is the phone's whole linking UI, so it
-// has to be a real switchboard — seven switches that read ON/OFF, a group chip per link,
-// and a chart × link matrix that can mark ANY chart (the desktop chip can only mark the
-// active one, and a phone has no hover to pick with).
+// The MOBILE layout surface: one sheet, two REAL tabs (Layout | Sync). The Sync tab is
+// the phone's whole linking UI — the link x chart TABLE first (ten distinct marks, so ten
+// charts can each wear their own), then the seven switches that decide what follows. The
+// table scrolls sideways INSIDE itself; the sheet never does.
 import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 
 (globalThis as { CSS?: unknown }).CSS ??= { escape: (v: string) => v };
@@ -15,7 +15,7 @@ import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 import { MoreDrawer } from '../src/widget/more-drawer';
 import { Statusline } from '../src/widget/statusline';
 import { VelaWorkspace } from '../src/workspace/VelaWorkspace';
-import { IMPLICIT_GROUP, markOf, nextGroupMark } from '../src/workspace/sync';
+import { IMPLICIT_GROUP, SYNC_GROUP_MARKS, markOf, nextGroupMark } from '../src/workspace/sync';
 import type { OHLCV } from '../src/core/model/ohlcv';
 
 beforeAll(() => {
@@ -68,7 +68,13 @@ describe('markOf — the chip/status-line reading of a link', () => {
 
     it('the implicit group is not a palette mark, so the first chip tap still hands out 🔴', () => {
         expect(nextGroupMark(undefined, [])).toBe('🔴');
-        expect(nextGroupMark('🔴', ['🔴'])).toBe('🟢');
+        expect(nextGroupMark('🔴', ['🔴'])).toBe('🟠');
+    });
+
+    it('the palette holds TEN distinct marks — one per chart of the biggest layout, and then some', () => {
+        expect(SYNC_GROUP_MARKS.length).toBe(10);
+        expect(new Set(SYNC_GROUP_MARKS).size).toBe(10);
+        expect((SYNC_GROUP_MARKS as readonly string[]).includes(IMPLICIT_GROUP)).toBe(false);
     });
 });
 
@@ -82,6 +88,7 @@ describe('the kebab drawer’s Sync view', () => {
         };
         const marks = (): Record<string, string> => ({ btc: 'A', eth: 'A', sol: 'A', bnb: 'A' });
         const cycles: Array<[string, string]> = [];
+        const all: string[] = [];
         const toggles: string[] = [];
         const host = document.createElement('div');
         document.body.append(host);
@@ -129,25 +136,54 @@ describe('the kebab drawer’s Sync view', () => {
                     { id: 'sol', label: 'SOL', active: false },
                 ],
                 onCycleCellGroup: (id, cellId) => cycles.push([id, cellId]),
+                onAllInOneGroup: (id) => all.push(id),
                 drawingsScope: () => 'layout',
                 onToggleDrawingsScope: () => {},
                 savedLayouts: () => [],
             },
         });
-        return { drawer, state, cycles, toggles };
+        return { drawer, state, cycles, all, toggles };
     };
 
-    it('the main list offers a Sync row with an at-a-glance count', () => {
-        const { drawer, state } = setup();
+    it('the main list has ONE layout entry — sync is a tab inside it, not a second row', () => {
+        const { drawer } = setup();
         drawer.open();
-        const row = [...document.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.startsWith('Sync'))!;
-        expect(row.querySelector('.vela-md-row-value')?.textContent).toBe('off');
-        state.symbol!.checked = true;
-        drawer.close();
-        drawer.open();
-        expect(
-            [...document.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.startsWith('Sync'))!.querySelector('.vela-md-row-value')?.textContent,
-        ).toBe('1/2');
+        const labels = [...document.querySelectorAll('.vela-md-row .vela-md-row-label')].map((r) => r.textContent);
+        expect(labels).toContain('Layout');
+        expect(labels).not.toContain('Sync');
+        (document.querySelectorAll<HTMLElement>('.vela-md-row')[labels.indexOf('Layout')] as HTMLElement).click();
+        const tabs = [...document.querySelectorAll<HTMLElement>('.vela-md-navbtn')];
+        expect(tabs.map((t) => t.textContent)).toEqual(['Layout', 'Sync']);
+        drawer.destroy();
+    });
+
+    it('the two tabs swap panes — one sheet, never both at once', () => {
+        const { drawer } = setup();
+        drawer.open('layout');
+        const secs = [...document.querySelectorAll<HTMLElement>('.vela-md-sec')];
+        expect(secs.length).toBe(2);
+        // Layout is the landing tab.
+        expect(secs[0]!.hidden).toBe(false);
+        expect(secs[1]!.hidden).toBe(true);
+        const [layoutTab, syncTab] = [...document.querySelectorAll<HTMLElement>('.vela-md-navbtn')];
+        expect(layoutTab!.getAttribute('aria-selected')).toBe('true');
+        syncTab!.click();
+        expect(secs[0]!.hidden).toBe(true);
+        expect(secs[1]!.hidden).toBe(false);
+        expect(syncTab!.getAttribute('aria-selected')).toBe('true');
+        expect(syncTab!.hasAttribute('data-active')).toBe(true);
+        layoutTab!.click();
+        expect(secs[0]!.hidden).toBe(false);
+        expect(secs[1]!.hidden).toBe(true);
+        drawer.destroy();
+    });
+
+    it('focus: sync lands on the Sync tab', () => {
+        const { drawer } = setup();
+        drawer.open('layout', { focus: 'sync' });
+        const secs = [...document.querySelectorAll<HTMLElement>('.vela-md-sec')];
+        expect(secs[0]!.hidden).toBe(true);
+        expect(secs[1]!.hidden).toBe(false);
         drawer.destroy();
     });
 
@@ -169,29 +205,86 @@ describe('the kebab drawer’s Sync view', () => {
         drawer.destroy();
     });
 
-    it('the chip cycles the active chart and never flips the switch', () => {
-        const { drawer, state, toggles } = setup();
-        drawer.open('layout');
-        const row = document.querySelector<HTMLElement>('.vela-md-sync')!;
-        const chip = row.querySelector<HTMLElement>('.vela-md-chip')!;
-        expect(chip.textContent).toBe('–');
-        chip.click();
-        expect(toggles).toEqual([]); // no accidental toggle
-        expect(state.symbol!.group).toBe('🔴');
-        expect(row.querySelector('.vela-md-chip')?.textContent).toBe('🔴');
+    it('the switch is ONLY a switch — the per-chart chips live in the matrix', () => {
+        const { drawer } = setup();
+        drawer.open('layout', { focus: 'sync' });
+        const rows = [...document.querySelectorAll<HTMLElement>('.vela-md-sync[role="switch"]')];
+        expect(rows.length).toBe(2);
+        expect(rows.every((r) => r.querySelector('.vela-md-chip') === null)).toBe(true);
+        // One column per chart, plus the link column and the ALL column.
+        expect([...document.querySelectorAll('.vela-md-matrix-head[data-cell]')].map((h) => h.textContent)).toEqual(['BTC', 'ETH', 'SOL']);
         drawer.destroy();
     });
 
-    it('the matrix marks ANY chart per link, a chip per chart', () => {
+    it('the matrix is link x chart: every chart gets a chip on every link, in its own scroller', () => {
         const { drawer, cycles } = setup();
-        drawer.open('layout');
-        const heads = [...document.querySelectorAll('.vela-md-matrix-head')].map((h) => h.textContent);
-        // One head per chart plus the ALL column (drop the link into a single group).
-        expect(heads).toEqual(['BTC', 'ETH', 'SOL', 'ALL']);
-        const chips = document.querySelectorAll('.vela-md-matrix .vela-md-chip:not([data-all])');
-        expect(chips.length).toBe(2 * 3); // one row per link, one chip per chart
-        (chips[5] as HTMLElement).click(); // Interval × SOL (row 2, last column)
+        drawer.open('layout', { focus: 'sync' });
+        const wrap = document.querySelector<HTMLElement>('.vela-md-matrixwrap')!;
+        // The sideways scroll belongs to the TABLE, never to the sheet.
+        expect(wrap.contains(document.querySelector('.vela-md-matrix'))).toBe(true);
+        expect(document.querySelectorAll('.vela-md-matrix-label').length).toBe(2);
+        // 2 links x 3 charts, plus one ALL chip per link.
+        expect(document.querySelectorAll('.vela-md-matrix-chip[data-cell]').length).toBe(6);
+        expect(document.querySelectorAll('.vela-md-matrix-chip[data-all]').length).toBe(2);
+        const chip = document.querySelector<HTMLElement>('.vela-md-chip[data-kind="timeframe"][data-cell="sol"]')!;
+        chip.click();
         expect(cycles).toEqual([['timeframe', 'sol']]);
+        drawer.destroy();
+    });
+
+    it('a chart column header wears the distinct groups that chart sits in', () => {
+        const { drawer, state } = setup();
+        state.symbol!.group = 'A';
+        state.symbol!.checked = true;
+        drawer.open('layout', { focus: 'sync' });
+        const btc = document.querySelector<HTMLElement>('.vela-md-matrix-head[data-cell="btc"]')!;
+        expect(btc.dataset.marks).toBe('A');
+        expect(btc.hasAttribute('data-linked')).toBe(true);
+        // Every chart that follows the link wears its mark — the all-cells form is 'A'
+        // for everyone, so a chart is never left looking unlinked while it actually follows.
+        const sol = document.querySelector<HTMLElement>('.vela-md-matrix-head[data-cell="sol"]')!;
+        expect(sol.dataset.marks).toBe('A');
+        drawer.close();
+        // With no link on, the columns stay bare — an empty column is information too.
+        state.symbol!.checked = false;
+        drawer.open('layout', { focus: 'sync' });
+        expect(document.querySelectorAll('.vela-md-matrix-head[data-marks]').length).toBe(0);
+        drawer.destroy();
+    });
+
+    it('tapping a chart header makes that chart active (picking without touching the grid)', () => {
+        const picked: string[] = [];
+        const host = document.createElement('div');
+        document.body.append(host);
+        const drawer = new MoreDrawer({
+            host,
+            canUndo: () => false,
+            canRedo: () => false,
+            priceStyles: () => [{ id: 'candles', label: 'Candles' }],
+            priceStyle: () => 'candles',
+            onPriceStyle: () => {},
+            panels: () => [],
+            onTogglePanel: () => {},
+            actions: () => [],
+            layout: {
+                shape: () => ({ rows: 1, cols: 4 }),
+                presets: () => [],
+                onSelectGrid: () => {},
+                onSelectPreset: () => {},
+                syncs: () => [{ id: 'symbol', label: 'Symbol', checked: true, marks: { btc: 'A', eth: 'A', sol: 'A', bnb: 'A' } }],
+                charts: () => [
+                    { id: 'btc', label: 'BTC', active: true },
+                    { id: 'eth', label: 'ETH', active: false },
+                    { id: 'sol', label: 'SOL', active: false },
+                    { id: 'bnb', label: 'BNB', active: false },
+                ],
+                onCycleCellGroup: () => {},
+                onSelectChart: (id) => picked.push(id),
+            },
+        });
+        drawer.open('layout', { focus: 'sync' });
+        document.querySelector<HTMLElement>('.vela-md-matrix-head[data-cell="eth"]')!.click();
+        expect(picked).toEqual(['eth']);
         drawer.destroy();
     });
 
@@ -236,24 +329,25 @@ describe('the kebab drawer’s Sync view', () => {
         drawer.destroy();
     });
 
-    it('the ALL chip puts every chart back into one group', () => {
-        const { drawer } = setup();
-        const calls: string[] = [];
-        drawer.open('layout');
-        void calls;
-        const all = document.querySelector<HTMLElement>('.vela-md-matrix .vela-md-chip[data-all][data-kind="symbol"]')!;
-        expect(all).not.toBeNull();
-        all.click();
-        // The stub has no onAllInOneGroup wired; what matters here is the affordance.
-        expect(document.querySelectorAll('.vela-md-matrix .vela-md-chip[data-all]').length).toBe(2);
+    it('the ALL column puts every chart in one group, per link', () => {
+        const { drawer, all } = setup();
+        drawer.open('layout', { focus: 'sync' });
+        const chips = [...document.querySelectorAll<HTMLElement>('.vela-md-matrix-chip[data-all]')];
+        expect(chips.length).toBe(2);
+        chips[0]!.click();
+        expect(all).toEqual(['symbol']);
         drawer.destroy();
     });
+
 });
 
 /** Through the real workspace: the sheet reads and drives the live links. */
 describe('the workspace’s Sync sheet', () => {
     const openSheet = (ws: VelaWorkspace): void => {
         ws.openSyncDrawer();
+        // The sheet opens on the Sync tab (the status line's door); pin it for every
+        // query below, because a plain `openMoreDrawer('layout')` lands on Layout.
+        expect(ws.root.querySelector<HTMLElement>('.vela-md-sec:last-of-type')!.hidden).toBe(false);
     };
 
     it('lists the seven links, with the all-cells form showing the implicit group', () => {
@@ -273,11 +367,12 @@ describe('the workspace’s Sync sheet', () => {
         ]);
         const symbol = rows[2]!;
         expect(symbol.getAttribute('aria-checked')).toBe('true');
-        expect(symbol.querySelector('.vela-md-chip')?.textContent).toBe(IMPLICIT_GROUP);
+        // The all-cells form reads as the implicit 'A' on every chart's chip.
+        expect(ws.root.querySelector<HTMLElement>('.vela-md-chip[data-kind="symbol"][data-cell="btc"]')?.textContent).toBe(IMPLICIT_GROUP);
         expect(rows[0]!.getAttribute('aria-checked')).toBe('false');
     });
 
-    it('a matrix tap on an OFF link links the grid first, then pulls that chart out', () => {
+    it('a per-chart tap on an OFF link links the grid first, then pulls that chart out', () => {
         const ws = mount();
         expect(ws.sync.state().symbol).toBeUndefined();
         ws.openSyncDrawer();
@@ -286,11 +381,11 @@ describe('the workspace’s Sync sheet', () => {
         expect(ws.sync.state().symbol).toEqual({ btc: 'A', eth: 'A', sol: '🔴', bnb: 'A' });
     });
 
-    it('a matrix tap puts THAT chart in its own group and re-marks the charts', () => {
+    it('a per-chart tap puts THAT chart in its own group and re-marks the charts', () => {
         const ws = mount();
         ws.sync.set('symbol', true, false);
         openSheet(ws);
-        const chip = ws.root.querySelector<HTMLElement>('.vela-md-matrix .vela-md-chip[data-kind="symbol"][data-cell="eth"]')!;
+        const chip = ws.root.querySelector<HTMLElement>('.vela-md-chip[data-kind="symbol"][data-cell="eth"]')!;
         chip.click();
         expect(ws.sync.groupOf('symbol', 'eth')).toBe('🔴');
         expect(ws.sync.groupOf('symbol', 'btc')).toBe('A');
@@ -311,7 +406,7 @@ describe('the workspace’s Sync sheet', () => {
         expect(symbol().getAttribute('aria-checked')).toBe('false');
         symbol().click(); // on again
         expect(ws.sync.state().symbol).toEqual({ btc: '🔴', eth: '🟢' });
-        expect(symbol().querySelector('.vela-md-chip')?.textContent).toBe('🔴');
+        expect(ws.root.querySelector<HTMLElement>('.vela-md-chip[data-kind="symbol"][data-cell="btc"]')?.textContent).toBe('🔴');
     });
 });
 

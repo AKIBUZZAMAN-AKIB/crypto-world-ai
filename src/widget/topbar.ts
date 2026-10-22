@@ -196,10 +196,15 @@ export interface TopbarOptions {
         onSelectGrid: (rows: number, cols: number) => void;
         onSelectPreset: (id: string) => void;
         /** SYNC switch rows (re-read on every open and after each toggle). */
-        syncs: () => Array<{ id: string; label: string; checked: boolean; group?: string }>;
+        syncs: () => Array<{ id: string; label: string; checked: boolean; group?: string; marks?: Record<string, string> }>;
         onToggleSync: (id: string) => void;
         /** Cycle the ACTIVE cell through a link's groups (the row's chip). */
         onCycleGroup?: (id: string) => void;
+        /** The charts the picker's "Mark" strip lists — the desktop half of the phone's
+         *  per-chart marking rows. */
+        charts?: () => Array<{ id: string; label: string; active: boolean }>;
+        onCycleCellGroup?: (kind: string, cellId: string) => void;
+        onAllInOneGroup?: (kind: string) => void;
         /** The drawing scope the workspace holds (the chip on the Drawings row). */
         drawingsScope?: () => 'layout' | 'global';
         onToggleDrawingsScope?: () => void;
@@ -488,6 +493,9 @@ export class Topbar {
                 syncs: () => layout.syncs(),
                 onToggleSync: (id) => layout.onToggleSync(id),
                 ...(layout.onCycleGroup ? { onCycleGroup: (id) => layout.onCycleGroup?.(id) } : {}),
+                ...(layout.charts ? { charts: () => layout.charts?.() ?? [] } : {}),
+                ...(layout.onCycleCellGroup ? { onCycleCellGroup: (kind, cellId) => layout.onCycleCellGroup?.(kind, cellId) } : {}),
+                ...(layout.onAllInOneGroup ? { onAllInOneGroup: (kind) => layout.onAllInOneGroup?.(kind) } : {}),
                 ...(layout.drawingsScope ? { drawingsScope: () => layout.drawingsScope?.() ?? 'layout' } : {}),
                 ...(layout.onToggleDrawingsScope ? { onToggleDrawingsScope: () => layout.onToggleDrawingsScope?.() } : {}),
                 ...(layout.hiddenCharts ? { hiddenCharts: () => layout.hiddenCharts?.() ?? 0 } : {}),

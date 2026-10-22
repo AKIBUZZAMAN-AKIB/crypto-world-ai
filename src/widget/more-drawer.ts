@@ -10,6 +10,7 @@ import { iconEl } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
 import { layoutGridCanvas, paintLayoutGrid } from './layout-picker';
 import { IMPLICIT_GROUP } from '../state/document';
+import { groupMarkColor } from '../workspace/sync-marks';
 
 const STYLE_ID = 'vela-widget-more-drawer';
 const CSS = `
@@ -135,6 +136,7 @@ const CSS = `
     all: unset;
     box-sizing: border-box;
     display: flex;
+    width: 100%;
     align-items: center;
     gap: 10px;
     min-height: 48px;
@@ -152,7 +154,8 @@ const CSS = `
     width: 40px;
     height: 24px;
     border-radius: 12px;
-    background: color-mix(in srgb, var(--vela-fg) 18%, transparent);
+    background: color-mix(in srgb, var(--vela-fg) 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-fg) 14%, transparent);
     transition: background 120ms ease;
 }
 .vela-md-switch::after {
@@ -163,7 +166,7 @@ const CSS = `
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--vela-fg-muted);
+    background: var(--vela-fg-bright);
     transition: transform 120ms ease, background 120ms ease;
 }
 .vela-md-sync[aria-checked='true'] .vela-md-switch { background: var(--vela-accent, var(--vela-selected-bg)); }
@@ -190,34 +193,12 @@ const CSS = `
 .vela-md-chip:active { background: var(--vela-hover); }
 .vela-md-chip[data-on='1'] {
     color: var(--vela-fg-bright);
-    border-color: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 60%, transparent);
-    background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 18%, transparent);
+    border-color: color-mix(in srgb, var(--vela-md-mark, var(--vela-accent, var(--vela-selected-bg))) 70%, transparent);
+    background: color-mix(in srgb, var(--vela-md-mark, var(--vela-accent, var(--vela-selected-bg))) 20%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-md-mark, transparent) 22%, transparent);
 }
 .vela-md-chip[data-implicit='1'] { border-style: dashed; }
 .vela-md-hint { padding: 2px 2px 8px; font-size: 12px; line-height: 1.4; color: var(--vela-fg-muted); }
-/* The marking MATRIX — one row per link, one chip per chart, so a phone can mark ANY
-   chart for ANY link in a single tap (the desktop has the room for the per-row chip;
-   a phone does not, so the whole grid is the chip). */
-.vela-md-matrix {
-    display: grid;
-    grid-template-columns: minmax(56px, 1fr) repeat(var(--vela-md-matrix-cols, 5), minmax(26px, 34px));
-    gap: 4px 2px;
-    align-items: center;
-    padding: 2px 0 6px;
-}
-.vela-md-matrix-head {
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.3px;
-    color: var(--vela-fg-muted);
-    text-align: center;
-    padding-bottom: 2px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.vela-md-matrix-head[data-active='1'] { color: var(--vela-fg-bright); }
-.vela-md-matrix-label { font-size: 12px; color: var(--vela-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* ── Layout setup: the hero card + the sticky two-stop nav ─────────────────────── */
 .vela-md-hero {
     display: flex;
@@ -239,11 +220,22 @@ const CSS = `
     top: 0;
     z-index: 2;
     display: flex;
+    align-items: center;
     gap: 4px;
     margin: 0 0 6px;
     padding: 6px 0;
     background: var(--vela-surface-elev);
     border-bottom: 1px solid var(--vela-border);
+}
+/* The two tabs share one track — an inactive tab must read as a tab, not as a label. */
+.vela-md-navtrack {
+    flex: 1 1 auto;
+    display: flex;
+    gap: 2px;
+    min-width: 0;
+    padding: 3px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--vela-fg) 8%, transparent);
 }
 .vela-md-navback {
     all: unset;
@@ -262,6 +254,7 @@ const CSS = `
 .vela-md-navback .vela-icon { font-size: 16px; width: 16px; height: 16px; }
 .vela-md-navbtn {
     all: unset;
+    box-sizing: border-box;
     flex: 1 1 0;
     min-height: 32px;
     display: inline-flex;
@@ -279,7 +272,294 @@ const CSS = `
     color: var(--vela-fg-bright);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 55%, transparent);
 }
-.vela-md-sec { display: block; scroll-margin-top: 48px; }
+/* [hidden] must WIN over the section's own display — a plain [hidden] loses to
+   any class that sets display, and both tabs would show at once. */
+.vela-md-sec { display: block; min-width: 0; }
+.vela-md-sec[hidden] { display: none !important; }
+
+/* ── Chart syncing: the switches, then the link × chart table ───────────────── */
+.vela-md-sublabel {
+    padding: 10px 2px 4px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--vela-fg-muted);
+}
+/* The table scrolls SIDEWAYS INSIDE ITSELF — never the page. Four charts fit a 390px
+   sheet; the eight-chart layouts scroll a little, with the link column pinned. */
+.vela-md-matrixwrap {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -2px;
+    padding: 0 2px 2px;
+}
+/* Only while there IS more table to the right (set from JS after layout). */
+.vela-md-matrixwrap[data-more] {
+    mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+}
+.vela-md-matrix {
+    display: grid;
+    grid-template-columns: 78px repeat(var(--vela-md-cols, 4), minmax(38px, 1fr)) 44px;
+    gap: 3px 2px;
+    align-items: center;
+    min-width: max-content;
+}
+.vela-md-matrix-corner {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    padding-right: 6px;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--vela-fg-faint, var(--vela-fg-muted));
+    background: var(--vela-surface-elev);
+}
+.vela-md-matrix-head {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 26px;
+    padding: 0 2px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.vela-md-matrix-head::after {
+    content: attr(data-marks);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0;
+    opacity: 0.9;
+}
+.vela-md-matrix-head[data-active] { color: var(--vela-fg-bright); background: var(--vela-hover); }
+.vela-md-matrix-head[data-focus] { box-shadow: inset 0 0 0 1px var(--vela-accent, var(--vela-selected-bg)); }
+.vela-md-matrix-head:active { background: var(--vela-hover-strong); }
+.vela-md-matrix-allhead { color: var(--vela-fg-muted); font-size: 9.5px; }
+.vela-md-matrix-label {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    padding-right: 4px;
+    font-size: 11.5px;
+    color: var(--vela-fg);
+    background: var(--vela-surface-elev);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.vela-md-matrix-chip {
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    border-radius: 9px;
+    font-size: 15px;
+}
+.vela-md-matrix-chip[data-on='1'] { font-size: 15px; }
+.vela-md-chip-all { font-size: 9px; font-weight: 700; letter-spacing: 0.3px; color: var(--vela-fg-muted); }
+.vela-md-chip-all[data-on='1'] { color: var(--vela-fg-bright); border-style: solid; }
+.vela-md-legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 2px 2px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--vela-fg-muted);
+}
+/* ── Layout setup: the hero card + the sticky two-stop nav ─────────────────────── */
+.vela-md-hero {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 2px 0 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--vela-border);
+    border-radius: 12px;
+    background: var(--vela-surface-elev);
+}
+.vela-md-hero-glyph { flex: none; width: 34px; height: 26px; color: var(--vela-fg-bright); }
+.vela-md-hero-glyph svg { display: block; width: 100%; height: 100%; }
+.vela-md-hero-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vela-md-hero-text b { font-size: 14px; font-weight: 600; color: var(--vela-fg-bright); }
+.vela-md-hero-text small { font-size: 11.5px; color: var(--vela-fg-muted); }
+.vela-md-nav {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0 0 6px;
+    padding: 6px 0;
+    background: var(--vela-surface-elev);
+    border-bottom: 1px solid var(--vela-border);
+}
+/* The two tabs share one track — an inactive tab must read as a tab, not as a label. */
+.vela-md-navtrack {
+    flex: 1 1 auto;
+    display: flex;
+    gap: 2px;
+    min-width: 0;
+    padding: 3px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--vela-fg) 8%, transparent);
+}
+.vela-md-navback {
+    all: unset;
+    flex: none;
+    width: 40px;
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-navback:active { background: var(--vela-hover); }
+.vela-md-navback .vela-icon { font-size: 16px; width: 16px; height: 16px; }
+.vela-md-navbtn {
+    all: unset;
+    box-sizing: border-box;
+    flex: 1 1 0;
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-navbtn[data-active] {
+    background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 22%, transparent);
+    color: var(--vela-fg-bright);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 55%, transparent);
+}
+/* [hidden] must WIN over the section's own display — a plain [hidden] loses to
+   any class that sets display, and both tabs would show at once. */
+.vela-md-sec { display: block; min-width: 0; }
+.vela-md-sec[hidden] { display: none !important; }
+
+/* ── Chart syncing: links (switches) then charts (expanding rows) ───────────── */
+.vela-md-sublabel {
+    padding: 10px 2px 4px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    color: var(--vela-fg-muted);
+}
+.vela-md-chart {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 44px;
+    padding: 0 2px;
+    border-radius: 8px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-chart:active { background: var(--vela-hover); }
+.vela-md-chart:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
+.vela-md-chart .vela-md-row-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 13.5px;
+    color: var(--vela-fg);
+}
+.vela-md-chart[data-active] .vela-md-row-label { color: var(--vela-fg-bright); font-weight: 600; }
+.vela-md-chart-caret {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--vela-fg-muted);
+    transition: transform 130ms ease;
+}
+.vela-md-chart-caret .vela-icon { font-size: 15px; width: 15px; height: 15px; }
+.vela-md-chart[data-open] .vela-md-chart-caret { transform: rotate(90deg); }
+.vela-md-chart-tag {
+    margin-left: 6px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    color: var(--vela-accent, var(--vela-selected-bg));
+    background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 16%, transparent);
+}
+/* The aggregate badge: every DISTINCT group this chart sits in, e.g. "A 🔴". */
+.vela-md-chart-marks {
+    flex: none;
+    min-width: 24px;
+    height: 20px;
+    padding: 0 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: var(--vela-fg-muted);
+    background: color-mix(in srgb, var(--vela-fg) 8%, transparent);
+}
+.vela-md-chart-marks:not([data-on]) { opacity: 0; }
+.vela-md-chart-marks[data-on] {
+    color: var(--vela-fg-bright);
+    background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 20%, transparent);
+}
+/* The expansion: one full-width row per link. Nothing here scrolls sideways. */
+.vela-md-chart-links {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0 0 6px 24px;
+    padding: 2px 0 2px 10px;
+    border-left: 1px solid var(--vela-border);
+}
+.vela-md-chart-links[hidden] { display: none !important; }
+.vela-md-chart-link {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    min-width: 0;
+}
+.vela-md-chart-link-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12.5px;
+    color: var(--vela-fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.vela-md-chart-link .vela-md-chip { min-width: 64px; height: 36px; border-radius: 18px; }
+.vela-md-chart-all { margin-top: 4px; border-top: 1px solid var(--vela-border); }
+.vela-md-chart-all .vela-md-row-label { color: var(--vela-fg-muted); font-size: 12.5px; }
 /* A plain action row (no switch): same rhythm, the value as a pill. */
 .vela-md-sync.vela-md-plain .vela-md-pill {
     flex: none;
@@ -289,9 +569,6 @@ const CSS = `
     font-size: 11.5px;
     color: var(--vela-fg-muted);
 }
-/* The ALL column: the one-tap \"every chart in one group\" reset. */
-.vela-md-matrix-all { color: var(--vela-fg); font-weight: 700; }
-.vela-md-chip-all[data-on='1'] { border-style: solid; }
 /* Save-as field (TV's \"Save layout as…\"). */
 .vela-md-saved { gap: 6px; }
 .vela-md-saved-open, .vela-md-saved-del {
@@ -353,6 +630,10 @@ function syncChipState(chip: HTMLElement, mark: string | undefined): void {
     else delete chip.dataset.on;
     if (mark === IMPLICIT_GROUP) chip.dataset.implicit = '1';
     else delete chip.dataset.implicit;
+    // The group's own hue: ten groups have to LOOK like ten groups, not one accent.
+    const color = groupMarkColor(mark);
+    if (color) chip.style.setProperty('--vela-md-mark', color);
+    else chip.style.removeProperty('--vela-md-mark');
 }
 
 export interface MoreDrawerAction {
@@ -410,6 +691,9 @@ export interface MoreDrawerOptions {
         charts?: () => Array<{ id: string; label: string; active: boolean }>;
         /** Cycle ONE chart through a link's groups (a matrix tap) — no active-cell detour. */
         onCycleCellGroup?: (id: string, cellId: string) => void;
+        /** Make a chart active by tapping its matrix column header (the phone's way of
+         *  picking a chart without touching the grid behind the sheet). */
+        onSelectChart?: (cellId: string) => void;
         /** Put EVERY chart in one group for this link (the matrix's ALL chip). */
         onAllInOneGroup?: (id: string) => void;
         /** "Apply settings to all charts" (TV's Chart Settings → Apply to all). */
@@ -440,18 +724,24 @@ export class MoreDrawer {
     private view: MoreView = 'main';
     /** Scroll the layout sheet to its sync block on the next paint. */
     private focus: 'sync' | undefined;
+    /** The chart whose links panel opens straight away (the status line's badge names
+     *  it, so the sheet must not make the user hunt for that row). */
+    private focusCell: string | undefined;
+    /** Which of the sheet's two tabs was last open — reopening keeps the place. */
+    private tab: 'layouts' | 'sync' = 'layouts';
 
     constructor(private readonly opts: MoreDrawerOptions) {
         injectStyles(STYLE_ID, CSS, opts.host.ownerDocument);
         this.drawer = new Drawer({ host: opts.host, onOpenChange: opts.onOpenChange });
     }
 
-    /** Show the sheet. `focus: 'sync'` opens the layout sheet scrolled to its sync
-     *  block (the status line's marks land there) — one surface, TV's Layout setup, not
-     *  a second tab. */
-    open(view: MoreView = 'main', opts: { focus?: 'sync' } = {}): void {
+    /** Show the sheet. `focus: 'sync'` lands on the Sync tab (the status line's marks
+     *  open there) — same surface, TV's Layout setup, just the second tab. */
+    open(view: MoreView = 'main', opts: { focus?: 'sync'; cell?: string } = {}): void {
         this.view = view;
         this.focus = opts.focus;
+        this.focusCell = opts.cell;
+        this.tab = opts.focus ?? 'layouts';
         this.render();
         this.drawer.show();
     }
@@ -488,9 +778,10 @@ export class MoreDrawer {
 
         if (this.view === 'main') this.renderMain(doc);
         else if (this.view === 'style') this.renderStyle(doc);
-        else if (this.view === 'layout') this.renderLayout(doc, this.focus);
+        else if (this.view === 'layout') this.renderLayout(doc, this.focus, this.focusCell);
         else this.renderAlerts(doc);
         this.focus = undefined;
+        this.focusCell = undefined;
     }
 
     private row(doc: Document, label: string, opts: { icon?: string; glyph?: string; value?: string; chevron?: boolean; checked?: boolean; onClick: () => void }): HTMLElement {
@@ -546,25 +837,6 @@ export class MoreDrawer {
             const shape = this.opts.layout.shape();
             const value = shape ? `${shape.cols} × ${shape.rows}` : this.opts.layout.presets().find((p) => p.checked)?.label;
             list.appendChild(this.row(doc, 'Layout', { icon: 'layout', glyph: this.opts.layout.glyph?.(), value, chevron: true, onClick: () => this.show('layout') }));
-            // TV keeps sync INSIDE the layout menu; a phone cannot show its two columns,
-            // so the same sheet is one scroll. This second row is a shortcut that opens
-            // that sheet already at its sync block — not a second screen.
-            const links = this.opts.layout.syncs?.() ?? [];
-            if (links.length > 0) {
-                const on = links.filter((l) => l.checked).length;
-                list.appendChild(
-                    this.row(doc, 'Sync in layout', {
-                        icon: 'group',
-                        value: on > 0 ? `${on}/${links.length}` : 'off',
-                        chevron: true,
-                        onClick: () => {
-                            this.view = 'layout';
-                            this.focus = 'sync';
-                            this.render();
-                        },
-                    }),
-                );
-            }
         }
         for (const act of this.opts.primaryActions?.() ?? []) list.appendChild(this.actionRow(doc, act));
         for (const panel of this.opts.panels()) {
@@ -624,11 +896,10 @@ export class MoreDrawer {
      * guide for the menu: pick a layout, then "scroll down to Sync in Layout".)
      *
      *   • the grid canvas + the asymmetric presets, grouped by chart count;
-     *   • "Sync in layout": seven real switches (role=switch + aria-checked + a thumb —
-     *     the rows here used to be inert divs whose only ON cue was a background tint),
-     *     each with the ACTIVE chart's group chip beside it;
-     *   • "Chart syncing": the per-chart emoji matrix — any chart into any group in one
-     *     tap, plus an ALL chip per link that drops the whole grid back into one group;
+     *   • "Chart syncing", ONE block: the link x chart table (a cell per chart per link,
+     *     ten distinct marks so ten charts never collide, an ALL column that drops the
+     *     whole grid back into one group) and, under it, the seven switches that decide
+     *     WHAT follows — `role=switch` + `aria-checked`, never a tinted div;
      *   • the layout actions TV puts in the same menu (apply settings / indicators to
      *     every chart, drawing scope, dormant charts);
      *   • saved layouts, with TV's "Save layout as…" field.
@@ -636,7 +907,7 @@ export class MoreDrawer {
      * Switch and chip taps repaint in place (values, aria-checked, marks) — the sheet is
      * never rebuilt under the finger, so the list does not jump to the top mid-edit.
      */
-    private renderLayout(doc: Document, focus?: 'sync'): void {
+    private renderLayout(doc: Document, focus?: 'sync', focusCell?: string): void {
         const layout = this.opts.layout;
         if (!layout) return;
         type LayoutOpts = NonNullable<MoreDrawerOptions['layout']>;
@@ -670,6 +941,7 @@ export class MoreDrawer {
         // ── sticky nav ─────────────────────────────────────────────────────────
         const nav = doc.createElement('div');
         nav.className = 'vela-md-nav';
+        nav.setAttribute('role', 'tablist');
         const navButtons: HTMLElement[] = [];
         const navBack = doc.createElement('button');
         navBack.type = 'button';
@@ -678,24 +950,44 @@ export class MoreDrawer {
         navBack.appendChild(iconEl('chevron-left', doc));
         navBack.addEventListener('click', () => this.show('main'));
         nav.append(navBack);
+        const navTrack = doc.createElement('div');
+        navTrack.className = 'vela-md-navtrack';
+        nav.append(navTrack);
+        // REAL tabs, not scroll anchors: TV's layout popover has a layouts column and a
+        // sync column side by side; a phone gets the same two panes one at a time. Two
+        // scroll stops in one long sheet read as "one page with a jump menu" — and the
+        // jump menu was the only thing making the sheet feel long.
         const goTo = (key: 'layouts' | 'sync'): void => {
-            for (const b of navButtons) b.toggleAttribute('data-active', b.dataset.tab === key);
-            const target = key === 'layouts' ? layoutsSec : syncSec;
-            // jsdom has no scrollIntoView — the sheet still renders, it just stays put.
-            try {
-                target.scrollIntoView?.({ block: 'start' });
-            } catch {
-                /* no scroller in this environment */
+            for (const b of navButtons) {
+                const on = b.dataset.tab === key;
+                b.toggleAttribute('data-active', on);
+                b.setAttribute('aria-selected', String(on));
+                // Roving tabindex, the ARIA tabs pattern: one tab stop, arrows move.
+                b.tabIndex = on ? 0 : -1;
             }
+            layoutsSec.hidden = key !== 'layouts';
+            syncSec.hidden = key !== 'sync';
+            this.tab = key;
+            // A tab is a fresh page, not a scroll position shared with the other one.
+            this.drawer.body.scrollTop = 0;
         };
-        for (const [key, label] of [['layouts', 'Layouts'], ['sync', 'Sync']] as const) {
+        for (const [key, label] of [['layouts', 'Layout'], ['sync', 'Sync']] as const) {
             const b = doc.createElement('button');
             b.type = 'button';
             b.className = 'vela-md-navbtn';
             b.dataset.tab = key;
+            b.setAttribute('role', 'tab');
+            b.setAttribute('aria-controls', `vela-md-pane-${key}`);
             b.textContent = label;
             b.addEventListener('click', () => goTo(key));
-            nav.append(b);
+            b.addEventListener('keydown', (e) => {
+                if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+                e.preventDefault();
+                const next: 'layouts' | 'sync' = key === 'layouts' ? 'sync' : 'layouts';
+                goTo(next);
+                navButtons.find((x) => x.dataset.tab === next)?.focus();
+            });
+            navTrack.append(b);
             navButtons.push(b);
         }
         list.append(nav);
@@ -703,6 +995,9 @@ export class MoreDrawer {
         // ── layouts ────────────────────────────────────────────────────────────
         const layoutsSec = doc.createElement('section');
         layoutsSec.className = 'vela-md-sec';
+        layoutsSec.id = 'vela-md-pane-layouts';
+        layoutsSec.setAttribute('role', 'tabpanel');
+        layoutsSec.setAttribute('aria-label', 'Layout');
 
         const caption = doc.createElement('div');
         caption.className = 'vela-md-section';
@@ -764,21 +1059,185 @@ export class MoreDrawer {
             }
             layoutsSec.append(tiles);
         }
-        list.append(layoutsSec);
+
+        // ── the layout-wide actions TV keeps in the same menu ──────────────
+        if (layout.onApplySettingsToAll || layout.onApplyIndicatorsToAll) {
+            const heading = doc.createElement('div');
+            heading.className = 'vela-md-section';
+            heading.textContent = 'This layout';
+            layoutsSec.append(heading);
+        }
+        if (layout.onApplySettingsToAll) {
+            layoutsSec.append(
+                this.row(doc, 'Apply settings to all charts', {
+                    icon: 'style-line',
+                    onClick: () => {
+                        layout.onApplySettingsToAll?.();
+                        this.drawer.hide();
+                    },
+                }),
+            );
+        }
+        if (layout.onApplyIndicatorsToAll) {
+            layoutsSec.append(
+                this.row(doc, 'Apply indicators to all charts', {
+                    icon: 'indicators',
+                    onClick: () => {
+                        layout.onApplyIndicatorsToAll?.();
+                        this.drawer.hide();
+                    },
+                }),
+            );
+        }
+        const hidden = layout.hiddenCharts?.() ?? 0;
+        if (hidden > 0 && layout.onClearPooled) {
+            layoutsSec.append(
+                this.row(doc, 'Hidden charts', {
+                    value: `remove ${hidden}`,
+                    onClick: () => {
+                        layout.onClearPooled?.();
+                        this.render();
+                    },
+                }),
+            );
+        }
 
         // ── sync ───────────────────────────────────────────────────────────────
         const syncSec = doc.createElement('section');
         syncSec.className = 'vela-md-sec';
+        syncSec.id = 'vela-md-pane-sync';
+        syncSec.setAttribute('role', 'tabpanel');
+        syncSec.setAttribute('aria-label', 'Sync');
 
-        type SwitchRow = { id: string; el: HTMLElement; chip: HTMLButtonElement | null };
+        type SwitchRow = { id: string; el: HTMLElement };
         const switchRows: SwitchRow[] = [];
-        const matrixChips = new Map<string, HTMLButtonElement>();
+        // One chip per (link, chart) cell of the matrix.
+        const cellChips = new Map<string, HTMLButtonElement>();
+        // Column headers, so the sheet can highlight/scroll to a chart.
+        const chartHeads = new Map<string, HTMLElement>();
 
         if (syncsOf) {
+            // ONE section. TradingView splits the same idea across two stops ("Sync in
+            // layout" in the menu, "Chart syncing" on the status line); on a phone that
+            // reads as two features that do the same thing. Here it is one block:
+            //   Links  — WHAT follows (seven switches)
+            //   Charts — WHO follows whom (a chip per link, per chart)
             const head = doc.createElement('div');
             head.className = 'vela-md-section';
-            head.textContent = 'Sync in layout';
+            head.textContent = 'Chart syncing';
             syncSec.append(head);
+
+            const hint = doc.createElement('div');
+            hint.className = 'vela-md-hint';
+            hint.textContent = 'Links decide what follows. Charts decide who follows whom — same emoji, same group.';
+            syncSec.append(hint);
+
+            // ── the MATRIX: one row per link, one column per chart ──────────────
+            // The user's call (round 3): TV's chart-syncing is a TABLE — link x chart —
+            // and a table with ten charts is fine as long as IT scrolls, not the page.
+            // So the grid lives in its own horizontal scroller, the link column stays
+            // pinned to the left, and only the chart columns move. Four charts fit
+            // without scrolling at 390px; eight (the largest layout) scroll by ~40px.
+            if (charts.length > 1 && (layout.onCycleCellGroup || layout.onAllInOneGroup)) {
+                const chartsLabel = doc.createElement('div');
+                chartsLabel.className = 'vela-md-sublabel';
+                chartsLabel.textContent = 'Charts';
+                syncSec.append(chartsLabel);
+
+                const wrap = doc.createElement('div');
+                wrap.className = 'vela-md-matrixwrap';
+                const grid = doc.createElement('div');
+                grid.className = 'vela-md-matrix';
+                grid.style.setProperty('--vela-md-cols', String(charts.length));
+
+                const corner = doc.createElement('span');
+                corner.className = 'vela-md-matrix-corner';
+                corner.textContent = 'Link';
+                grid.append(corner);
+
+                for (const c of charts) {
+                    const head = doc.createElement('button');
+                    head.type = 'button';
+                    head.className = 'vela-md-matrix-head';
+                    head.dataset.cell = c.id;
+                    if (c.active) head.dataset.active = '1';
+                    head.textContent = c.label;
+                    head.setAttribute('aria-label', `${c.label}${c.active ? ' (active)' : ''} — its group for each link`);
+                    head.addEventListener('click', () => layout.onSelectChart?.(c.id));
+                    grid.append(head);
+                    chartHeads.set(c.id, head);
+                }
+                if (layout.onAllInOneGroup) {
+                    const allHead = doc.createElement('span');
+                    allHead.className = 'vela-md-matrix-head vela-md-matrix-allhead';
+                    allHead.textContent = 'ALL';
+                    grid.append(allHead);
+                }
+
+                for (const link of syncsOf()) {
+                    const label = doc.createElement('span');
+                    label.className = 'vela-md-matrix-label';
+                    label.textContent = link.label;
+                    grid.append(label);
+                    for (const c of charts) {
+                        const chip = doc.createElement('button');
+                        chip.type = 'button';
+                        chip.className = 'vela-md-chip vela-md-matrix-chip';
+                        chip.dataset.kind = link.id;
+                        chip.dataset.cell = c.id;
+                        chip.addEventListener('click', () => {
+                            layout.onCycleCellGroup?.(link.id, c.id);
+                            refresh();
+                        });
+                        grid.append(chip);
+                        cellChips.set(`${link.id}\u0000${c.id}`, chip);
+                    }
+                    if (layout.onAllInOneGroup) {
+                        const all = doc.createElement('button');
+                        all.type = 'button';
+                        all.className = 'vela-md-chip vela-md-matrix-chip vela-md-chip-all';
+                        all.dataset.all = '1';
+                        all.dataset.kind = link.id;
+                        all.textContent = 'ALL';
+                        all.setAttribute('aria-label', `Put every chart in one ${link.label} group`);
+                        all.addEventListener('click', () => {
+                            layout.onAllInOneGroup?.(link.id);
+                            refresh();
+                        });
+                        grid.append(all);
+                    }
+                }
+                wrap.append(grid);
+                syncSec.append(wrap);
+                // Paint the fade only when the table really overflows (measured after
+                // layout — a 4-chart grid fits and must not look cut).
+                const markOverflow = (): void => {
+                    if (wrap.scrollWidth > wrap.clientWidth + 1) wrap.dataset.more = '1';
+                    else delete wrap.dataset.more;
+                };
+                doc.defaultView?.requestAnimationFrame(markOverflow);
+                wrap.addEventListener('scroll', () => {
+                    const atEnd = wrap.scrollLeft + wrap.clientWidth >= wrap.scrollWidth - 2;
+                    if (atEnd) delete wrap.dataset.more;
+                    else wrap.dataset.more = '1';
+                }, { passive: true });
+
+                const legend = doc.createElement('div');
+                legend.className = 'vela-md-legend';
+                const legendHint = doc.createElement('span');
+                // The cue exists only when the table really does overflow: telling a
+                // four-chart layout to scroll sideways that it cannot would be a lie.
+                legendHint.textContent = charts.length > 4
+                    ? 'Same mark, same group · scroll sideways for the rest'
+                    : 'Same mark, same group · tap a cell to cycle it';
+                legend.append(legendHint);
+                syncSec.append(legend);
+            }
+
+            const linksLabel = doc.createElement('div');
+            linksLabel.className = 'vela-md-sublabel';
+            linksLabel.textContent = 'Links';
+            syncSec.append(linksLabel);
 
             for (const s of syncsOf()) {
                 const row = doc.createElement('button');
@@ -791,20 +1250,6 @@ export class MoreDrawer {
                 label.className = 'vela-md-row-label';
                 label.textContent = s.label;
                 row.append(label);
-                // The chip: the ACTIVE chart's mark for this link. Its own tap target, and
-                // it never flips the switch (stopPropagation).
-                let chip: HTMLButtonElement | null = null;
-                if (layout.onCycleGroup) {
-                    chip = doc.createElement('button');
-                    chip.type = 'button';
-                    chip.className = 'vela-md-chip';
-                    chip.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        layout.onCycleGroup?.(s.id);
-                        refresh();
-                    });
-                    row.append(chip);
-                }
                 const track = doc.createElement('span');
                 track.className = 'vela-md-switch';
                 track.setAttribute('aria-hidden', 'true');
@@ -814,7 +1259,7 @@ export class MoreDrawer {
                     refresh();
                 });
                 syncSec.append(row);
-                switchRows.push({ id: s.id, el: row, chip });
+                switchRows.push({ id: s.id, el: row });
             }
 
             if (layout.drawingsScope) {
@@ -835,152 +1280,65 @@ export class MoreDrawer {
                 syncSec.append(scopeRow);
             }
 
-            // ── chart syncing (the emoji matrix) ────────────────────────────────
-            if (charts.length > 1 && layout.onCycleCellGroup) {
-                const heading = doc.createElement('div');
-                heading.className = 'vela-md-section';
-                heading.textContent = 'Chart syncing';
-                syncSec.append(heading);
-                const hint = doc.createElement('div');
-                hint.className = 'vela-md-hint';
-                hint.textContent = 'Tap a chart’s emoji to pick the group it follows — charts wearing the same emoji follow each other. ALL drops the link back into one group.';
-                syncSec.append(hint);
-
-                const gridEl = doc.createElement('div');
-                gridEl.className = 'vela-md-matrix';
-                gridEl.style.setProperty('--vela-md-charts', String(charts.length));
-                gridEl.style.setProperty('--vela-md-matrix-cols', String(charts.length + 1)); // + ALL
-                gridEl.append(doc.createElement('span')); // empty corner
-                for (const c of charts) {
-                    const head2 = doc.createElement('span');
-                    head2.className = 'vela-md-matrix-head';
-                    head2.textContent = c.label;
-                    head2.title = c.active ? `${c.label} (active)` : c.label;
-                    if (c.active) head2.dataset.active = '1';
-                    gridEl.append(head2);
-                }
-                const allHead = doc.createElement('span');
-                allHead.className = 'vela-md-matrix-head vela-md-matrix-all';
-                allHead.textContent = 'ALL';
-                gridEl.append(allHead);
-
-                for (const s of syncsOf()) {
-                    const label = doc.createElement('span');
-                    label.className = 'vela-md-matrix-label';
-                    label.textContent = s.label;
-                    gridEl.append(label);
-                    for (const c of charts) {
-                        const cell = doc.createElement('button');
-                        cell.type = 'button';
-                        cell.className = 'vela-md-chip';
-                        cell.dataset.kind = s.id;
-                        cell.dataset.cell = c.id;
-                        cell.addEventListener('click', () => {
-                            layout.onCycleCellGroup?.(s.id, c.id);
-                            refresh();
-                        });
-                        gridEl.append(cell);
-                        matrixChips.set(`${s.id}\u0000${c.id}`, cell);
-                    }
-                    // ALL: one group for every chart (TV's all-cells form) — the fast way
-                    // out of a split grid.
-                    const all = doc.createElement('button');
-                    all.type = 'button';
-                    all.className = 'vela-md-chip vela-md-chip-all';
-                    all.dataset.kind = s.id;
-                    all.dataset.all = '1';
-                    all.addEventListener('click', () => {
-                        layout.onAllInOneGroup?.(s.id);
-                        refresh();
-                    });
-                    gridEl.append(all);
-                    matrixChips.set(`${s.id}\u0000all`, all);
-                }
-                syncSec.append(gridEl);
-            }
-
-            // ── the layout-wide actions TV keeps in the same menu ──────────────
-            if (layout.onApplySettingsToAll || layout.onApplyIndicatorsToAll) {
-                const heading = doc.createElement('div');
-                heading.className = 'vela-md-section';
-                heading.textContent = 'This layout';
-                syncSec.append(heading);
-            }
-            if (layout.onApplySettingsToAll) {
-                syncSec.append(
-                    this.row(doc, 'Apply settings to all charts', {
-                        icon: 'style-line',
-                        onClick: () => {
-                            layout.onApplySettingsToAll?.();
-                            this.drawer.hide();
-                        },
-                    }),
-                );
-            }
-            if (layout.onApplyIndicatorsToAll) {
-                syncSec.append(
-                    this.row(doc, 'Apply indicators to all charts', {
-                        icon: 'indicators',
-                        onClick: () => {
-                            layout.onApplyIndicatorsToAll?.();
-                            this.drawer.hide();
-                        },
-                    }),
-                );
-            }
-            const hidden = layout.hiddenCharts?.() ?? 0;
-            if (hidden > 0 && layout.onClearPooled) {
-                syncSec.append(
-                    this.row(doc, 'Hidden charts', {
-                        value: `remove ${hidden}`,
-                        onClick: () => {
-                            layout.onClearPooled?.();
-                            this.render();
-                        },
-                    }),
-                );
-            }
         }
-        list.append(syncSec);
 
-        this.renderSavedLayouts(doc, list, layout);
+        list.append(layoutsSec, syncSec);
+        this.renderSavedLayouts(doc, layoutsSec, layout);
         this.drawer.body.append(list);
 
         // Re-read the live state and repaint the nodes that already exist.
         const refresh = (): void => {
             if (!syncsOf) return;
             const live = syncsOf();
-            const activeId = charts.find((c) => c.active)?.id;
             const byId = new Map(live.map((l) => [l.id, l]));
             for (const r of switchRows) {
                 const s = byId.get(r.id);
-                if (!s) continue;
-                r.el.setAttribute('aria-checked', String(s.checked));
-                if (r.chip) syncChipState(r.chip, s.marks?.[activeId ?? '']);
-                if (r.id === 'drawings') {
-                    /* the scope pill is its own row */
-                }
+                if (s) r.el.setAttribute('aria-checked', String(s.checked));
             }
-            for (const [key, chip] of matrixChips) {
+            // Per-chart chips: the mark that chart carries for that link.
+            for (const [key, chip] of cellChips) {
                 const [kind, cellId] = key.split('\u0000');
                 const s = byId.get(kind ?? '');
-                const mark = cellId === 'all' ? (s?.checked ? IMPLICIT_GROUP : undefined) : s?.marks?.[cellId ?? ''];
+                const mark = s?.marks?.[cellId ?? ''];
                 syncChipState(chip, mark);
-                chip.setAttribute('aria-label', cellId === 'all'
-                    ? `All charts into one ${s?.label ?? ''} group`
-                    : `${s?.label ?? kind} — ${cellId}: ${mark ?? 'not linked'}`);
+                chip.setAttribute('aria-label', `${s?.label ?? kind} for ${cellId}: ${mark ?? 'not linked'}`);
+            }
+            // Column headers read the chart's DISTINCT groups at a glance ("A 🔴"), and
+            // the ones that follow nothing dim: an empty column is information too.
+            for (const [cellId, head] of chartHeads) {
+                const marks: string[] = [];
+                for (const l of live) {
+                    const m = l.marks?.[cellId];
+                    if (m && !marks.includes(m)) marks.push(m);
+                }
+                // Two glyphs at most: a header is 38-44px wide, and a chart in four
+                // groups would push the column into a scroll of its own.
+                if (marks.length) head.dataset.marks = marks.slice(0, 2).join('');
+                else delete head.dataset.marks;
+                head.toggleAttribute('data-linked', marks.length > 0);
             }
             // The hero's link count follows the switches.
             const liveOn = live.filter((l) => l.checked).length;
             heroSub.textContent = `${charts.length || '?'} chart${charts.length === 1 ? '' : 's'} · ${liveOn} link${liveOn === 1 ? '' : 's'} on`;
         };
         refresh();
-        // A plain open starts at the top (hero, grid, presets) with the nav reading
-        // "Layouts"; only an explicit `focus` scrolls straight to the sync block.
-        for (const b of navButtons) b.toggleAttribute('data-active', b.dataset.tab === (focus ?? 'layouts'));
-        if (focus) {
-            // The scroll runs after layout, once the sheet has its height.
-            doc.defaultView?.requestAnimationFrame(() => goTo(focus));
+        // A plain open lands on Layout; the status-line "Chart syncing" entry (and the
+        // sheet's own focus option) opens straight on the Sync tab.
+        goTo(focus ?? this.tab ?? 'layouts');
+        // Opened from a chart's own marks badge: unfold THAT chart's links and bring the
+        // row into view, so the tap lands on a chip instead of on a list to hunt through.
+        const wanted = focusCell ? chartHeads.get(focusCell) : undefined;
+        if (wanted) {
+            wanted.toggleAttribute('data-focus', true);
+            doc.defaultView?.requestAnimationFrame(() => {
+                // Horizontal only, and only inside the matrix: `block: 'nearest'` leaves
+                // the sheet's own vertical scroll exactly where the user left it.
+                try {
+                    wanted.scrollIntoView?.({ block: 'nearest', inline: 'center' });
+                } catch {
+                    /* jsdom has no scroller */
+                }
+            });
         }
     }
 

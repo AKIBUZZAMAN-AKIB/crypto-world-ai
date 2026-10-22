@@ -15,6 +15,7 @@ import { timeframeLabel } from './timeframe';
 import { tickerIconEl } from './symbol-icon';
 import { parseSymbol } from '../data/ProviderRegistry';
 import { LEGEND_AT_TOP_ATTR } from '../renderers/shared/InputsUI';
+import { groupMarkColor } from '../workspace/sync-marks';
 
 const STYLE_ID = 'vela-widget-statusline';
 const CSS = `
@@ -722,6 +723,10 @@ export class Statusline {
      *  truthful reading ("this chart is in the shared group"), while the tooltip keeps
      *  the per-axis breakdown. */
     setSyncMarks(marks: ReadonlyArray<{ kind: string; mark: string }>): void {
+        // One glyph per DISTINCT group, not per link: seven switches turned on in the
+        // all-cells form are one group ('A'), and `AAAAAAA` would be noise — `A` is the
+        // truthful reading ("this chart is in the shared group"), while the tooltip keeps
+        // the per-axis breakdown.
         const distinct: string[] = [];
         for (const m of marks) if (!distinct.includes(m.mark)) distinct.push(m.mark);
         const text = distinct.join('');
@@ -730,6 +735,9 @@ export class Statusline {
         this.marksEl.textContent = text;
         this.marksEl.hidden = marks.length === 0;
         this.marksEl.title = label;
+        // One group ⇒ the badge wears that group's color, so "the red chart" can be
+        // found from across the grid. Several groups stay neutral (the text says them).
+        this.marksEl.style.color = distinct.length === 1 ? (groupMarkColor(distinct[0]) ?? '') : '';
         // Screen readers get the same reading, plus WHAT the tap does.
         this.marksEl.setAttribute('aria-label', marks.length === 0 ? 'Sync groups' : `Sync groups: ${label}. Change group`);
     }
