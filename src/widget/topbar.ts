@@ -218,13 +218,30 @@ export interface TopbarOptions {
         onClearPooled?: () => void;
         clearedCharts?: () => number;
         onRestorePooled?: () => void;
-        savedLayouts?: () => Array<{ name: string; active: boolean; thumb?: string | null; savedAt?: number | null }>;
+        savedLayouts?: () => Array<{
+            name: string;
+            active: boolean;
+            thumb?: string | null;
+            savedAt?: number | null;
+            charts?: number;
+            indicators?: number;
+            dirty?: boolean;
+        }>;
         onSaveLayout?: (name: string) => void;
         onSaveLayoutWithThumb?: (name: string) => boolean;
+        /** The open layout and the manager's verbs (autosave, save changes, copy). */
+        activeLayout?: () => string | null;
+        onSaveChanges?: () => void;
+        autosave?: () => boolean;
+        onToggleAutosave?: (on: boolean) => void;
+        onDuplicateLayout?: (name: string) => void;
         templates?: () => Array<{ name: string; count: number; symbol?: string; timeframe?: string }>;
         onSaveTemplate?: (name: string, includeMarket: boolean) => boolean;
         onApplyTemplate?: (name: string, target: 'active' | 'all') => number;
         onDeleteTemplate?: (name: string) => void;
+        onRenameTemplate?: (from: string, to: string) => boolean;
+        defaultTemplate?: () => string | null;
+        onSetDefaultTemplate?: (name: string | null) => void;
         onExportTemplate?: (name: string) => string | null;
         onImportTemplate?: (json: string) => string | null;
         legend?: () => Array<{ id: string; mark: string; color?: string; name: string; count: number }>;
@@ -533,6 +550,14 @@ export class Topbar {
                 ...(layout.savedLayouts ? { savedLayouts: () => layout.savedLayouts?.() ?? [] } : {}),
                 ...(layout.onSaveLayout ? { onSaveLayout: (name) => layout.onSaveLayout?.(name) } : {}),
                 ...(layout.onSaveLayoutWithThumb ? { onSaveLayoutWithThumb: (name: string) => layout.onSaveLayoutWithThumb?.(name) ?? false } : {}),
+                ...(layout.activeLayout ? { activeLayout: () => layout.activeLayout?.() ?? null } : {}),
+                ...(layout.onSaveChanges ? { onSaveChanges: () => layout.onSaveChanges?.() } : {}),
+                ...(layout.autosave ? { autosave: () => layout.autosave?.() === true } : {}),
+                ...(layout.onToggleAutosave ? { onToggleAutosave: (on: boolean) => layout.onToggleAutosave?.(on) } : {}),
+                ...(layout.onDuplicateLayout ? { onDuplicateLayout: (name: string) => layout.onDuplicateLayout?.(name) } : {}),
+                ...(layout.onRenameTemplate ? { onRenameTemplate: (from: string, to: string) => layout.onRenameTemplate?.(from, to) ?? false } : {}),
+                ...(layout.defaultTemplate ? { defaultTemplate: () => layout.defaultTemplate?.() ?? null } : {}),
+                ...(layout.onSetDefaultTemplate ? { onSetDefaultTemplate: (name: string | null) => layout.onSetDefaultTemplate?.(name) } : {}),
                 ...(layout.templates ? { templates: () => layout.templates?.() ?? [] } : {}),
                 ...(layout.onSaveTemplate ? { onSaveTemplate: (name: string, withMarket: boolean) => layout.onSaveTemplate?.(name, withMarket) ?? false } : {}),
                 ...(layout.onApplyTemplate ? { onApplyTemplate: (name: string, target: 'active' | 'all') => layout.onApplyTemplate?.(name, target) ?? 0 } : {}),

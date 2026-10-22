@@ -522,9 +522,11 @@ describe('named layouts', () => {
     it('the active flag follows a rename', () => {
         const ws = mountWorkspace(PAGE);
         ws.saveLayout('Live');
-        expect(ws.savedLayoutList()).toEqual([{ name: 'Live', active: true }]);
+        // The list carries the manager's facts too (size, drift) — the name and the
+        // active flag are what this test is about.
+        expect(ws.savedLayoutList()).toEqual([expect.objectContaining({ name: 'Live', active: true })]);
         ws.renameLayout('Live', 'Renamed');
-        expect(ws.savedLayoutList()).toEqual([{ name: 'Renamed', active: true }]);
+        expect(ws.savedLayoutList()).toEqual([expect.objectContaining({ name: 'Renamed', active: true })]);
     });
 
     it('export → import round-trips the snapshot, suffixing a colliding name', () => {
@@ -567,7 +569,7 @@ describe('named layouts', () => {
         openPicker(ws);
         const row = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-saved')].find((r) => r.dataset.layout === 'Alpha')!;
         const labels = [...row.querySelectorAll<HTMLElement>('button')].map((b) => b.getAttribute('aria-label'));
-        expect(labels).toEqual(['Rename Alpha', 'Export Alpha as JSON', 'Delete Alpha']);
+        expect(labels).toEqual(['Rename Alpha', 'Duplicate “Alpha”', 'Export Alpha as JSON', 'Delete Alpha']);
         // The importer is a compact action in the Save-layout row (it used to be a
         // full-width dashed bar of its own, which cost the panel a whole line).
         expect(ws.root.querySelector('.vela-lp-save .vela-lp-importbtn')?.getAttribute('aria-label')).toBe('Import layout file…');

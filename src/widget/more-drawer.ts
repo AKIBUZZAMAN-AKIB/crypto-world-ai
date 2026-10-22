@@ -514,6 +514,28 @@ const CSS = `
 }
 .vela-md-saved-open:active, .vela-md-saved-del:active { background: var(--vela-hover); }
 .vela-md-saved-del { padding: 0 8px; width: 34px; }
+.vela-md-savedtext { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vela-md-saved .vela-md-row-label { display: inline-flex; align-items: center; gap: 5px; }
+.vela-md-savedmeta { font-size: 10.5px; color: var(--vela-fg-faint); }
+/* Autosave's row: a real switch row, not a stray native button — the dialog's row
+   primitive is all:unset + flex, and a class without it paints UA white on dark. */
+.vela-md-switchrow {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 10px;
+    min-height: 46px;
+    padding: 0 2px;
+    border-radius: 8px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-switchrow:active { background: var(--vela-hover); }
+.vela-md-switchrow:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
+.vela-md-switchrow[aria-checked='true'] .vela-md-switch { background: var(--vela-accent, var(--vela-selected-bg)); }
+.vela-md-switchrow[aria-checked='true'] .vela-md-switch::after { transform: translateX(16px); background: #fff; }
 .vela-md-saved-del .vela-icon { font-size: 15px; width: 15px; height: 15px; color: var(--vela-fg-muted); }
 .vela-md-row[data-danger='1'] .vela-md-row-value { color: var(--vela-danger); }
 .vela-md-rename {
@@ -543,6 +565,8 @@ const CSS = `
 }
 .vela-md-import:active { background: var(--vela-hover); }
 .vela-md-saveas { display: flex; gap: 8px; padding: 4px 0 8px; }
+/* A muted one-line subtitle inside a switch row (Autosave's "saving as you edit"). */
+.vela-md-row-sub { flex: none; font-size: 11.5px; color: var(--vela-fg-muted); }
 /* A saved layout's preview: 56×34 — big enough to recognise the grid at a glance. */
 .vela-md-savedthumb { flex: none; width: 56px; height: 34px; border-radius: 5px; object-fit: cover; border: 1px solid var(--vela-border); background: var(--vela-hover); }
 .vela-md-tpl .vela-md-row-label { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
@@ -699,7 +723,21 @@ export interface MoreDrawerOptions {
         onClearPooled?: () => void;
         clearedCharts?: () => number;
         onRestorePooled?: () => void;
-        savedLayouts?: () => Array<{ name: string; active: boolean; thumb?: string | null; savedAt?: number | null }>;
+        savedLayouts?: () => Array<{
+            name: string;
+            active: boolean;
+            thumb?: string | null;
+            savedAt?: number | null;
+            charts?: number;
+            indicators?: number;
+            dirty?: boolean;
+        }>;
+        /** The open layout, and the manager's verbs that fit a phone. */
+        activeLayout?: () => string | null;
+        onSaveChanges?: () => void;
+        autosave?: () => boolean;
+        onToggleAutosave?: (on: boolean) => void;
+        onDuplicateLayout?: (name: string) => void;
         onSaveLayout?: (name: string) => void;
         onOpenLayout?: (name: string) => void;
         onDeleteLayout?: (name: string) => void;
@@ -713,6 +751,9 @@ export interface MoreDrawerOptions {
         onSaveTemplate?: (name: string, includeMarket: boolean) => boolean;
         onApplyTemplate?: (name: string, target: 'active' | 'all') => number;
         onDeleteTemplate?: (name: string) => void;
+        onRenameTemplate?: (from: string, to: string) => boolean;
+        defaultTemplate?: () => string | null;
+        onSetDefaultTemplate?: (name: string | null) => void;
         onExportTemplate?: (name: string) => string | null;
         onImportTemplate?: (json: string) => string | null;
         /** Groups in use with the user's names (the legend). */
@@ -1438,6 +1479,31 @@ export class MoreDrawer {
         heading.className = 'vela-md-section';
         heading.textContent = 'Saved layouts';
         list.appendChild(heading);
+        // TradingView's Autosave, on the phone too — the switch sits under the heading
+        // where the list it governs begins, not in a settings page two taps away.
+        if (layout.onToggleAutosave) {
+            const on = layout.autosave?.() === true;
+            const auto = doc.createElement('button');
+            auto.type = 'button';
+            auto.className = 'vela-md-row vela-md-switchrow';
+            auto.setAttribute('role', 'switch');
+            auto.setAttribute('aria-checked', String(on));
+            const alabel = doc.createElement('span');
+            alabel.className = 'vela-md-row-label';
+            alabel.textContent = 'Autosave';
+            const hint = doc.createElement('span');
+            hint.className = 'vela-md-row-sub';
+            hint.textContent = on ? 'saving as you edit' : 'off';
+            const pill = doc.createElement('span');
+            pill.className = 'vela-md-switch' + (on ? ' on' : '');
+            pill.setAttribute('aria-hidden', 'true');
+            auto.append(alabel, hint, pill);
+            auto.addEventListener('click', () => {
+                layout.onToggleAutosave?.(!on);
+                this.render();
+            });
+            list.appendChild(auto);
+        }
         for (const l of rows) {
             const rowEl = doc.createElement('div');
             rowEl.className = 'vela-md-row vela-md-saved';
@@ -1453,13 +1519,35 @@ export class MoreDrawer {
                 img.decoding = 'async';
                 rowEl.appendChild(img);
             }
+            // Name and facts share ONE column: on 390 px a row cannot afford two
+            // separate text runs and four buttons side by side.
+            const text = doc.createElement('span');
+            text.className = 'vela-md-savedtext';
             const label = doc.createElement('span');
             label.className = 'vela-md-row-label';
             label.textContent = l.name;
             if (typeof l.savedAt === 'number' && l.savedAt > 0) {
                 label.title = `Saved ${new Date(l.savedAt).toLocaleString()}`;
             }
-            rowEl.append(label);
+            if (l.dirty) {
+                const dot = doc.createElement('span');
+                dot.className = 'vela-lp-dot';
+                dot.setAttribute('aria-label', 'Unsaved changes');
+                dot.title = 'Unsaved changes';
+                label.appendChild(dot);
+            }
+            text.appendChild(label);
+            // Facts, not decoration: two layouts called "Scalp" are told apart by size.
+            if (typeof l.charts === 'number' || typeof l.indicators === 'number') {
+                const bits: string[] = [];
+                if (typeof l.charts === 'number') bits.push(`${l.charts} chart${l.charts === 1 ? '' : 's'}`);
+                if (typeof l.indicators === 'number') bits.push(`${l.indicators} ind`);
+                const sub = doc.createElement('span');
+                sub.className = 'vela-md-savedmeta';
+                sub.textContent = bits.join(' · ');
+                text.appendChild(sub);
+            }
+            rowEl.appendChild(text);
             const open = doc.createElement('button');
             open.type = 'button';
             open.className = 'vela-md-saved-open';
@@ -1519,18 +1607,18 @@ export class MoreDrawer {
                 });
                 rowEl.append(ren);
             }
-            if (layout.onExportLayout) {
-                const exp = doc.createElement('button');
-                exp.type = 'button';
-                exp.className = 'vela-md-saved-del';
-                exp.setAttribute('aria-label', `Export layout ${l.name}`);
-                exp.title = `Export “${l.name}” as JSON`;
-                exp.appendChild(iconEl('download', doc));
-                exp.addEventListener('click', () => {
-                    const json = layout.onExportLayout?.(l.name);
-                    if (json) downloadText(doc, `${l.name}.vela-layout.json`, json);
+            if (layout.onDuplicateLayout) {
+                const dup = doc.createElement('button');
+                dup.type = 'button';
+                dup.className = 'vela-md-saved-del';
+                dup.setAttribute('aria-label', `Duplicate layout ${l.name}`);
+                dup.title = `Duplicate “${l.name}”`;
+                dup.appendChild(iconEl('clone', doc));
+                dup.addEventListener('click', () => {
+                    layout.onDuplicateLayout?.(l.name);
+                    this.render();
                 });
-                rowEl.append(exp);
+                rowEl.append(dup);
             }
             if (layout.onDeleteLayout) {
                 const del = doc.createElement('button');

@@ -198,6 +198,17 @@ export interface WorkspaceState {
      *  consumer — round-trips unchanged. */
     layoutMeta?: Record<string, SavedLayoutMeta>;
     /**
+     * Preferences for the two manager lists below, kept in the SAME document so they ride
+     * a share link and a reload: autosave (keep the open layout in step with the chart)
+     * and the template every new chart starts from.
+     */
+    layoutPrefs?: {
+        /** Save the open layout automatically after every change (TradingView's toggle). */
+        autosave?: boolean;
+        /** Template applied to charts that are NEW (not restored): a house style. */
+        defaultTemplate?: string;
+    };
+    /**
      * Saved chart TEMPLATES — indicator sets with their settings, no drawings (Vela's
      * documented template contract: applying one REPLACES the chart's indicators; a
      * template never carries drawings). Keyed by name; the market may be carried
@@ -344,6 +355,8 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
     if (layoutMeta) out.layoutMeta = layoutMeta;
     const templates = sanitizeTemplates(d.templates);
     if (templates) out.templates = templates;
+    const prefs = sanitizeLayoutPrefs(d.layoutPrefs);
+    if (prefs) out.layoutPrefs = prefs;
     if (Array.isArray(d.watchlist)) {
         const list: string[] = [];
         for (const raw of d.watchlist as unknown[]) {
@@ -397,6 +410,15 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
  * remote URL (a stored `http://…` would beacon the user's view to a third party on every
  * picker open) and never unbounded (a 4 MB data URL would eat the whole storage budget).
  */
+function sanitizeLayoutPrefs(raw: unknown): WorkspaceState['layoutPrefs'] | null {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const p = raw as Record<string, unknown>;
+    const out: NonNullable<WorkspaceState['layoutPrefs']> = {};
+    if (typeof p.autosave === 'boolean') out.autosave = p.autosave;
+    if (typeof p.defaultTemplate === 'string' && p.defaultTemplate.trim()) out.defaultTemplate = p.defaultTemplate.trim().slice(0, 40);
+    return Object.keys(out).length > 0 ? out : null;
+}
+
 function sanitizeLayoutMeta(raw: unknown): Record<string, SavedLayoutMeta> | null {
     if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const out: Record<string, SavedLayoutMeta> = {};

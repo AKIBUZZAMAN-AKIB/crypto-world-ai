@@ -305,6 +305,21 @@ registerIcon('layout', svg16('<rect x="1.5" y="1.5" width="13" height="13" rx="1
  * enumeration reorders integer-like keys ahead of everything, silently breaking the
  * declared order).
  */
+/**
+ * The document's identity for the layout manager: everything a save stores, minus the
+ * bookkeeping that says nothing about the CHART —
+ *   • `savedLayouts` / `layoutPrefs` — the manager's own state (it never nests),
+ *   • `layoutMeta` — the preview/timestamp side-cars (they change on every save),
+ *   • `seenTips` — one-time UI acknowledgements. Opening a surface can burn a coach
+ *     mark; that is not an edit, and treating it as one lit the dot on a layout
+ *     nobody had touched (measured: the picker itself flipped the flag).
+ * Key order is fixed by the serializers, so two equal documents hash equal.
+ */
+export function layoutFingerprint(state: WorkspaceState | Record<string, unknown>): string {
+    const { savedLayouts: _a, layoutPrefs: _b, layoutMeta: _c, seenTips: _d, ...rest } = state as Record<string, unknown>;
+    return JSON.stringify(rest);
+}
+
 export function declaredOrder(cells: Record<string, unknown> | undefined): string[] {
     const names = Object.keys(cells ?? {});
     for (const n of names) {
@@ -484,6 +499,21 @@ export class VelaWorkspace {
     private linkInbox: { symbol?: string; timeframe?: string; range?: { from: number; to: number } } | null = null;
     /** The saved snapshot opened (or written) last — the picker's active row. */
     private activeSavedLayout: string | null = null;
+    /** Autosave + the house template for new charts (see `WorkspaceState.layoutPrefs`). */
+    private layoutPrefs: { autosave: boolean; defaultTemplate: string | null } = { autosave: false, defaultTemplate: null };
+    /**
+     * Document revision, bumped by every {@link markStateDirty}. Saving a layout records
+     * the revision it captured; the picker's "unsaved changes" dot is the difference.
+     * A counter, not a deep compare: the doc carries clocks and viewports that change
+     * without the user touching anything, and a false "unsaved" is worse than none.
+     */
+    private docRevision = 0;
+    /** {@link docRevision} as of the last save of {@link activeSavedLayout}. */
+    private savedRevision = 0;
+    /** The document's content hash at save time — what the dirty dot actually compares. */
+    private readonly savedFingerprints = new Map<string, string>();
+    /** Pending autosave (debounced; a burst of edits writes once). */
+    private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
     /** Inside a click-driven time alignment: viewport echoes are the controller's own. */
     private timeBusy = false;
     // ── persistence (state surface + adapter plumbing) ──
@@ -805,10 +835,20 @@ export class VelaWorkspace {
                     })),
                 onSaveLayout: (name) => this.saveLayout(name),
                 onSaveLayoutWithThumb: (name) => this.saveLayoutWithThumbnail(name),
+                // The manager's verbs: what the open layout is, whether it drifted, and
+                // the two TradingView settings this build was missing (autosave, copy).
+                activeLayout: () => this.activeSavedLayout,
+                onSaveChanges: () => this.saveActiveLayout(),
+                autosave: () => this.autosaveEnabled(),
+                onToggleAutosave: (on) => this.setAutosave(on),
+                onDuplicateLayout: (name) => this.duplicateLayout(name),
                 templates: () => this.templateList(),
                 onSaveTemplate: (name, includeMarket) => this.saveTemplate(name, { includeMarket }),
                 onApplyTemplate: (name, target) => this.applyTemplate(name, target),
                 onDeleteTemplate: (name) => this.deleteTemplate(name),
+                onRenameTemplate: (from, to) => this.renameTemplate(from, to),
+                defaultTemplate: () => this.defaultTemplate(),
+                onSetDefaultTemplate: (name) => this.setDefaultTemplate(name),
                 onExportTemplate: (name) => this.exportTemplate(name),
                 onImportTemplate: (json) => this.importTemplate(json),
                 legend: () => this.groupLegend(),
@@ -1306,6 +1346,12 @@ export class VelaWorkspace {
         if (this.drawingsScope !== 'layout') state.drawingsScope = this.drawingsScope;
         if (this.savedLayouts.size > 0) state.savedLayouts = Object.fromEntries([...this.savedLayouts].map(([k, v]) => [k, v as unknown]));
         if (this.layoutMeta.size > 0) state.layoutMeta = Object.fromEntries([...this.layoutMeta].map(([k, v]) => [k, { ...v }]));
+        if (this.layoutPrefs.autosave || this.layoutPrefs.defaultTemplate) {
+            state.layoutPrefs = {
+                ...(this.layoutPrefs.autosave ? { autosave: true } : {}),
+                ...(this.layoutPrefs.defaultTemplate ? { defaultTemplate: this.layoutPrefs.defaultTemplate } : {}),
+            };
+        }
         if (this.templates.size > 0) {
             state.templates = Object.fromEntries(
                 [...this.templates].map(([k, v]) => [k, { ...v, indicators: [...v.indicators] }]),
@@ -1355,6 +1401,10 @@ export class VelaWorkspace {
         }
         if (st.templates) {
             for (const [name, template] of Object.entries(st.templates)) this.templates.set(name, template);
+        }
+        if (st.layoutPrefs) {
+            this.layoutPrefs.autosave = st.layoutPrefs.autosave === true;
+            this.layoutPrefs.defaultTemplate = st.layoutPrefs.defaultTemplate ?? null;
         }
         if (st.watchlist) this.watchlist = [...st.watchlist];
         if (st.groupNames) this.groupNames = { ...st.groupNames };
@@ -1892,6 +1942,8 @@ export class VelaWorkspace {
      *  per burst of edits, flushed hard on unload/destroy. */
     private markStateDirty(): void {
         if (this.destroyed || !this.booted) return;
+        this.docRevision += 1;
+        this.scheduleAutosave();
         if (this.stateTimer != null) clearTimeout(this.stateTimer);
         this.stateTimer = setTimeout(() => {
             this.stateTimer = null;
@@ -2170,10 +2222,17 @@ export class VelaWorkspace {
             // New charts inherit the FIRST chart's live indicator set (TV's rule). A pooled
             // cell keeps its own — it is not new, it is returning.
             const inherited = !pooled && this.inheritIndicators ? this.inheritLedger(id) : undefined;
+            // The house template ("Set as default" in the picker): the indicator set a
+            // NEW chart opens with, exactly as TradingView's default template. It OUTRANKS
+            // inheritance when set — an explicit "every new chart starts like this" is a
+            // stronger instruction than the implicit sibling-copy, and it is what the
+            // setting promises. A pooled/hydrated cell is never touched: the template is
+            // for newborns, not for charts coming back with their own state.
+            const house = !pooled ? this.defaultTemplateSeed() : undefined;
             const seed: CellBoot = pooled ?? {
                 ...seedDefaults(this.opts),
                 ...(this.opts.cells?.[id] ?? {}),
-                ...(inherited ? { indicators: inherited } : {}),
+                ...(house ? { indicators: house } : inherited ? { indicators: inherited } : {}),
             };
             this.pool.delete(id); // the slot is live again — its pooled state is consumed
             const cell = new ChartCell(id, this.gridEl, seed, {
@@ -2826,21 +2885,204 @@ export class VelaWorkspace {
     }
 
     // ── named layouts ("Save layout as…", "Open layout") ───────────────────────────
-    /** The saved snapshots, by name, with the one opened/saved last flagged. */
-    savedLayoutList(): Array<{ name: string; active: boolean }> {
-        return [...this.savedLayouts.keys()].map((name) => ({ name, active: name === this.activeSavedLayout }));
+    /**
+     * The saved snapshots, by name, with the one opened/saved last flagged. Each row also
+     * carries what a trader uses to tell two layouts apart at a glance — how many charts
+     * and indicators it holds — and whether the ACTIVE one has drifted from its snapshot
+     * (TradingView's unsaved-changes dot).
+     */
+    savedLayoutList(): Array<{ name: string; active: boolean; charts: number; indicators: number; dirty: boolean }> {
+        return [...this.savedLayouts.keys()].map((name) => {
+            const doc = this.savedLayouts.get(name);
+            const cells = doc?.charts ?? [];
+            const indicators = cells.reduce((n, c) => n + (c.indicators?.natives?.length ?? 0), 0);
+            return {
+                name,
+                active: name === this.activeSavedLayout,
+                charts: cells.length,
+                indicators,
+                dirty: name === this.activeSavedLayout && this.isActiveLayoutDirty(),
+            };
+        });
     }
 
-    /** Snapshot the WHOLE workspace under `name` (replacing a same-named save). */
-    saveLayout(name: string): void {
+    /**
+     * True when the open layout has changed since it was written (nothing to compare
+     * before the first save ⇒ false).
+     *
+     * The revision counter is only a FAST PATH: the workspace marks itself dirty for its
+     * own housekeeping too (a market reload after an open, a preference write), and a
+     * counter that counts those turns the dot on for changes the user never made.
+     * Measured: right after opening a layout the document is byte-identical to its
+     * snapshot while the counter has moved twice — so a moved counter is a reason to
+     * LOOK, and the document is what answers.
+     */
+    isActiveLayoutDirty(): boolean {
+        const name = this.activeSavedLayout;
+        if (name === null) return false;
+        if (this.docRevision === this.savedRevision) return false;
+        const snapshot = this.savedLayouts.get(name);
+        if (!snapshot) return false;
+        const now = layoutFingerprint(this.getState());
+        const then = this.savedFingerprints.get(name) ?? layoutFingerprint(snapshot);
+        this.savedFingerprints.set(name, then);
+        if (now === then) {
+            // Nothing actually differs — re-sync the fast path so the next read is free.
+            this.savedRevision = this.docRevision;
+            return false;
+        }
+        return true;
+    }
+
+    /** Whether the open layout is saved as the chart changes (TradingView's Autosave). */
+    autosaveEnabled(): boolean {
+        return this.layoutPrefs.autosave;
+    }
+
+    /**
+     * Turn autosave on/off. Turning it ON writes immediately when a layout is open — the
+     * trader flipping the switch is asking for exactly that — and turning it OFF leaves
+     * the last write in place (nothing is discarded, it simply stops following).
+     */
+    setAutosave(on: boolean): void {
+        if (this.layoutPrefs.autosave === on) return;
+        this.layoutPrefs.autosave = on;
+        this.clearAutosave();
+        this.markStateDirty();
+        if (on && this.activeSavedLayout) this.saveLayout(this.activeSavedLayout, { silent: true });
+        this.events.emit('layout:prefs', undefined);
+        this.toast(on ? 'Autosave on — the open layout follows every change' : 'Autosave off — save when you are ready', 'info');
+    }
+
+    /** Debounced autosave: a burst of edits (dragging an indicator, resizing panes)
+     *  writes ONE snapshot, after the user has settled. */
+    private scheduleAutosave(): void {
+        if (!this.layoutPrefs.autosave || !this.activeSavedLayout) return;
+        // A mark that is not a chart change (a preference write, this save's own bump)
+        // must not schedule a write — otherwise autosave chases its own tail.
+        if (!this.isActiveLayoutDirty()) return;
+        this.clearAutosave();
+        this.autosaveTimer = setTimeout(() => {
+            this.autosaveTimer = null;
+            if (this.destroyed || !this.layoutPrefs.autosave || !this.activeSavedLayout) return;
+            this.saveLayout(this.activeSavedLayout, { silent: true });
+        }, 1200);
+    }
+
+    private clearAutosave(): void {
+        if (this.autosaveTimer !== null) clearTimeout(this.autosaveTimer);
+        this.autosaveTimer = null;
+    }
+
+    /**
+     * Copy a snapshot under "Name copy" (then "Name copy 2"…) — TradingView's "Make a
+     * copy". The copy carries the side-car preview too, so the new row is recognisable
+     * straight away, and it is NOT opened: a duplicate is an archive action, and yanking
+     * the workspace into a copy the trader did not ask to see is a surprise.
+     */
+    duplicateLayout(name: string): string | null {
+        const doc = this.savedLayouts.get(name);
+        if (!doc) return null;
+        const base = `${name} copy`;
+        let copy = base;
+        for (let n = 2; this.savedLayouts.has(copy); n += 1) copy = `${base} ${n}`;
+        // A snapshot inside a snapshot would double every future save's size.
+        const clone = { ...doc } as WorkspaceState;
+        delete clone.savedLayouts;
+        delete clone.layoutPrefs;
+        this.savedLayouts.set(copy, clone);
+        // The copy's content is the original's — including its hash (a deep copy would
+        // be needed for a shared reference to matter; the arrays are freshly serialized
+        // by every getState call, so the clone's own content is what is stored).
+        const print = this.savedFingerprints.get(name);
+        if (print) this.savedFingerprints.set(copy, print);
+        const meta = this.layoutMeta.get(name);
+        if (meta) this.layoutMeta.set(copy, { ...meta });
+        this.markStateDirty();
+        this.toast(`Layout “${copy}” created`, 'success');
+        return copy;
+    }
+
+    /** The template new charts start from, by name (null = none). */
+    defaultTemplate(): string | null {
+        return this.layoutPrefs.defaultTemplate;
+    }
+
+    /**
+     * The ledger a NEW chart gets from the default template, or undefined when none is
+     * set (or it names a template that is gone — the picker's delete already clears a
+     * dangling pointer, this is the belt for a state file written by an older build).
+     * Shape matches `CellState.indicators`, so it rides the same seed path inheritance
+     * uses: the chart resolves it once its manifest is ready.
+     */
+    private defaultTemplateSeed(): NonNullable<CellState['indicators']> | undefined {
+        const name = this.layoutPrefs.defaultTemplate;
+        if (!name) return undefined;
+        const template = this.templates.get(name);
+        if (!template) return undefined;
+        return {
+            manifest: [],
+            natives: template.indicators.map((e) =>
+                (typeof e === 'string' ? { type: e, inputs: {} } : { ...e, inputs: { ...(e.inputs ?? {}) } }) as never,
+            ),
+        };
+    }
+
+    /** Point new charts at a template, or null to stop. */
+    setDefaultTemplate(name: string | null): void {
+        const next = name && this.templates.has(name) ? name : null;
+        if (this.layoutPrefs.defaultTemplate === next) return;
+        this.layoutPrefs.defaultTemplate = next;
+        this.markStateDirty();
+        this.events.emit('layout:prefs', undefined);
+        this.toast(next ? `New charts will start with “${next}”` : 'New charts start with no template', 'info');
+    }
+
+    /**
+     * Snapshot the WHOLE workspace under `name` (replacing a same-named save).
+     * `silent` is autosave: no toast per write, no notification storm while the trader
+     * drags a pane divider — the picker's own state is the feedback.
+     */
+    saveLayout(name: string, opts: { silent?: boolean } = {}): void {
         const trimmed = name.trim();
         if (!trimmed) return;
+        // Capture the document BEFORE the bookkeeping below (which bumps the revision).
         const doc = this.getState();
         delete doc.savedLayouts; // a snapshot never embeds the snapshots (no recursion)
+        delete doc.layoutPrefs; // …nor the manager's own preferences
         this.savedLayouts.set(trimmed, doc);
+        this.savedFingerprints.set(trimmed, layoutFingerprint(doc));
         this.activeSavedLayout = trimmed;
+        if (!opts.silent) this.toast(`Layout “${trimmed}” saved`, 'success');
+        this.events.emit('layout:saved', { name: trimmed, silent: opts.silent === true });
+        // The document itself changed (one more saved snapshot), so this is a real dirty
+        // mark — but the OPEN layout now matches the chart, which is what savedRevision
+        // measures. Order matters: sync it AFTER the bump or every save leaves the dot on
+        // (and autosave would re-save itself forever).
         this.markStateDirty();
-        this.toast(`Layout “${trimmed}” saved`, 'success');
+        this.savedRevision = this.docRevision;
+        // That mark scheduled a write (the revision moved before it was re-synced). The
+        // write just happened — drop the timer, or autosave re-saves itself forever.
+        this.clearAutosave();
+        // Every save stamps its time — including autosave, so the row can say how fresh
+        // the snapshot is. A thumbnail, when one was captured, is preserved.
+        const prev = this.layoutMeta.get(trimmed) ?? {};
+        this.layoutMeta.set(trimmed, { ...prev, savedAt: Date.now() });
+    }
+
+    /**
+     * Write the OPEN layout in place — Ctrl/⌘+S's action, and the "Save changes" button
+     * beside the unsaved dot. With nothing open there is nothing to overwrite, so it says
+     * so instead of silently naming a snapshot after the trader.
+     */
+    saveActiveLayout(): void {
+        if (!this.activeSavedLayout) {
+            this.toast('No layout open — use Save as… to name one', 'info');
+            return;
+        }
+        // An open-but-untitled document still has to land somewhere: the picker shows the
+        // active name, so this is only reachable for a snapshot that was opened or saved.
+        this.saveLayout(this.activeSavedLayout, { silent: false });
     }
 
     /** Restore a saved snapshot (layout, cells, links, drawings, sizing). */
@@ -2849,15 +3091,19 @@ export class VelaWorkspace {
         if (!doc) return;
         this.applyState(doc);
         this.activeSavedLayout = name;
+        // applyState reports its own changes; from here the doc matches the snapshot.
+        this.savedRevision = this.docRevision;
         this.toast(`Layout “${name}” opened`, 'info');
     }
 
     deleteLayout(name: string): void {
         if (!this.savedLayouts.delete(name)) return;
+        if (this.activeSavedLayout === name) this.clearAutosave();
         // The side-car goes with the snapshot: a thumbnail or timestamp whose layout is
         // gone is an orphan that would re-appear under a NEW layout saved with the same
         // name — a preview of somebody else's chart.
         this.layoutMeta.delete(name);
+        this.savedFingerprints.delete(name);
         if (this.activeSavedLayout === name) this.activeSavedLayout = null;
         this.markStateDirty();
     }
@@ -2884,6 +3130,11 @@ export class VelaWorkspace {
         if (meta) {
             this.layoutMeta.delete(from);
             this.layoutMeta.set(name, meta);
+        }
+        const print = this.savedFingerprints.get(from);
+        if (print) {
+            this.savedFingerprints.delete(from);
+            this.savedFingerprints.set(name, print);
         }
         this.markStateDirty();
         this.toast(`Layout “${from}” renamed to “${name}”`, 'success');
@@ -3008,6 +3259,12 @@ export class VelaWorkspace {
 
     deleteTemplate(name: string): boolean {
         if (!this.templates.delete(name)) return false;
+        // A default pointing at a template that no longer exists would apply nothing
+        // forever and quietly lie in the picker.
+        if (this.layoutPrefs.defaultTemplate === name) {
+            this.layoutPrefs.defaultTemplate = null;
+            this.events.emit('layout:prefs', undefined);
+        }
         this.markStateDirty();
         return true;
     }
@@ -3020,6 +3277,11 @@ export class VelaWorkspace {
         for (const [key, value] of this.templates) rebuilt.set(key === from ? name : key, value);
         this.templates.clear();
         for (const [key, value] of rebuilt) this.templates.set(key, value);
+        // The house pointer follows its template — a rename must not silently unset it.
+        if (this.layoutPrefs.defaultTemplate === from) {
+            this.layoutPrefs.defaultTemplate = name;
+            this.events.emit('layout:prefs', undefined);
+        }
         this.markStateDirty();
         return true;
     }
@@ -3990,10 +4252,20 @@ export class VelaWorkspace {
                     })),
                 onSaveLayout: (name) => this.saveLayout(name),
                 onSaveLayoutWithThumb: (name) => this.saveLayoutWithThumbnail(name),
+                // The manager's verbs: what the open layout is, whether it drifted, and
+                // the two TradingView settings this build was missing (autosave, copy).
+                activeLayout: () => this.activeSavedLayout,
+                onSaveChanges: () => this.saveActiveLayout(),
+                autosave: () => this.autosaveEnabled(),
+                onToggleAutosave: (on) => this.setAutosave(on),
+                onDuplicateLayout: (name) => this.duplicateLayout(name),
                 templates: () => this.templateList(),
                 onSaveTemplate: (name, includeMarket) => this.saveTemplate(name, { includeMarket }),
                 onApplyTemplate: (name, target) => this.applyTemplate(name, target),
                 onDeleteTemplate: (name) => this.deleteTemplate(name),
+                onRenameTemplate: (from, to) => this.renameTemplate(from, to),
+                defaultTemplate: () => this.defaultTemplate(),
+                onSetDefaultTemplate: (name) => this.setDefaultTemplate(name),
                 onExportTemplate: (name) => this.exportTemplate(name),
                 onImportTemplate: (json) => this.importTemplate(json),
                 legend: () => this.groupLegend(),
@@ -4405,6 +4677,18 @@ export class VelaWorkspace {
             category: 'Layout',
             when: () => this.def.cells.length > 1,
             run: () => this.maximizeCell(this.maximizedId ? null : this.activeId),
+        });
+        // Ctrl/⌘+S — TradingView's "Save changes": write the OPEN layout in place. It is
+        // registered even with nothing open so the browser's own Save-page dialog never
+        // appears over the chart; with no layout open it explains itself instead.
+        this.keymap.register({
+            id: 'layout.save',
+            keys: 'mod+s',
+            label: 'Save changes to the open layout',
+            category: 'Layout',
+            scope: 'global',
+            preventDefault: true,
+            run: () => this.saveActiveLayout(),
         });
         this.keymap.register({ id: 'chart.reset-view', keys: 'alt+r', label: 'Reset view (all history)', category: 'Chart', run: () => this.active.chart.setVisibleRangePreset('ALL') });
         this.keymap.register({ id: 'chart.toggle-log', keys: 'alt+l', label: 'Toggle logarithmic scale', category: 'Chart', run: () => this.active.chart.renderer.set('logScale', !this.active.chart.renderer.get('logScale')) });

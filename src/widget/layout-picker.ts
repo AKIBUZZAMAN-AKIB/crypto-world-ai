@@ -298,6 +298,34 @@ const CSS = `
 .vela-lp-tpl .vela-lp-saved-act:hover { color: var(--vela-fg-bright); background: var(--vela-hover-strong); }
 .vela-lp-tpl .vela-lp-saved-act .vela-icon { font-size: 13px; width: 13px; height: 13px; }
 .vela-lp-grouphead { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--vela-fg-muted); margin-top: 2px; }
+/* The manager's own header: the OPEN layout, whether it has drifted, and autosave.
+   One line of state above the list — a trader should never have to guess which
+   snapshot they are looking at, or whether their last edit is in it. */
+.vela-lp-open { display: flex; align-items: center; gap: 6px; padding: 4px 2px 0; font-size: 11.5px; color: var(--vela-fg-muted); }
+.vela-lp-open b { font-weight: 500; color: var(--vela-fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vela-lp-open .vela-lp-openname { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 5px; }
+.vela-lp-open button { all: unset; cursor: pointer; padding: 3px 8px; min-height: 22px; box-sizing: border-box; display: inline-flex; align-items: center; border-radius: 4px; font-size: 11.5px; color: var(--vela-fg-bright); background: var(--vela-hover); }
+.vela-lp-open button:hover { background: var(--vela-hover-strong); }
+.vela-lp-open button:focus-visible { outline: 2px solid var(--vela-accent, var(--vela-fg-bright)); outline-offset: 1px; }
+/* A small filled dot: the snapshot and the chart disagree. Paired with the words in
+   the title/aria — colour alone never carries a state (WCAG 1.4.1). */
+.vela-lp-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--vela-accent, var(--vela-fg-bright)); }
+.vela-lp-auto { all: unset; display: flex; align-items: center; gap: 8px; padding: 2px; min-height: 26px; box-sizing: border-box; cursor: pointer; border-radius: 4px; }
+.vela-lp-auto:hover { background: var(--vela-hover); }
+.vela-lp-auto:focus-visible { outline: 2px solid var(--vela-accent, var(--vela-fg-bright)); outline-offset: 1px; }
+.vela-lp-auto .vela-lp-switch { margin-left: auto; }
+.vela-lp-auto .vela-lp-label { flex: 1 1 auto; font-size: 12px; color: var(--vela-fg); }
+.vela-lp-auto-hint { font-size: 10px; color: var(--vela-fg-muted); }
+/* A saved row's second column of facts (charts · indicators) — small, muted, and the
+   first thing to give way when the name is long. */
+.vela-lp-saved .vela-lp-rowmeta { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--vela-fg-muted); }
+.vela-lp-saved[data-active='1'] { background: var(--vela-hover); border-radius: 4px; }
+/* Rename-in-place: the row's own text field, never a modal for a one-word edit. */
+.vela-lp-filter { width: 100%; box-sizing: border-box; margin: 2px 0 4px; padding: 5px 8px; border-radius: 4px; border: 1px solid var(--vela-border); background: var(--vela-hover); color: var(--vela-fg-bright); font: inherit; font-size: 12px; }
+.vela-lp-filter::placeholder { color: var(--vela-fg-faint); }
+.vela-lp-filter:focus-visible { outline: 2px solid var(--vela-accent, var(--vela-fg-bright)); outline-offset: 1px; }
+.vela-lp-saved[hidden] { display: none; }
+.vela-lp-inline { flex: 1 1 auto; min-width: 0; background: var(--vela-hover); border: 1px solid var(--vela-border-strong); border-radius: 4px; color: var(--vela-fg-bright); font: inherit; font-size: 12px; padding: 2px 6px; }
 /* The legend under the table: the same marks the cells wear, with the name the user
    gave them. BOTH halves are editable in place — the glyph (what the chart wears) and
    the name (what the group is for) — and both are keyboard-reachable buttons, not
@@ -565,7 +593,30 @@ export interface LayoutPickerOptions {
     drawingsScope?: () => 'layout' | 'global';
     onToggleDrawingsScope?: () => void;
     /** Named snapshots: open / delete (rows), save (the input). */
-    savedLayouts?: () => Array<{ name: string; active: boolean; thumb?: string | null; savedAt?: number | null }>;
+    savedLayouts?: () => Array<{
+        name: string;
+        active: boolean;
+        thumb?: string | null;
+        savedAt?: number | null;
+        /** How big the snapshot is — what tells two layouts apart at a glance. */
+        charts?: number;
+        indicators?: number;
+        /** The OPEN layout has changed since it was saved (TradingView's dot). */
+        dirty?: boolean;
+    }>;
+    /** The open layout's name, when one is open — the "Save changes" line needs it. */
+    activeLayout?: () => string | null;
+    /** Write the open layout in place (Ctrl/Cmd+S's action, and "Save changes"). */
+    onSaveChanges?: () => void;
+    /** TradingView's Autosave: keep the open layout in step with the chart. */
+    autosave?: () => boolean;
+    onToggleAutosave?: (on: boolean) => void;
+    /** "Make a copy" on a saved layout. */
+    onDuplicateLayout?: (name: string) => void;
+    /** The template NEW charts start from (null = none), and the setter behind the star. */
+    defaultTemplate?: () => string | null;
+    onSetDefaultTemplate?: (name: string | null) => void;
+    onRenameTemplate?: (from: string, to: string) => boolean;
     onSaveLayout?: (name: string) => void;
     onOpenLayout?: (name: string) => void;
     onDeleteLayout?: (name: string) => void;
@@ -1171,7 +1222,7 @@ export class LayoutPicker {
      * commits — the same contract as the Save field, and the row keeps its position so
      * the eye does not have to re-find it.
      */
-    private beginRename(row: HTMLElement, label: HTMLElement, from: string): void {
+    private beginRename(row: HTMLElement, label: HTMLElement, from: string, apply?: (from: string, to: string) => boolean): void {
         const doc = this.doc;
         const input = doc.createElement('input');
         input.type = 'text';
@@ -1189,7 +1240,7 @@ export class LayoutPicker {
                 this.renderFooter();
                 return;
             }
-            const ok = this.opts.onRenameLayout?.(from, to) ?? false;
+            const ok = (apply ?? this.opts.onRenameLayout)?.(from, to) ?? false;
             if (ok || !allowRetry) {
                 done = true;
                 this.renderFooter();
@@ -1418,6 +1469,20 @@ export class LayoutPicker {
             // Apply here, then apply everywhere — the two answers the docs describe.
             row.appendChild(this.savedAction('check', `Apply “${t.name}” to the active chart`, () => this.opts.onApplyTemplate?.(t.name, 'active')));
             row.appendChild(this.savedAction('group', `Apply “${t.name}” to every chart`, () => this.opts.onApplyTemplate?.(t.name, 'all')));
+            // The house template: what a NEW chart starts with. A star, filled when set —
+            // the same language the watchlist and the drawing palette already speak.
+            if (this.opts.onSetDefaultTemplate) {
+                const isDefault = this.opts.defaultTemplate?.() === t.name;
+                row.appendChild(this.savedAction(isDefault ? 'star-filled' : 'star', isDefault ? `“${t.name}” already seeds new charts — click to stop` : `Start every new chart with “${t.name}”`, () => {
+                    this.opts.onSetDefaultTemplate?.(isDefault ? null : t.name);
+                    this.renderFooter();
+                }));
+            }
+            if (this.opts.onRenameTemplate) {
+                row.appendChild(this.savedAction('pen', `Rename “${t.name}”`, () => {
+                    this.beginRename(row, nameCol, t.name, this.opts.onRenameTemplate);
+                }));
+            }
             if (this.opts.onExportTemplate) {
                 row.appendChild(this.savedAction('download', `Export “${t.name}”`, () => {
                     const json = this.opts.onExportTemplate?.(t.name);
@@ -1470,6 +1535,67 @@ export class LayoutPicker {
         this.footEl.replaceChildren();
         const saved = this.opts.savedLayouts;
         if (saved) {
+            // ── the open layout, its drift, and autosave ──
+            const active = this.opts.activeLayout?.() ?? null;
+            const dirty = (saved() ?? []).some((l) => l.dirty);
+            if (active) {
+                const strip = doc.createElement('div');
+                strip.className = 'vela-lp-open';
+                const nameWrap = doc.createElement('span');
+                nameWrap.className = 'vela-lp-openname';
+                if (dirty) {
+                    const dot = doc.createElement('span');
+                    dot.className = 'vela-lp-dot';
+                    dot.setAttribute('aria-hidden', 'true');
+                    nameWrap.appendChild(dot);
+                }
+                const bold = doc.createElement('b');
+                bold.textContent = active;
+                bold.title = active;
+                nameWrap.appendChild(bold);
+                const state = doc.createElement('span');
+                // Words AND the dot: colour is never the only carrier (WCAG 1.4.1).
+                state.className = 'vela-lp-auto-hint';
+                state.textContent = dirty ? 'unsaved changes' : 'saved';
+                nameWrap.appendChild(state);
+                strip.appendChild(nameWrap);
+                if (dirty && this.opts.onSaveChanges) {
+                    const b = doc.createElement('button');
+                    b.type = 'button';
+                    b.textContent = 'Save changes';
+                    b.setAttribute('aria-label', `Save changes to “${active}”`);
+                    b.addEventListener('click', () => {
+                        this.opts.onSaveChanges?.();
+                        this.renderFooter();
+                    });
+                    strip.appendChild(b);
+                }
+                this.footEl.appendChild(strip);
+            }
+            if (this.opts.onToggleAutosave) {
+                const auto = doc.createElement('button');
+                auto.type = 'button';
+                auto.className = 'vela-lp-auto';
+                auto.setAttribute('role', 'switch');
+                const on = this.opts.autosave?.() === true;
+                auto.setAttribute('aria-checked', String(on));
+                auto.title = on ? 'Autosave is on — the open layout follows every change' : 'Turn autosave on: the open layout follows every change';
+                const label = doc.createElement('span');
+                label.className = 'vela-lp-label';
+                label.textContent = 'Autosave';
+                const hint = doc.createElement('span');
+                hint.className = 'vela-lp-auto-hint';
+                hint.textContent = on ? 'on' : 'off';
+                const pill = doc.createElement('span');
+                pill.className = 'vela-lp-switch' + (on ? ' on' : '');
+                pill.setAttribute('aria-hidden', 'true');
+                auto.append(label, hint, pill);
+                auto.addEventListener('click', () => {
+                    this.opts.onToggleAutosave?.(!on);
+                    this.renderFooter();
+                });
+                this.footEl.appendChild(auto);
+            }
             const form = doc.createElement('div');
             form.className = 'vela-lp-save';
             const input = doc.createElement('input');
@@ -1519,10 +1645,35 @@ export class LayoutPicker {
                 form.appendChild(share);
             }
             this.footEl.appendChild(form);
+            // TradingView's "Open layout…" is a searchable list; ours only needs the
+            // search once the list is long enough that scanning costs more than typing.
+            const total = saved().length;
+            if (total >= 8) {
+                const filter = doc.createElement('input');
+                filter.type = 'text';
+                filter.className = 'vela-lp-filter';
+                filter.placeholder = `Filter ${total} layouts…`;
+                filter.setAttribute('aria-label', 'Filter saved layouts');
+                filter.addEventListener('input', () => {
+                    const q = filter.value.trim().toLowerCase();
+                    for (const el of this.footEl.querySelectorAll<HTMLElement>('.vela-lp-saved')) {
+                        el.hidden = q !== '' && !(el.dataset.layout ?? '').toLowerCase().includes(q);
+                    }
+                });
+                filter.addEventListener('keydown', (e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Escape') {
+                        filter.value = '';
+                        filter.dispatchEvent(new Event('input'));
+                    }
+                });
+                this.footEl.appendChild(filter);
+            }
             for (const l of saved()) {
                 const row = doc.createElement('div');
                 row.className = 'vela-lp-saved';
                 row.dataset.layout = l.name;
+                if (l.active) row.dataset.active = '1';
                 // The preview. A saved layout without a picture keeps an empty box of the
                 // same size so the column of names stays aligned.
                 if (typeof l.thumb === 'string' && l.thumb.startsWith('data:image/')) {
@@ -1545,8 +1696,31 @@ export class LayoutPicker {
                 name.textContent = l.name;
                 name.title = `Open “${l.name}”`;
                 if (l.active) name.dataset.active = '1';
+                name.setAttribute('role', 'button');
+                name.tabIndex = 0;
                 name.addEventListener('click', () => this.opts.onOpenLayout?.(l.name));
+                name.addEventListener('keydown', (e) => {
+                    if (e.key !== 'Enter' && e.key !== ' ') return;
+                    e.preventDefault();
+                    this.opts.onOpenLayout?.(l.name);
+                });
                 row.append(name);
+                if (typeof l.charts === 'number' || typeof l.indicators === 'number') {
+                    const meta = doc.createElement('span');
+                    meta.className = 'vela-lp-rowmeta';
+                    const bits: string[] = [];
+                    if (typeof l.charts === 'number') bits.push(`${l.charts} chart${l.charts === 1 ? '' : 's'}`);
+                    if (typeof l.indicators === 'number') bits.push(`${l.indicators} ind`);
+                    meta.textContent = bits.join(' · ');
+                    row.appendChild(meta);
+                }
+                if (l.dirty) {
+                    const dot = doc.createElement('span');
+                    dot.className = 'vela-lp-dot';
+                    dot.title = 'Unsaved changes';
+                    dot.setAttribute('aria-label', 'Unsaved changes');
+                    row.appendChild(dot);
+                }
                 if (typeof l.savedAt === 'number' && l.savedAt > 0) {
                     const when = doc.createElement('span');
                     when.className = 'vela-lp-when';
@@ -1556,6 +1730,10 @@ export class LayoutPicker {
                 }
                 if (this.opts.onRenameLayout) row.appendChild(this.savedAction('pen', `Rename ${l.name}`, () => {
                     this.beginRename(row, name, l.name);
+                }));
+                if (this.opts.onDuplicateLayout) row.appendChild(this.savedAction('clone', `Duplicate “${l.name}”`, () => {
+                    this.opts.onDuplicateLayout?.(l.name);
+                    this.renderFooter();
                 }));
                 if (this.opts.onExportLayout) row.appendChild(this.savedAction('download', `Export ${l.name} as JSON`, () => {
                     const json = this.opts.onExportLayout?.(l.name);
