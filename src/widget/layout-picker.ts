@@ -12,6 +12,7 @@ import { injectStyles } from '../ui/styles';
 import { Tooltip } from '../ui/components/tooltip';
 import { announceSurface } from '../ui/surface-events';
 import { holdForExit, type SurfaceExit } from '../ui/surface-exit';
+import { IMPLICIT_GROUP } from '../state/document';
 
 const STYLE_ID = 'vela-widget-layout-picker-v15';
 // One monochrome selection language across the panel: lit cells and sync ON
@@ -115,6 +116,9 @@ const CSS = `
     cursor: pointer;
 }
 .vela-lp-group[data-on='1'] { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); background: var(--vela-selected-bg); }
+/* The IMPLICIT group: the all-cells form is every chart in one group ('A'), not "no
+   group" — the chip says so, dashed to mark it as the unnamed default. */
+.vela-lp-group[data-implicit='1'] { border-style: dashed; background: var(--vela-hover); color: var(--vela-fg); }
 .vela-lp-group:hover { border-color: var(--vela-border-strong); }
 /* Scope chip on the Drawings row (layout ⇄ global). */
 .vela-lp-scope {
@@ -567,6 +571,7 @@ export class LayoutPicker {
                 chip.className = 'vela-lp-group';
                 chip.textContent = s.group ?? '–';
                 if (s.group) chip.dataset.on = '1';
+                if (s.group === IMPLICIT_GROUP) chip.dataset.implicit = '1';
                 chip.setAttribute('role', 'button');
                 chip.setAttribute('aria-label', `${s.label} group: ${s.group ?? 'none'} — click to change`);
                 chip.addEventListener('click', (e) => {

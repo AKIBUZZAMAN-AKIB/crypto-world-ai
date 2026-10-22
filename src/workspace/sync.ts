@@ -12,8 +12,10 @@ import type { SyncKind, SyncOptions, SyncSetting } from '../state/document';
 import { CANDLE_OVERRIDE_KEYS } from '../renderers/native/core/chartConfig';
 import { SYNC_KINDS } from '../state/document';
 
+import { IMPLICIT_GROUP } from '../state/document';
+
 export type { SyncKind, SyncSetting, SyncOptions } from '../state/document';
-export { SYNC_KINDS } from '../state/document';
+export { IMPLICIT_GROUP, SYNC_KINDS } from '../state/document';
 
 /**
  * The group MARKS, in the order the chip cycles them: TradingView's chart-syncing
@@ -151,6 +153,18 @@ export function syncGroups(setting: SyncSetting | undefined): string[] {
 export function groupOf(setting: SyncSetting | undefined, cellId: string): string | undefined {
     if (setting == null || setting === false || setting === true) return undefined;
     return setting[cellId];
+}
+
+
+/**
+ * The mark a cell carries for one link — the DISPLAY twin of {@link groupOf}. Unlike
+ * `groupOf` (which drives propagation and must stay `undefined` for the all-cells form),
+ * this answers "what should the chip say": the explicit group, or {@link IMPLICIT_GROUP}
+ * when every cell is linked. `undefined` = this chart does not follow the link.
+ */
+export function markOf(setting: SyncSetting | undefined, cellId: string): string | undefined {
+    if (setting === true) return IMPLICIT_GROUP;
+    return groupOf(setting, cellId);
 }
 
 /**

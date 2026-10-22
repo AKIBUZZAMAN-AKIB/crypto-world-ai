@@ -102,7 +102,11 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         ws.sync.set('symbol', true, false); // all-cells form
         openPicker(ws);
         const chip = (): HTMLElement => syncRow(ws, 'Symbol')!.querySelector<HTMLElement>('.vela-lp-group')!;
-        expect(chip().textContent).toBe('–');
+        // The all-cells form is the IMPLICIT group — every chart follows, so the chip
+        // names it ('A', dashed). It used to read '–' while the switch said ON, which is
+        // the "switch on, nothing marked" reading this suite exists to prevent.
+        expect(chip().textContent).toBe('A');
+        expect(chip().dataset.implicit).toBe('1');
         chip().click();
         // Unlinked ⇒ the first free mark: 🔴 (the fill of the all-cells form keeps the
         // active cell in it, so it reads 🔴 straight away).

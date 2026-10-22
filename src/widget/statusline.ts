@@ -103,8 +103,33 @@ const CSS = `
  * via the kit tooltip); the session tint is applied per status in setMarketStatus. While
  * the chart replays past bars it wears the replay badge instead (the inverse chip). */
 .vela-statusline .vela-sl-market { align-self: center; display: inline-flex; }
-/* Chart-syncing marks: the group emoji this chart carries, one per linked axis. */
-.vela-statusline .vela-sl-marks { font-size: 10px; line-height: 1; letter-spacing: 1px; color: var(--vela-fg-muted); }
+/* Chart-syncing marks: the group emoji this chart carries, one per linked axis. A real
+ * button — tapping it opens the sync sheet for THIS chart (marking starts from the chart
+ * you are looking at), so it gets a 22px hit area around a 10px glyph. */
+.vela-statusline .vela-sl-marks {
+    all: unset;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    min-height: 18px;
+    padding: 0 4px;
+    margin: 0 2px;
+    border-radius: 4px;
+    font-size: 10px;
+    line-height: 1;
+    letter-spacing: 1px;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+}
+/* Invisible slop: the glyph stays 10px on screen, the finger gets 22px of height. */
+.vela-statusline .vela-sl-marks::after {
+    content: '';
+    position: absolute;
+    inset: -6px -4px;
+}
+.vela-statusline .vela-sl-marks:active { background: var(--vela-hover); }
 .vela-statusline .vela-sl-marks[hidden] { display: none; }
 .vela-statusline .vela-sl-market > [hidden] { display: none !important; }
 .vela-statusline .vela-sl-replay-badge, .vela-statusline .vela-sl-replay-badge svg { display: block; width: 16px; height: 16px; }
@@ -280,7 +305,7 @@ export class Statusline {
     /** The badge slot — the market bubble, or the replay badge while replaying. */
     private readonly marketEl: HTMLElement;
     /** The sync-group marks (TradingView's chart-syncing emoji) — one per linked axis. */
-    private readonly marksEl: HTMLElement;
+    private readonly marksEl: HTMLButtonElement;
     /** The market status face — a kit callout bubble. */
     private readonly marketBubble: CalloutBubble;
     /** The replay face — see {@link REPLAY_BADGE_SVG}. */
@@ -298,6 +323,8 @@ export class Statusline {
     /** The right-click action menu — present once a host wires it via {@link attachMenu}. */
     private menu: Menu | null = null;
     private menuHooks: StatuslineMenuHooks | null = null;
+    /** Opens the sync sheet for THIS cell (the marks chip's action). */
+    private marksHandler: (() => void) | null = null;
     /** Mirror of the renderer's `candleVisible` — see {@link setChartHidden}. */
     private chartHidden = false;
     private lastBar: BarLike | null = null;
@@ -389,9 +416,14 @@ export class Statusline {
         });
         this.identityRow = doc.createElement('span');
         this.identityRow.className = 'vela-sl-row vela-sl-identity';
-        this.marksEl = doc.createElement('span');
+        this.marksEl = doc.createElement('button');
+        this.marksEl.type = 'button';
         this.marksEl.className = 'vela-sl-marks';
         this.marksEl.hidden = true;
+        this.marksEl.addEventListener('click', (e) => {
+            e.stopPropagation(); // the chip is not a cell activation
+            this.marksHandler?.();
+        });
         this.identityRow.append(this.avatarEl, this.symbolEl, this.metaEl, this.marksEl, this.marketEl);
         this.valuesRow = doc.createElement('span');
         this.valuesRow.className = 'vela-sl-row vela-sl-values';
@@ -675,14 +707,31 @@ export class Statusline {
         else this.fit();
     }
 
+    /** What a tap on the marks chip runs (the workspace's sync sheet). `null` leaves the
+     *  badge purely informational — a single-chart shell has nothing to sync with. */
+    setMarksHandler(fn: (() => void) | null): void {
+        this.marksHandler = fn;
+        this.marksEl.style.cursor = fn ? 'pointer' : 'default';
+    }
+
     /** The link marks this chart carries ('' hides the badge). Each entry is a group
-     *  emoji plus the axis it belongs to, e.g. `🔴Symbol`. */
+     *  emoji plus the axis it belongs to, e.g. `🔴Symbol`.
+     *
+     *  One glyph per DISTINCT group, not per link: seven switches turned on in the
+     *  all-cells form are one group ('A'), and `AAAAAAA` would be noise — `A` is the
+     *  truthful reading ("this chart is in the shared group"), while the tooltip keeps
+     *  the per-axis breakdown. */
     setSyncMarks(marks: ReadonlyArray<{ kind: string; mark: string }>): void {
-        const text = marks.map((m) => m.mark).join('');
+        const distinct: string[] = [];
+        for (const m of marks) if (!distinct.includes(m.mark)) distinct.push(m.mark);
+        const text = distinct.join('');
+        const label = marks.map((m) => `${m.mark} ${m.kind}`).join(' • ');
         if (this.marksEl.textContent === text && this.marksEl.hidden === (marks.length === 0)) return;
         this.marksEl.textContent = text;
         this.marksEl.hidden = marks.length === 0;
-        this.marksEl.title = marks.map((m) => `${m.mark} ${m.kind}`).join(' • ');
+        this.marksEl.title = label;
+        // Screen readers get the same reading, plus WHAT the tap does.
+        this.marksEl.setAttribute('aria-label', marks.length === 0 ? 'Sync groups' : `Sync groups: ${label}. Change group`);
     }
 
     /** Show the bar another chart's crosshair points at (null = let go). */

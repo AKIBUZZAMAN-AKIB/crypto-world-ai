@@ -61,6 +61,8 @@ import {
     alignedRangeAround,
     groupOf,
     groupSetting,
+    IMPLICIT_GROUP,
+    markOf,
     rangesWithin,
     nextGroupMark,
     styleConfigPatch,
@@ -463,6 +465,9 @@ export class VelaWorkspace {
      *  `onConfigChanged` in the same tick, and a state restore applies per-cell
      *  configs that legitimately differ — neither must propagate. */
     private styleSyncBusy = false;
+    /** The last ON form of every link — what the switches restore when a link is
+     *  flicked off and back on (a grouped grid keeps its chips). */
+    private readonly lastSyncOn: Partial<Record<SyncKind, SyncSetting>> = {};
     /** LINKED drawings (the drawings sync): one map per synced set (cellId → that
      *  cell's drawing id), reachable from every member under its `cellId\0drawingId`
      *  key — any member finds its peers to push edits/removals onto. Survives a
@@ -1888,6 +1893,16 @@ export class VelaWorkspace {
             // same pulse, never on a renderer-private timer that could read another second.
             cell.chart.renderer.setWallClock(this.clock);
             cell.setControlsSuspended(this.layoutCtl.current === 'mobile');
+            // The status line's marks are the marking ENTRY POINT: tap the emoji on a
+            // chart and the sync sheet opens with THAT chart active (a phone cannot
+            // hover a chart to pick it, so the badge has to be the picker).
+            // Only the phone HAS this sheet — on desktop the same links live in the
+            // topbar's Layout dropdown, so the badge stays informational there.
+            cell.setSyncMarksHandler(
+                this.monoLayout ? null : () => {
+                    if (this.layoutCtl.current === 'mobile') this.openSyncDrawer(cell.id);
+                },
+            );
             // The shared star set is a workspace pref — every newborn cell inherits it
             // silently (equal-set idempotence keeps the favorites event from echoing).
             if (this.favs.length > 0) cell.chart.drawings.setFavorites(this.favs as never[]);
@@ -2056,7 +2071,13 @@ export class VelaWorkspace {
     // ── sync links ──────────────────────────────────────────────
     private applySyncSetting(kind: SyncKind, setting: SyncSetting | undefined, align = false): void {
         if (setting == null || setting === false) delete this.syncOpts[kind];
-        else this.syncOpts[kind] = setting;
+        else {
+            this.syncOpts[kind] = setting;
+            // Remember how the link was ON so the switch's off→on round-trip restores
+            // the chart chips instead of collapsing a grouped grid into the all-cells
+            // form (the dropdown's switches are meant to be flicked).
+            this.lastSyncOn[kind] = setting;
+        }
         if (kind === 'drawings') {
             // Placement ghosts are stale under the new setting. Link pairs stay —
             // turning off freezes propagation; turning on resumes edit/delete for
@@ -2274,28 +2295,68 @@ export class VelaWorkspace {
         return rows;
     }
 
-    private syncRows(): Array<{ id: SyncKind; label: string; checked: boolean; group?: string }> {
+    private syncRows(): Array<{ id: SyncKind; label: string; checked: boolean; group?: string; marks: Record<string, string> }> {
         return SYNC_ROW_ORDER.map(([id, label]) => {
             const setting = this.syncOpts[id];
-            const group = this.activeId ? groupOf(setting, this.activeId) : undefined;
-            return { id, label, checked: syncEnabled(setting), ...(group ? { group } : {}) };
+            // `group` is the ACTIVE cell's mark — the chip on the desktop row — and
+            // `marks` is the same reading for EVERY chart, which is what the phone's
+            // marking matrix draws. Both are the DISPLAY truth (`markOf`): the all-cells
+            // form is the implicit group 'A' (drawn dashed), not "no group", because a
+            // chart that follows a link has to wear something.
+            const group = this.activeId ? markOf(setting, this.activeId) : undefined;
+            const marks: Record<string, string> = {};
+            for (const cellId of this.cellsById.keys()) {
+                const mark = markOf(setting, cellId);
+                if (mark) marks[cellId] = mark;
+            }
+            return { id, label, checked: syncEnabled(setting), ...(group ? { group } : {}), marks };
         });
     }
 
+    /** The charts the sync matrix lists, in slot order, with the active one flagged. */
+    private syncCharts(): Array<{ id: string; label: string; active: boolean }> {
+        const ids = this.order.filter((id) => this.cellsById.has(id));
+        for (const id of this.cellsById.keys()) if (!ids.includes(id)) ids.push(id);
+        return ids.map((id) => ({ id, label: id.toUpperCase(), active: id === this.activeId }));
+    }
+
     /** Flip one link: on ⇒ off, off ⇒ on. `align = false` — the switch decides what the
-     *  NEXT edit follows; it never rewrites the markets already on screen. */
+     *  NEXT edit follows; it never rewrites the markets already on screen. Turning a
+     *  link back ON restores the grouping it was switched off with (TradingView keeps
+     *  the chart chips) — falling back to the all-cells form for a link never grouped. */
     private toggleSync(kind: SyncKind): void {
-        this.sync.set(kind, syncEnabled(this.syncOpts[kind]) ? false : true, false);
+        if (syncEnabled(this.syncOpts[kind])) {
+            // `applySyncSetting` parks the setting in `lastSyncOn` on its way out.
+            this.sync.set(kind, false, false);
+        } else {
+            this.sync.set(kind, this.lastSyncOn[kind] ?? true, false);
+        }
     }
 
     /** Put the ACTIVE cell through the link's groups: none → 🔴 → 🟢 → 🔵 → 🟡 → none. */
     private cycleGroup(kind: SyncKind): void {
-        const id = this.activeId;
-        if (!id || !this.cellsById.has(id)) return;
-        const current = groupOf(this.syncOpts[kind], id);
-        const next = nextGroupMark(current, syncGroups(this.syncOpts[kind]));
-        this.sync.setGroup(kind, id, next);
+        if (this.activeId) this.cycleGroupFor(kind, this.activeId);
+    }
+
+    /** The same cycle for ANY cell — the mobile matrix marks a chart without first
+     *  making it active (the chip IS the target). */
+    cycleGroupFor(kind: SyncKind, cellId: string): void {
+        if (!this.cellsById.has(cellId)) return;
+        const setting = this.syncOpts[kind];
+        const current = markOf(setting, cellId);
+        // `markOf` reports the implicit group for an all-cells link; `nextGroupMark`
+        // treats a real mark as a position in the palette and anything else as "unlinked"
+        // — so the first tap on an all-cells chart hands it 🔴 while the rest keep 'A'.
+        const next = nextGroupMark(current === IMPLICIT_GROUP ? undefined : current, syncGroups(setting));
+        this.sync.setGroup(kind, cellId, next);
         this.projectGroupMarks();
+    }
+
+    /** Open the mobile drawer on its Sync view for ONE chart (the status line's marks are
+     *  the tap target — you mark the chart you are looking at, not the "active" one). */
+    openSyncDrawer(cellId?: string): void {
+        if (cellId && this.cellsById.has(cellId) && cellId !== this.activeId) this.setActiveCell(cellId);
+        this.openMoreDrawer('sync');
     }
 
     /** Re-draw every cell's emoji badge from the live links (cheap; runs on a link edit). */
@@ -2304,8 +2365,13 @@ export class VelaWorkspace {
         for (const cell of this.cellsById.values()) marks.set(cell.id, []);
         for (const kind of SYNC_KINDS) {
             const setting = this.syncOpts[kind];
-            if (setting == null || setting === false || setting === true) continue;
-            for (const [cellId, mark] of Object.entries(setting)) {
+            if (!syncEnabled(setting)) continue;
+            // `markOf`, not `groupOf`: an all-cells link IS a group (every chart in the
+            // implicit 'A'), and a chart that follows a link must WEAR a mark — the badge
+            // used to stay empty for every switch a user could actually reach, which read
+            // as "the marking does nothing".
+            for (const cellId of this.cellsById.keys()) {
+                const mark = markOf(setting, cellId);
                 if (!mark) continue;
                 marks.get(cellId)?.push({ kind: KIND_LABEL[kind], mark });
             }
@@ -2901,8 +2967,11 @@ export class VelaWorkspace {
     private syncCellPresentation(): void {
         const multi = this.def.cells.length > 1;
         const overview = multi && this.layoutCtl.current === 'mobile' ? (): void => this.dock.toggle('objects', true) : null;
+        // The marks chip is the sync sheet's door, and only the phone has that sheet.
+        const markable = multi && !this.monoLayout && this.layoutCtl.current === 'mobile';
         for (const cell of this.cellsById.values()) {
             cell.setStatuslineFit(multi);
+            cell.setSyncMarksHandler(markable ? () => this.openSyncDrawer(cell.id) : null);
             cell.chart.renderer.setLegendOverviewAction(overview);
         }
     }
@@ -2939,7 +3008,7 @@ export class VelaWorkspace {
         this.drawingsDrawer.open();
     }
 
-    private openMoreDrawer(): void {
+    private openMoreDrawer(view: 'main' | 'sync' = 'main'): void {
         // The drawer is the mobile counterpart of the topbar's tools — composition-
         // hidden entries lose their drawer rows too (handlers omitted ⇒ rows omitted).
         const has = (id: string): boolean => topbarHas(this.topbarComp, id);
@@ -2978,6 +3047,8 @@ export class VelaWorkspace {
                 syncs: () => this.syncRows(),
                 onToggleSync: (id) => this.toggleSync(id as SyncKind),
                 onCycleGroup: (id) => this.cycleGroup(id as SyncKind),
+                charts: () => this.syncCharts(),
+                onCycleCellGroup: (kind, cellId) => this.cycleGroupFor(kind as SyncKind, cellId),
                 drawingsScope: () => this.drawingsScope,
                 onToggleDrawingsScope: () => this.setDrawingsScope(this.drawingsScope === 'global' ? 'layout' : 'global'),
                 hiddenCharts: () => this.hiddenChartCount,
@@ -2999,7 +3070,7 @@ export class VelaWorkspace {
                 }
             },
         });
-        this.moreDrawer.open();
+        this.moreDrawer.open(view);
     }
 
     /** The contributed topbar actions the mobile menu lists, from one cluster. */

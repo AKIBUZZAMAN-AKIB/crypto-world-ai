@@ -35,6 +35,15 @@ export const SYNC_KINDS = ['viewport', 'time', 'symbol', 'timeframe', 'crosshair
  */
 export type SyncSetting = boolean | Readonly<Record<string, string>>;
 
+/**
+ * The name of that IMPLICIT group. `true` means "every cell follows every other", which
+ * is the same thing as every cell sitting in one unnamed group — so the chips name it
+ * instead of reporting "no group" for the form every switch produces. The workspace
+ * seeds a real record with this name the moment one chart is pulled out of the pack, so
+ * the two forms read identically on screen (see `markOf` in `workspace/sync`).
+ */
+export const IMPLICIT_GROUP = 'A';
+
 export interface SyncOptions {
     viewport?: SyncSetting;
     /** Click-to-align a point in time (see {@link SyncKind}). */

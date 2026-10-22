@@ -685,6 +685,12 @@ export class ChartCell {
         this.statusline?.setSyncMarks(marks);
     }
 
+    /** What tapping this chart's marks chip runs — the workspace opens its sync sheet on
+     *  THIS cell (multi-chart shells only; a lone chart has nothing to link). */
+    setSyncMarksHandler(fn: (() => void) | null): void {
+        this.statusline?.setMarksHandler(fn);
+    }
+
     /**
      * Push the resolved zone to the renderer — on the workspace choice changing, and on
      * this cell's market zone changing under the exchange rule. Skips the write when the
