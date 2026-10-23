@@ -37,6 +37,8 @@ import type { DataControl } from '../DataControl';
 import { timeframeToMs } from '../../data/timeframe';
 import { parseSymbol } from '../../data/ProviderRegistry';
 import { barTransformFor, parseExtendedTicker, type BarTransform } from '../price-styles/BarTransform';
+import { rebucketFor } from '../../chart-types/registry';
+import type { BarRebucket } from '../price-styles/rebucket';
 import { chartType, type SeriesDataEngine } from '../../chart-types/registry';
 import { resolveTheme } from '../theme';
 import type { ReplayBounds, ReplayController, ReplayEndReason, ReplayStartOptions, ReplayState, ReplayTick, ReplayTickSource } from '../ReplayControl';
@@ -138,6 +140,16 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
      *  event, gap-heal reconciliation, and `chart.data` stay on this plane; nothing synthetic
      *  is ever stored or emitted as data. */
     private rawBars: OHLCV[] = [];
+    /** The active style's REBUCKETING pass (Renko/Range/Line break), or null. */
+    private rebucket: BarRebucket | null = null;
+
+    /** Derive the view series: rebucket first (it changes the bar count), then the 1:1
+     *  transform (a style never sets both, but this keeps the seam total). */
+    private deriveView(raw: readonly OHLCV[]): OHLCV[] {
+        const bucketed = this.rebucket ? this.rebucket.full(raw, this.typeSettings.get(this.priceStyle)) : (raw as OHLCV[]);
+        return this.barTransform ? this.barTransform.full(bucketed) : bucketed;
+    }
+
     /** The active price style's 1:1 bar transform (null ≡ raw view). */
     private barTransform: BarTransform | null = null;
     // ── chart-type data engines (SDK): one lazily-created engine per style id ──
@@ -259,8 +271,15 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
         // last-seen values into every fresh engine, so one never fetches on schema
         // defaults the user has edited away.
         this.renderer.onChartTypeSettingsChange?.((typeId, values) => {
+            const prev = this.typeSettings.get(typeId);
             this.typeSettings.set(typeId, values);
             this.typeEngines.get(typeId)?.onSettings?.(values);
+            // A REBUCKETING style's geometry is a function of these values (a new box size
+            // re-cuts every brick), so the view is rebuilt on an edit — but only when the
+            // bag actually changed, and only while that style is the one on screen.
+            if (typeId !== this.priceStyle || !this.rebucket) return;
+            if (prev && JSON.stringify(prev) === JSON.stringify(values)) return;
+            this.rebuildView();
         });
         // The renderer's legend "Move to" menu / row drag reports a move here → route it.
         this.renderer.onMoveIndicator?.((id, target) => this.moveIndicator(id, target));
@@ -1547,13 +1566,30 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
      * cannot absorb. Native indicators need nothing — their layers read the renderer's
      * bars per frame.
      */
+    /** Re-derive the view from the current settings WITHOUT asking the renderer to refit. */
+    private rebuildView(): void {
+        if (this.rawBars.length === 0) return;
+        const before = this.bars.length;
+        this.bars = this.deriveView(this.rawBars);
+        // A new geometry (a different box size) can also mean a different bar count — refit
+        // only then, so an ordinary settings tweak never yanks the viewport around.
+        this.renderer.setBars(this.bars, this.bars.length === before ? { preserveView: true } : { resetView: true });
+        this.reexecuteIndicators();
+        this.notifySessionsBars();
+    }
+
     private syncBarTransform(style: unknown): void {
         const transform = barTransformFor(style);
-        if (transform === this.barTransform) return; // singletons per style — identity is enough
+        const rebucket = rebucketFor(style);
+        if (transform === this.barTransform && rebucket === this.rebucket) return; // singletons per style — identity is enough
         this.barTransform = transform;
+        this.rebucket = rebucket;
+        // A re-bucketed view has a different bar COUNT and a different time axis, so the
+        // old viewport means nothing; a 1:1 transform keeps it. `preserveView` encodes that.
+        const keep = transform !== null && rebucket === null;
         if (this.rawBars.length === 0) return;
-        this.bars = transform ? transform.full(this.rawBars) : this.rawBars;
-        this.renderer.setBars(this.bars, { preserveView: true });
+        this.bars = this.deriveView(this.rawBars);
+        this.renderer.setBars(this.bars, keep ? { preserveView: true } : { resetView: true });
         this.reexecuteIndicators();
     }
 
@@ -1616,7 +1652,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
      */
     private setBarSeries(raw: OHLCV[], opts?: { preserveView?: boolean; clearing?: boolean }): void {
         this.rawBars = raw;
-        this.bars = this.barTransform ? this.barTransform.full(raw) : raw;
+        this.bars = this.deriveView(raw);
         this.renderer.setBars(this.bars, { preserveView: opts?.preserveView });
         // The first PAINTED batch ends the loading state — on a deep history that is the quick
         // preview, well before the load pipeline completes. Only a non-empty series counts: the
@@ -1637,6 +1673,23 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
      */
     private applyBar(bar: OHLCV, notify = true): void {
         const last = this.rawBars[this.rawBars.length - 1];
+        // A REBUCKETED view cannot be advanced index-by-index (one tick can print a run of
+        // bricks, or none). Rebuild instead: bricks are few by construction, so this is
+        // cheaper than the repaint it triggers. The viewport is kept — the newest brick is
+        // what the trader is watching.
+        if (this.rebucket) {
+            if (last && bar.time === last.time) this.rawBars[this.rawBars.length - 1] = bar;
+            else if (!last || bar.time > last.time) this.rawBars.push(bar);
+            else return;
+            this.barCause = last && bar.time === last.time ? 'tick' : 'bar';
+            this.bars = this.deriveView(this.rawBars);
+            this.renderer.setBars(this.bars, { preserveView: true });
+            this.events.emit('bar', bar);
+            // Same notification the incremental path sends — every consumer is a bar-count
+            // change away from a full re-run, so the RAW bar is what travels.
+            if (notify) this.notifySessionsBars(this.historyState === 'backfill' ? 'backfill' : undefined);
+            return;
+        }
         let viewBar = bar;
         if (last && bar.time === last.time) {
             this.rawBars[this.rawBars.length - 1] = bar;

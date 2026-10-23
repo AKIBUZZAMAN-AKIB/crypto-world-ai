@@ -291,6 +291,7 @@ export function statuslineInkOf(renderer: RendererReads, priceStyle: string): [s
               line?: { color?: unknown };
               area?: { lineColor?: unknown };
               baseline?: { topLineColor?: unknown; bottomLineColor?: unknown };
+              variants?: { highLowColor?: unknown };
           }
         | null
         | undefined;
@@ -313,6 +314,24 @@ export function statuslineInkOf(renderer: RendererReads, priceStyle: string): [s
                 return Number.isFinite(level) ? bar.close >= level : bar.close >= bar.open;
             };
             return [c(cfg?.baseline?.topLineColor), c(cfg?.baseline?.bottomLineColor), isUp, 'value'];
+        }
+        case 'line-markers':
+        case 'stepline': {
+            const v = c(cfg?.line?.color);
+            return [v, v, null, 'value'];
+        }
+        case 'hlc-area': {
+            const v = c(cfg?.area?.lineColor);
+            return [v, v, null, 'value'];
+        }
+        case 'high-low': {
+            // The style's whole point is one ink for every bar.
+            const v = c(cfg?.variants?.highLowColor) ?? c(cfg?.line?.color);
+            return [v, v, null, 'ohlc'];
+        }
+        case 'columns': {
+            // Coloured by close vs the PREVIOUS close, so the swatch pair is directional.
+            return [c(cfg?.bars?.upColor), c(cfg?.bars?.downColor), null, 'ohlc'];
         }
         default:
             return [c(cfg?.candles?.upColor), c(cfg?.candles?.downColor), null, 'ohlc'];

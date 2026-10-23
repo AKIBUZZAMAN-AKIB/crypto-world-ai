@@ -28,6 +28,7 @@ import {
     buildFieldControl,
 } from '../../../ui/components/field';
 import { priceStyleIds, hasOwnCandlePaint } from '../core/chartConfig';
+import { paintVariant } from '../../../core/price-styles/variants';
 import { chromeHint } from '../../shared/chrome-tooltip';
 import {
     filterHiddenHostRows,
@@ -85,6 +86,15 @@ const BUILTIN_STYLE_LABELS: Record<string, string> = {
     line: 'Line',
     area: 'Area',
     baseline: 'Baseline',
+    heikinashi: 'Heikin Ashi',
+    'hollow-candles': 'Hollow candles',
+    'volume-candles': 'Volume candles',
+    'line-markers': 'Line with markers',
+    stepline: 'Step line',
+    'hlc-area': 'HLC area',
+    columns: 'Columns',
+    'high-low': 'High-low',
+    'hlc-bars': 'HLC bars',
 };
 
 /** Display label for a price style: registry label, built-in name, else the raw id. */
@@ -429,12 +439,16 @@ export class SettingsDialog {
         body.append(sid(this.sectionTitle('Chart type'), 'symbol.type'));
         const groups: Partial<Record<string, HTMLElement>> = {};
         const showActive = (style: string): void => {
-            const active = style === 'heikinashi' ? 'candles' : style; // heikin-ashi is candle-drawn
+            // heikin-ashi is candle-drawn; a painting variant reveals the cosmetics group it
+            // actually paints with (its colour source), and hides that block's other users.
+            const variant = paintVariant(style);
+            const active = style === 'heikinashi' ? 'candles' : variant ? variant.paints : style;
             // Gate via the !important class, not inline display: the field-grid pass
             // rewrites every group's display to 'contents' AFTER this visibility pass.
             for (const key of priceStyleIds()) {
                 groups[key]?.classList.toggle('vela-sd-hide', key !== active);
             }
+            groups.variant?.classList.toggle('vela-sd-hide', !variant);
         };
         body.append(
             sid(this.selectRowLabeled('Type', config.series.style, priceStyleIds().map((id) => [id, styleLabel(id)] as const), (v) => {
@@ -502,6 +516,21 @@ export class SettingsDialog {
         baseline.append(sid(this.numberRow('Width', config.baseline.width, 1, 10, 1, (v) => this.emit({ baseline: { width: v } })), 'symbol.style.baseline.width'));
         groups.baseline = baseline;
         body.append(baseline);
+
+        // The painting variants' own knobs. One group serves all eight: the styles are
+        // mutually exclusive, so only the rows that can matter for the ACTIVE style are
+        // built — the rest never render and never take a tab stop.
+        {
+            const v = sid(this.group(), 'symbol.style.variant');
+            v.append(this.sectionTitle('Variant'));
+            v.append(sid(this.toggleRow('Hollow when rising', config.variants.hollowUp, (val) => this.emit({ variants: { hollowUp: val } }), []), 'symbol.style.variant.hollow'));
+            v.append(sid(this.numberRow('Min body width %', config.variants.volumeMinWidthPct, 5, 100, 1, (val) => this.emit({ variants: { volumeMinWidthPct: val } })), 'symbol.style.variant.min-width'));
+            v.append(sid(this.toggleRow('Colour by previous close', config.variants.volumeColorByPrevClose, (val) => this.emit({ variants: { volumeColorByPrevClose: val } }), []), 'symbol.style.variant.prev-close'));
+            v.append(sid(this.numberRow('Marker radius', config.variants.markerRadius, 0.5, 8, 0.5, (val) => this.emit({ variants: { markerRadius: val } })), 'symbol.style.variant.marker'));
+            v.append(sid(this.selectRowLabeled('Column base', config.variants.columnBaseline, [['zero', 'Zero line'], ['first', 'First bar']] as const, (val) => this.emit({ variants: { columnBaseline: val } })), 'symbol.style.variant.column-base'));
+            groups.variant = v;
+            body.append(v);
+        }
 
         // Candle-based PLUGIN styles (an order-flow type keeps candles under its layer):
         // the same candle rows, but stored in the type's OWN bag (chartTypes.<id>.candle*)

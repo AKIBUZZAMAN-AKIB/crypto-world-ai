@@ -154,6 +154,45 @@ export function registerBuiltinLayouts(): void {
     // 8 charts: a column, and the big-centre shape.
     registerLayout({ id: '8v', label: '8 stacked', cols: [1], rows: [1, 1, 1, 1, 1, 1, 1, 1], cells: slots(8) });
     registerLayout({ id: '8c', label: '8 around a centre', cols: [1, 1, 1, 1], rows: [1, 1, 1], areas: ['b c c d', 'e a a f', 'g a a h'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) });
+
+    // ── the gallery's remaining shapes ───────────────────────────────────────────
+    // Everything above is TradingView's named vocabulary. These are the OTHER shapes a
+    // layout gallery shows — measured off a reference sheet of 44 glyphs, then deduped
+    // against what was already here (16 were genuinely new). Proportions come from the
+    // glyphs themselves, snapped to quarter-fr steps so the seams read evenly.
+    //
+    // The rule behind the ids: a shape whose partitions match an existing preset AT A
+    // DIFFERENT proportion is its own preset (`4s` has a 2:1 main, `4s-eq` does not);
+    // a shape already covered by the grid composer (uniform, ≤4×4) still registers —
+    // ids are what share links and `setLayout` resolve against — but the picker keeps
+    // it off the tile list, since the canvas draws it.
+
+    // Four charts, four more readings of "one chart leads".
+    registerLayout({ id: '4-2t2s', label: '2 tall + 2 stacked', cols: [1, 1, 1], rows: [1, 1], areas: ['a b c', 'a b d'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    registerLayout({ id: '4-3w', label: '3 above + 1 wide below', cols: [1, 1, 1], rows: [1, 1], areas: ['a b c', 'd b c'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    registerLayout({ id: '4-1-2', label: 'Main above + 2 stacked', cols: [1, 1], rows: [2, 1, 1], areas: ['a b', 'c c', 'd d'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    registerLayout({ id: '4s-eq', label: 'Main left + 3 (even)', cols: [1, 1], rows: [1, 1, 1], areas: ['a b', 'a c', 'a d'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+    registerLayout({ id: '4s-eq-r', label: 'Main right + 3 (even)', cols: [1, 1], rows: [1, 1, 1], areas: ['a b', 'c b', 'd b'], cells: areaSlots(['a', 'b', 'c', 'd']) });
+
+    // Five charts: tall mains, centre-weighted bands, and the 5-column row.
+    registerLayout({ id: '5-1-4', label: 'Main left + 4 stacked', cols: [1, 1.25, 1.75], rows: [1, 1, 1], areas: ['a b c', 'a b d', 'a b e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    registerLayout({ id: '5-1-4-r', label: 'Main right + 4 stacked', cols: [1.75, 1.25, 1], rows: [1, 1, 1], areas: ['a b c', 'd b c', 'e b c'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    registerLayout({ id: '5-2-3c', label: '2 above + 3 below (centre wide)', cols: [1.75, 1, 1, 2], rows: [1, 1], areas: ['a a b b', 'c d d e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    registerLayout({ id: '5-3-2c', label: '3 above (centre wide) + 2 below', cols: [1.75, 1, 1, 2], rows: [1, 1], areas: ['a b b c', 'd d e e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    registerLayout({ id: '5s-eq-r', label: 'Main right + 4 (even)', cols: [1, 1], rows: [1, 1, 1, 1], areas: ['a b', 'c b', 'd b', 'e b'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+    registerLayout({ id: '5s-eq', label: 'Main left + 4 (even)', cols: [1, 1], rows: [1, 1, 1, 1], areas: ['a b', 'a c', 'a d', 'a e'], cells: areaSlots(['a', 'b', 'c', 'd', 'e']) });
+
+    // Six and seven: the even 2×3 grid and the two mixed bands.
+    registerLayout({ id: '6-2x3', label: '6 grid (2 across)', cols: [1, 1], rows: [1, 1, 1], cells: slots(6) });
+    registerLayout({ id: '7-bands', label: '7 in two mixed bands', cols: [1.5, 1, 1.5, 1.5, 1, 2], rows: [1, 1], areas: ['a b b c c d', 'e e f f g g'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f', 'g']) });
+
+    // Eight to twelve: the counts a wall display actually uses.
+    registerLayout({ id: '8-2x4', label: '8 grid (2 across)', cols: [1, 1], rows: [1, 1, 1, 1], cells: slots(8) });
+    registerLayout({ id: '9', label: '9 grid', cols: [1, 1, 1], rows: [1, 1, 1], cells: slots(9) });
+    registerLayout({ id: '9-bands', label: '9 in two mixed bands', cols: [1.5, 1.75, 1, 1, 1.75, 1.5], rows: [1, 1], areas: ['a b c c d e', 'f g g h h i'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']) });
+    registerLayout({ id: '10', label: '10 grid', cols: [1, 1, 1, 1, 1], rows: [1, 1], cells: slots(10) });
+    registerLayout({ id: '12', label: '12 grid', cols: [1, 1, 1, 1, 1, 1], rows: [1, 1], cells: slots(12) });
+    registerLayout({ id: '12-3x4', label: '12 grid (3 across)', cols: [1, 1, 1], rows: [1, 1, 1, 1], cells: slots(12) });
 }
 
 // ── dynamic layouts (the topbar's grid picker) ──────────────────────────────
@@ -307,8 +346,15 @@ export function layoutGlyph(def: LayoutDefinition): string {
             }
         }
     }
-    const frame = `<rect x="${GLYPH_MIN}" y="${GLYPH_MIN}" width="${GLYPH_SPAN}" height="${GLYPH_SPAN}" rx="1.5"/>`;
-    return svg16(seams.length > 0 ? `${frame}<path d="${seams.join('')}"/>` : frame);
+    // MINIMAL: the frame is a hairline at reduced ink and the SEAMS carry the full
+    // weight — the glyph then reads as "this is how the page is cut" rather than as a
+    // picture of a grid. Stroke 1.05 on a 16px box keeps it crisp at 1x and 2x; the
+    // round caps are what stop a seam meeting the frame from looking notched.
+    const frame = `<rect x="${GLYPH_MIN}" y="${GLYPH_MIN}" width="${GLYPH_SPAN}" height="${GLYPH_SPAN}" rx="2" opacity="0.45"/>`;
+    return svg16(
+        seams.length > 0 ? `${frame}<path d="${seams.join('')}"/>` : frame,
+        'stroke-width="1.05"',
+    );
 }
 
 /** Inline styles for the grid container + each cell — PURE (the workspace applies them). */

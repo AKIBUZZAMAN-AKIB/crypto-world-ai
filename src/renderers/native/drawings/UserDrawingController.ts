@@ -72,6 +72,10 @@ export interface UserDrawingDeps {
     snap(point: DrawingPoint, paneId: string, mode: SnapMode, cursorPx?: { x: number; y: number }): DrawingPoint;
     /** Set the sticky magnet mode (driven by the toolbar's 3-state button). */
     setSnapMode(mode: SnapMode): void;
+    /** Whether the magnet also treats overlay indicator values as snap targets. */
+    snapToIndicators(): boolean;
+    /** Toggle that behaviour (the magnet flyout's row). */
+    setSnapToIndicators(on: boolean): void;
     /** Reserve `px` of left gutter for the docked toolbar (0 releases it) — the plot insets to its right. */
     setToolbarGutter(px: number): void;
     /** Fit the view to a dragged region — the "Zoom in" tool's whole job. Receives the
@@ -202,6 +206,8 @@ export class UserDrawingController implements IDrawingsRendererPort {
                     this.setAllHidden(hidden);
                     this.emit({ kind: 'hidden-all', hidden });
                 },
+                snapToIndicators: () => this.deps.snapToIndicators(),
+                onSnapToIndicators: (on) => this.deps.setSnapToIndicators(on),
                 onZoom: () => this.withModeIntent(() => this.toggleZoom()),
                 onRemoveAll: () => {
                     const ids = this.drawings.map((d) => d.id);

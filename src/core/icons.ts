@@ -74,6 +74,34 @@ registerIcon(
     'style-baseline',
     S('<path d="M1.5 8h13" stroke-dasharray="2 2"/><path d="M2.5 8 5.25 4.5 8 8h-5.5z" fill="currentColor" fill-opacity="0.25" stroke="none"/><path d="M2.5 8 5.25 4.5 8 8"/><path d="M8 8l2.75 3.5L13.5 8h-5.5z" fill="currentColor" fill-opacity="0.25" stroke="none"/><path d="M8 8l2.75 3.5L13.5 8"/>'),
 );
+// ── painting variants (same 1:1 bars, different paint) ──
+registerIcon(
+    'style-hollow-candles',
+    S('<path d="M4.5 2v2M4.5 12v2M11.5 2v1.5M11.5 11v3"/><rect x="2.8" y="4" width="3.4" height="8" rx="0.6"/><rect x="9.8" y="3.5" width="3.4" height="7.5" rx="0.6" fill="currentColor"/>'),
+);
+registerIcon(
+    'style-volume-candles',
+    S('<path d="M3 2v2M3 12v2M12.5 2v1.5M12.5 11v3"/><rect x="1.6" y="4" width="2.8" height="8" rx="0.5" fill="currentColor" fill-opacity="0.3"/><rect x="9.6" y="3.5" width="5.8" height="7.5" rx="0.6" fill="currentColor"/>'),
+);
+registerIcon(
+    'style-line-markers',
+    S('<path d="M1.5 11.5 5.5 7l3 2.5 5-6"/><circle cx="5.5" cy="7" r="1.3" fill="currentColor" stroke="none"/><circle cx="8.5" cy="9.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="13.5" cy="3.5" r="1.3" fill="currentColor" stroke="none"/>'),
+);
+registerIcon('style-stepline', S('<path d="M1.5 11.5H5V7.5h3.5V4H13.5"/>'));
+registerIcon(
+    'style-hlc-area',
+    S('<path d="M1.5 6.5 5.5 3.5l3 3 5-4"/><path d="M1.5 10.5 5.5 9l3 2 5-3" opacity="0.75"/><path d="M1.5 6.5 5.5 3.5l3 3 5-4v4.5l-5 3-3-2-5 1.5z" fill="currentColor" fill-opacity="0.22" stroke="none"/>'),
+);
+registerIcon(
+    'style-columns',
+    S('<path d="M1.5 13.5h13" stroke-dasharray="2 2"/><rect x="2.6" y="6" width="2.6" height="7.5" fill="currentColor" fill-opacity="0.85"/><rect x="6.8" y="3.5" width="2.6" height="10" fill="currentColor" fill-opacity="0.45"/><rect x="11" y="8" width="2.6" height="5.5" fill="currentColor" fill-opacity="0.85"/>'),
+);
+registerIcon(
+    'style-high-low',
+    S('<rect x="4" y="2.5" width="2.6" height="11" fill="currentColor" fill-opacity="0.8"/><rect x="9.4" y="5" width="2.6" height="7" fill="currentColor" fill-opacity="0.55"/>'),
+);
+registerIcon('style-hlc-bars', S('<path d="M4.5 2.5v11M2.5 11h2"/><path d="M11.5 3.5v9M11.5 8.5h2"/>'));
+
 registerIcon(
     'style-heikinashi',
     S('<path d="M4.5 12v2M11.5 2v2"/><rect x="2.8" y="5" width="3.4" height="7" rx="0.6" fill="currentColor" fill-opacity="0.25"/><rect x="9.8" y="4" width="3.4" height="7" rx="0.6" fill="currentColor"/>'),

@@ -95,6 +95,7 @@ export const STYLE_SYNC_CONFIG_KEYS = [
     'line',
     'area',
     'baseline',
+    'variants',
     'sessions',
 ] as const;
 

@@ -1,0 +1,26 @@
+{
+  "rows": [
+    "Off",
+    "Weak",
+    "Strong",
+    "Snap to indicators"
+  ],
+  "togglePresent": true,
+  "toggleBefore": null,
+  "toggleAfter": "1",
+  "rowsAfter": [
+    "Off",
+    "Weak",
+    "Strong",
+    "Snap to indicators"
+  ],
+  "snapProbe": {
+    "mid": 300,
+    "barTime": 1792015200000,
+    "close": 81669.38,
+    "high": 81780.03,
+    "emaPoints": [],
+    "bars": 500
+  },
+  "errors": []
+}

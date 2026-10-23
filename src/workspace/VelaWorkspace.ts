@@ -16,6 +16,7 @@ import { TypedEventBus } from '../core/events/EventBus';
 import { MultiProviderFeed } from '../data/MultiProviderFeed';
 import { sharedBarStore } from '../data/BarStore';
 import { ensureUIHost, injectStyles, registerIcon, svg16 } from '../ui';
+import { installSmoothScrolling } from '../ui/scrolling';
 import { isEditableTarget, KeymapManager } from '../ui/keymap';
 import { Menu, type MenuItemDescriptor } from '../ui/components/menu';
 import { Popover } from '../ui/components/popover';
@@ -85,6 +86,7 @@ import {
 import { normalizeCursorStyle, type CursorStyle } from '../core/cursor';
 import { encodeState, decodeState, decodeStateDetailed, sanitizeState, type CellState, type ChartTemplate, type DrawingToolsState, type SavedLayoutMeta, type WorkspaceState, type WorkspaceStorage } from './persist';
 import { encodeShareUrl, decodeShareHash } from '../state/share';
+import { decodeLayoutShareHash, isLayoutShareHash, layoutShareUrl } from './share-link';
 import { localStorageAdapter, type StorageFailure } from '../widget/persist';
 
 /** The links in TradingView's reading order — the picker's rows and the badge's order. */
@@ -105,6 +107,7 @@ import { WorkspaceReplay, lastOpenClosedBy } from './WorkspaceReplay';
 import {
     registerBuiltinLayouts,
     layouts,
+    layoutDefinition,
     gridStyles,
     activeAfterLayout,
     orderAfterLayout,
@@ -117,6 +120,8 @@ import {
     type TrackSizes,
 } from './layouts';
 import { SplitterLayer, evenTracks } from './splitters';
+import { buildChartCsv, type CsvScope, type CsvTimeFormat } from './csv';
+import { downloadText } from '../ui/download';
 import { compositeLayoutScreenshot, tilesFromCellRects, triggerPngDownload, type LayoutShotTile } from './screenshot';
 
 /**
@@ -713,6 +718,7 @@ export class VelaWorkspace {
         // One global rule for the CSS half of `prefers-reduced-motion` (the canvas half
         // lives in NativeRenderer). Scoped to the library's roots, injected once.
         injectStyles('vela-reduced-motion', REDUCED_MOTION_CSS, doc);
+        installSmoothScrolling(doc);
         this.root = doc.createElement('div');
         this.root.className = 'vela-workspace';
         // First child on purpose: it must be the FIRST stop in the document.
@@ -865,6 +871,8 @@ export class VelaWorkspace {
                 onRenameLayout: (from, to) => this.renameLayout(from, to),
                 onExportLayout: (name) => this.exportLayout(name),
                 onImportLayout: (json) => this.importLayout(json),
+                onShareLayout: (name) => this.copyLayoutLink(name),
+                onExportData: (scope, timeFormat) => this.exportChartCsv(scope, timeFormat),
                 // A share link is the only way to hand a layout to someone else without an
                 // account: the whole document, compressed, in the URL fragment.
                 onCopyLink: () => this.copyShareLink(),
@@ -1007,6 +1015,13 @@ export class VelaWorkspace {
                       onZoom: () => {
                           const d = this.active.chart.drawings;
                           d.setMode(d.getMode() === 'zoom' ? null : 'zoom');
+                          this.refocusActive();
+                      },
+                      // The magnet's second axis lives on the ACTIVE cell, like every
+                      // other command on this bar.
+                      snapToIndicators: () => this.active.chart.drawings.getSnapToIndicators(),
+                      onSnapToIndicators: (on) => {
+                          this.active.chart.drawings.setSnapToIndicators(on);
                           this.refocusActive();
                       },
                       drawingsState: () => this.drawingToolbarState(),
@@ -1495,6 +1510,24 @@ export class VelaWorkspace {
     }
 
     /**
+     * Copy a link that carries ONE saved layout (`#l1=…`). Same document, same codec as
+     * the workspace permalink — only the prefix differs, so the recipient's import path is
+     * the one already trusted. Returns the URL, or null when the clipboard refused (the
+     * picker says so on the button rather than pretending it copied).
+     */
+    async copyLayoutLink(name: string, base?: string): Promise<string | null> {
+        const state = this.savedLayouts.get(name);
+        if (!state) return null;
+        const url = await layoutShareUrl(state, base);
+        try {
+            await navigator.clipboard.writeText(url);
+            return url;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * Adopt a shared document from a URL fragment (`#s1=…` / `#s0=…`). A hash that is not
      * a share link, or that this build cannot read, returns false and leaves the session
      * exactly as it was — a broken link never blanks the screen.
@@ -1503,9 +1536,30 @@ export class VelaWorkspace {
         const view = this.root.ownerDocument.defaultView;
         const base = view?.location.href ?? 'https://vela.local/';
         const target = new URL(href ?? base, base);
+        // A LAYOUT link (`#l1=…`) is the same document under another prefix: it lands in
+        // the saved-layouts list and then opens, so the recipient keeps it as a layout
+        // instead of silently replacing the workspace they were in.
+        if (isLayoutShareHash(target.hash)) {
+            const layout = await decodeLayoutShareHash(target.hash);
+            if (!layout || this.destroyed) return false;
+            return this.adoptSharedLayout(layout);
+        }
         const state = await decodeShareHash(target.hash);
         if (!state || this.destroyed) return false;
         this.applyState(state);
+        return true;
+    }
+
+    /** Inbox a shared LAYOUT under a free name, then open it (a link never overwrites). */
+    private adoptSharedLayout(state: WorkspaceState): boolean {
+        const def = layoutDefinition(this.def.id);
+        const base = def?.label ? `${def.label} (shared)` : 'Shared layout';
+        let name = base;
+        for (let n = 2; this.savedLayouts.has(name); n += 1) name = `${base} (${n})`;
+        this.savedLayouts.set(name, state);
+        this.markStateDirty();
+        this.toast(`Layout “${name}” added from a link`, 'success');
+        this.openLayout(name);
         return true;
     }
 
@@ -3238,6 +3292,57 @@ export class VelaWorkspace {
     }
 
     /**
+     * Write the ACTIVE cell's bars as CSV and hand the file to the browser. `visible`
+     * narrows to the window on screen (the bars the trader is reasoning about); `all`
+     * writes everything loaded. Symbols/timeframes come from the cell, not the file, so
+     * a 1h BTC export reads `BTCUSD_60_all_bars.csv` and cannot be mistaken for another.
+     *
+     * Returns the same receipt the sheet shows — rows written and the filename — or null
+     * when the cell has no bars yet (an empty export is worse than a refused one).
+     */
+    exportChartCsv(scope: CsvScope = 'all', timeFormat: CsvTimeFormat = 'iso'): { rows: number; filename: string } | null {
+        let cell: ChartCell;
+        try {
+            cell = this.active;
+        } catch {
+            return null;
+        }
+        const chart = cell.chart.renderer;
+        const bars = chart.getBars();
+        if (!bars || bars.length === 0) return null;
+        let visible: { from: number; to: number } | undefined;
+        if (scope === 'visible') {
+            const vr = chart.getVisibleRange();
+            if (!vr) return null;
+            // `getVisibleRange` hands back TIMES (data-bounded, so both are real bars). Map
+            // them to indices once: the array is ascending by construction.
+            const from = bars.findIndex((b) => b.time >= vr.from);
+            let to = from;
+            for (let i = bars.length - 1; i >= 0; i--) {
+                const bar = bars[i];
+                if (bar && bar.time <= vr.to) {
+                    to = i;
+                    break;
+                }
+            }
+            if (from < 0) return null;
+            visible = { from, to };
+        }
+        const file = buildChartCsv({
+            bars,
+            scope,
+            ...(visible ? { visible } : {}),
+            symbol: cell.symbol,
+            timeframe: cell.timeframe,
+            timeFormat,
+        });
+        if (file.rows === 0) return null;
+        downloadText(this.root.ownerDocument, file.filename, file.text, 'text/csv;charset=utf-8');
+        this.toast(`${file.rows} bars exported as CSV`, 'success', 2600);
+        return { rows: file.rows, filename: file.filename };
+    }
+
+    /**
      * One snapshot as portable, versioned JSON — the file a trader keeps beside their
      * notes. `applyState` already treats snapshots as untrusted, so an imported file
      * from another build passes the same sanitizer as a share link.
@@ -4451,6 +4556,7 @@ export class VelaWorkspace {
                 onRenameLayout: (from, to) => this.renameLayout(from, to),
                 onExportLayout: (name) => this.exportLayout(name),
                 onImportLayout: (json) => this.importLayout(json),
+                onExportData: (scope, timeFormat) => this.exportChartCsv(scope, timeFormat),
                 linkGroup: () => this.linkGroup,
                 onLinkGroup: (tag) => this.setLinkGroup(tag),
                 glyph: () => layoutGlyph(this.def),

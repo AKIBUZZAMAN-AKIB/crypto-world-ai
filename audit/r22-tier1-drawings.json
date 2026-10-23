@@ -1,0 +1,89 @@
+{
+  "flyouts": {
+    "fib": [
+      "Fib Retracement",
+      "Fib Extension",
+      "Trend-Based Fib Extension",
+      "Fib Fan",
+      "Fib Pitchfan",
+      "Fib Time Zones",
+      "Fib Channel",
+      "Fib Speed Resistance Fan",
+      "Trend-Based Fib Time",
+      "Fib Circles",
+      "Fib Speed Resistance Arcs",
+      "Fib Wedge",
+      "Fib Spiral",
+      "Fair Value Gap",
+      "Order Block",
+      "Liquidity",
+      "Gann Fan",
+      "Gann Box",
+      "Gann Square",
+      "Gann Square Fixed",
+      "Dedekind Tessellation",
+      "Sonic",
+      "Supersonic",
+      "Golden Sonic",
+      "Golden Supersonic"
+    ],
+    "gann": "no chevron",
+    "text": [
+      "Text",
+      "Callout",
+      "Note",
+      "Price Note",
+      "Pin",
+      "Comment",
+      "Price Label",
+      "Signpost"
+    ],
+    "shapes": [
+      "Brush",
+      "Highlighter",
+      "Arrow",
+      "Arrow Mark Up",
+      "Arrow Mark Down",
+      "Rectangle",
+      "Ellipse",
+      "Triangle",
+      "Polyline",
+      "Circle",
+      "Rotated Rectangle",
+      "Path",
+      "Arc",
+      "Curve",
+      "Double curve"
+    ]
+  },
+  "hasDoubleCurve": true,
+  "hasPitchfan": true,
+  "hasGannFixed": false,
+  "hasPin": true,
+  "placed": {
+    "doublecurve": {
+      "type": "doublecurve",
+      "anchors": 4,
+      "text": null
+    },
+    "fibpitchfan": {
+      "type": "fibpitchfan",
+      "anchors": 3,
+      "text": null
+    },
+    "gannsquarefixed": {
+      "type": "gannsquarefixed",
+      "anchors": 2,
+      "text": null
+    },
+    "pin": {
+      "type": "pin",
+      "anchors": 2,
+      "text": "Pin"
+    }
+  },
+  "squarePx": {
+    "anchors": 2
+  },
+  "errors": []
+}

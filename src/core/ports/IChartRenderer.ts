@@ -239,9 +239,23 @@ export interface IChartRenderer {
      * same series in place (e.g. swapping a quick preview for the full history) so
      * candles don't jump.
      */
-    setBars(bars: OHLCV[], opts?: { preserveView?: boolean }): void;
+    /**
+     * `preserveView` keeps the viewport (an in-place series swap), `resetView` FITs the new
+     * series instead of keeping the current zoom — required when a chart style changes the
+     * bar COUNT (Renko/Range/Line break/Kagi/P&F): the old px-per-bar is meaningless over a
+     * differently sized series and would squash it into a sliver at the right edge.
+     */
+    setBars(bars: OHLCV[], opts?: { preserveView?: boolean; resetView?: boolean }): void;
     /** Append a new bar or replace the forming (last) bar, decided by time. */
     updateBar(bar: OHLCV): void;
+
+    /**
+     * The bars currently loaded, oldest first, as the SOURCE data (never a style's
+     * re-bucketed output). Exists for exporters and host-side inspection — an
+     * `Export chart data…` file must contain the OHLCV the chart was built from, not
+     * the Renko bricks drawn from it. Optional: a renderer that streams can omit it.
+     */
+    getBars?(): readonly OHLCV[];
 
     /**
      * Set the active symbol's tick size (e.g. `0.01`) so the price axis renders the

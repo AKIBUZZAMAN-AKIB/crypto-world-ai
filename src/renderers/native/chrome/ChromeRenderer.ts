@@ -465,7 +465,17 @@ export class ChromeRenderer {
                 const baseline = scene.baselineValue ?? scene.bars[i0]?.close ?? 0;
                 return last.close >= baseline ? (st.baseline.topLineColor ?? theme.upColor) : (st.baseline.bottomLineColor ?? theme.downColor);
             }
-            default: // 'candles'
+            case 'line-markers':
+            case 'stepline':
+            case 'hlc-area':
+                return st.area.lineColor ?? st.line.color ?? theme.upColor;
+            case 'high-low':
+                return st.variants.highLowColor ?? st.line.color ?? theme.upColor;
+            case 'columns':
+                return last.close >= last.open ? (st.bars.upColor ?? theme.upColor) : (st.bars.downColor ?? theme.downColor);
+            // 'candles', 'heikinashi', and the candle-drawn variants (hollow, volume, HLC
+            // bars) all resolve to the candle/bar direction ink.
+            default:
                 return last.close >= last.open ? theme.upColor : theme.downColor;
         }
     }

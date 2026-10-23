@@ -57,7 +57,29 @@ describe('chart-type registry', () => {
 
     it('priceStyleIds() = built-ins + registered types; the settings/validation layers read it live', () => {
         const base = priceStyleIds();
-        expect(base).toEqual(['candles', 'bars', 'line', 'area', 'baseline', 'heikinashi']);
+        expect(base).toEqual([
+            'candles',
+            'bars',
+            'line',
+            'area',
+            'baseline',
+            'heikinashi',
+            'hollow-candles',
+            'volume-candles',
+            'line-markers',
+            'stepline',
+            'hlc-area',
+            'columns',
+            'high-low',
+            'hlc-bars',
+            // Re-bucketing styles — registered through the same seam, appended in
+            // registration order (they change the bar COUNT, so no barTransform).
+            'renko',
+            'rangebars',
+            'kagi',
+            'pnf',
+            'linebreak',
+        ]);
         registerChartType({ id: 'renko-like', barTransform: identity });
         expect(priceStyleIds()).toContain('renko-like');
         unregisterChartType('renko-like');

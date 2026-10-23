@@ -97,6 +97,8 @@ export interface IDrawingsRendererPort {
     /** Set the sticky magnet snap mode (off/weak/strong). Optional — a renderer without
      *  a magnet omits it; the in-chart toolbar reflects the pushed value. */
     setSnapMode?(mode: SnapMode): void;
+    /** Treat overlay indicator values as magnet targets (`Snap to indicators`). */
+    setSnapToIndicators?(on: boolean): void;
     /** Set stay-in-drawing-mode (tools remain armed after each placement). Optional —
      *  the in-chart toolbar reflects the pushed value. */
     setStayMode?(on: boolean): void;

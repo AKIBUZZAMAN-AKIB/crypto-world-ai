@@ -16,6 +16,13 @@ import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { encodeShareHash, decodeShareHash, encodeShareUrl, SHARE_HASH_GZIP, SHARE_HASH_RAW } from '../src/state/share';
 import { VelaWorkspace } from '../src/workspace/VelaWorkspace';
 import type { WorkspaceState } from '../src/state/document';
+import {
+    decodeLayoutShareHash,
+    encodeLayoutShareHash,
+    isLayoutShareHash,
+    toLayoutHash,
+    toWorkspaceHash,
+} from '../src/workspace/share-link';
 import type { OHLCV } from '../src/core/model/ohlcv';
 
 beforeAll(() => {
@@ -132,5 +139,57 @@ describe('a workspace', () => {
         // jsdom defines no navigator.clipboard: the URL is still returned by shareLink,
         // and copyShareLink answers null so the caller can show the link.
         expect(await ws.copyShareLink()).toBeNull();
+    });
+});
+
+// ── PER-LAYOUT LINKS (round 23, Tier-2 #8) ───────────────────────────────────────
+// A layout link is the same document under the `#l` prefix: it must be recognisable
+// before decoding, map onto the workspace codec exactly, and fail closed when broken.
+describe('layout share links', () => {
+    it('recognises only the layout prefixes', () => {
+        expect(isLayoutShareHash('#l1=abc')).toBe(true);
+        expect(isLayoutShareHash('#l0=abc')).toBe(true);
+        expect(isLayoutShareHash('#s1=abc')).toBe(false);
+        expect(isLayoutShareHash('')).toBe(false);
+        expect(isLayoutShareHash(null)).toBe(false);
+    });
+
+    it('maps a layout fragment onto the workspace codec and back', () => {
+        expect(toWorkspaceHash('#l1=XYZ')).toBe('#s1=XYZ');
+        expect(toWorkspaceHash('#l0=XYZ')).toBe('#s0=XYZ');
+        expect(toLayoutHash('#s1=XYZ')).toBe('#l1=XYZ');
+        expect(toLayoutHash('#s0=XYZ')).toBe('#l0=XYZ');
+        expect(toLayoutHash('#other')).toBe('#other');
+    });
+
+    it('round-trips a saved layout through a layout-prefixed fragment', async () => {
+        const state = { version: 1, layout: '2h', charts: [] } as WorkspaceState;
+        const hash = await encodeLayoutShareHash(state);
+        expect(isLayoutShareHash(hash)).toBe(true);
+        const back = await decodeLayoutShareHash(hash);
+        expect(back?.layout).toBe('2h');
+    });
+
+    it('refuses a workspace link, and a corrupt layout link', async () => {
+        expect(await decodeLayoutShareHash('#s1=abc')).toBeNull();
+        const hash = await encodeLayoutShareHash({ version: 1, layout: '2h', charts: [] } as WorkspaceState);
+        expect(await decodeLayoutShareHash(hash.slice(0, hash.length - 6))).toBeNull();
+        expect(await decodeLayoutShareHash('#l0=not-base64!')).toBeNull();
+    });
+
+    function mountWorkspace(layout = '4'): VelaWorkspace {
+        const host = document.createElement('div');
+        document.body.append(host);
+        const ws = new VelaWorkspace(host, { layout, symbol: 'AAA', timeframe: '60', bars: 80, live: false, data: BARS } as never);
+        live.push(ws);
+        return ws;
+    }
+
+    it('copies a PER-LAYOUT link from the workspace, and a bad name answers null', async () => {
+        const ws = mountWorkspace();
+        ws.setLayout('2h');
+        ws.saveLayout('Scalp'); // a saved snapshot to share
+        expect(await ws.copyLayoutLink('Scalp')).toBeNull(); // jsdom has no clipboard
+        expect(await ws.copyLayoutLink('no-such-layout')).toBeNull();
     });
 });

@@ -9,6 +9,7 @@
 // machine's item model. The host element provides the theme tokens (the panel portals
 // inside it, same as the menu positioner).
 import { injectStyles } from '../ui/styles';
+import type { CsvTimeFormat } from '../workspace/csv';
 import { SyncMatrix } from './sync-matrix';
 import { Tooltip } from '../ui/components/tooltip';
 import { announceSurface } from '../ui/surface-events';
@@ -225,10 +226,19 @@ const CSS = `
     height: 1px;
     background: var(--vela-border-faint);
 }
-.vela-lp-presetrow { display: grid; grid-template-columns: repeat(4, 24px); gap: 4px; }
-.vela-lp-preset[data-icon='1'] { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; color: color-mix(in srgb, var(--vela-fg) 78%, transparent); background: var(--vela-hover); border: 1px solid var(--vela-border-faint); }
+.vela-lp-presetrow { display: grid; grid-template-columns: repeat(4, 26px); gap: 3px; }
+.vela-lp-preset[data-icon='1'] {
+    /* Minimal by construction: no pill, no border — the GLYPH is the button. The hover
+       wash is the only chrome, and the selected layout keeps a single hairline ring so
+       "which one am I in" survives the removal of the boxes. */
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; padding: 0;
+    color: color-mix(in srgb, var(--vela-fg) 66%, transparent);
+    background: transparent; border: 1px solid transparent;
+}
+.vela-lp-preset[data-icon='1'][data-checked='1'] { border-color: var(--vela-border-strong); color: var(--vela-fg-bright); background: var(--vela-hover); }
 .vela-lp-preset[data-icon='1'] svg { width: 16px; height: 16px; }
-.vela-lp-preset[data-icon='1']:hover { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
+.vela-lp-preset[data-icon='1']:hover { background: var(--vela-hover-strong); color: var(--vela-fg-bright); border-color: transparent; }
 
 
 
@@ -258,6 +268,33 @@ const CSS = `
     background: var(--vela-hover);
 }
 .vela-lp-save button:hover, .vela-lp-saved button:hover { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
+.vela-lp-csv { display: flex; align-items: center; gap: 6px; }
+.vela-lp-csv .vela-lp-csvcap {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--vela-fg-muted);
+}
+/* The receipt after a save: the count and the file name, in success ink — a one-shot
+   confirmation that never grows the panel. */
+.vela-lp-csv .vela-lp-csvcap[data-done='1'] { color: var(--vela-up); }
+.vela-lp-csv .vela-lp-csvseg {
+    all: unset;
+    cursor: pointer;
+    flex: none;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 16px;
+    color: var(--vela-fg-muted);
+    background: var(--vela-hover);
+}
+.vela-lp-csv .vela-lp-csvseg:hover { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
+.vela-lp-csv .vela-lp-csvseg[data-on='1'] { color: var(--vela-fg-bright); background: var(--vela-hover-strong); }
+.vela-lp-csv .vela-lp-csvseg:focus-visible { outline: 1px solid var(--vela-accent); outline-offset: 1px; }
 .vela-lp-saved { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .vela-lp-saved .vela-lp-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; color: var(--vela-fg-muted); }
 .vela-lp-saved .vela-lp-name:hover { color: var(--vela-fg-bright); }
@@ -626,6 +663,9 @@ export interface LayoutPickerOptions {
     onExportLayout?: (name: string) => string | null;
     /** Restore a snapshot from a picked file; returns the name it landed under. */
     onImportLayout?: (json: string) => string | null;
+    /** Copy a link that carries THIS one saved layout (Tier-2 #8). Resolves the URL, or
+     *  null when the clipboard refused / the layout is too big to travel in a fragment. */
+    onShareLayout?: (name: string) => Promise<string | null>;
     /** Copy a permalink that restores this workspace (resolves the URL; null = the
      *  clipboard refused, and the button says so instead of lying). */
     onCopyLink?: () => Promise<string | null>;
@@ -637,6 +677,13 @@ export interface LayoutPickerOptions {
     onApplyTemplate?: (name: string, target: 'active' | 'all') => number;
     onDeleteTemplate?: (name: string) => void;
     onExportTemplate?: (name: string) => string | null;
+    /**
+     * Write the chart's bars as CSV. Returns how many bars landed (for the receipt) or
+     * null when there is nothing to export — an empty chart, or a host that cannot save
+     * files. TradingView's "Export chart data…" is the same verb, and it lives here
+     * because this sheet is the chart's file menu.
+     */
+    onExportData?: (scope: 'visible' | 'all', timeFormat: CsvTimeFormat) => { rows: number; filename: string } | null;
     onImportTemplate?: (json: string) => string | null;
     /** The groups in use, with the user's names — the legend under the table. */
     legend?: () => Array<{ id: string; mark: string; color?: string; name: string; count: number }>;
@@ -1290,6 +1337,27 @@ export class LayoutPicker {
         else clear();
     }
 
+    /** Per-layout link: same flip-to-copied language as the workspace permalink. */
+    private async shareLayout(btn: HTMLElement, name: string): Promise<void> {
+        const url = await this.opts.onShareLayout?.(name);
+        if (!url) {
+            btn.title = 'This layout is too large to travel in a link';
+            btn.setAttribute('aria-label', 'Layout too large to share as a link');
+            return;
+        }
+        btn.dataset.copied = '1';
+        btn.title = 'Link copied to the clipboard';
+        btn.setAttribute('aria-label', `Link to ${name} copied`);
+        const win = this.doc.defaultView;
+        const clear = (): void => {
+            delete btn.dataset.copied;
+            btn.title = `Copy a link to “${name}”`;
+            btn.setAttribute('aria-label', `Copy a link to ${name}`);
+        };
+        if (win) win.setTimeout(clear, 1600);
+        else clear();
+    }
+
     /** Open the OS file picker for an imported snapshot (no drag-drop needed). */
     private pickImportFile(): void {
         const input = this.doc.createElement('input');
@@ -1645,6 +1713,65 @@ export class LayoutPicker {
                 form.appendChild(share);
             }
             this.footEl.appendChild(form);
+            // Export chart data — the sheet's only non-layout file. Two scopes, side by
+            // side and always visible: the whole dataset for a spreadsheet, or just the
+            // window the trader is looking at (the same split TradingView offers).
+            if (this.opts.onExportData) {
+                const csv = doc.createElement('div');
+                csv.className = 'vela-lp-csv';
+                const cap = doc.createElement('span');
+                cap.className = 'vela-lp-csvcap';
+                cap.textContent = 'Export chart data';
+                csv.appendChild(cap);
+                // Time format: TradingView's dialog offers ISO and UNIX; ours is one chip
+                // that always SHOWS the active choice, because a hidden mode is a trap.
+                let timeFormat: CsvTimeFormat = 'iso';
+                const fmt = doc.createElement('button');
+                fmt.type = 'button';
+                fmt.className = 'vela-lp-csvseg';
+                const paintFmt = (): void => {
+                    fmt.textContent = timeFormat === 'iso' ? 'ISO' : 'UNIX';
+                    fmt.dataset.on = timeFormat === 'unix' ? '1' : '0';
+                    fmt.title =
+                        timeFormat === 'iso'
+                            ? 'Time column: ISO-8601 (click for UNIX milliseconds)'
+                            : 'Time column: UNIX milliseconds (click for ISO-8601)';
+                };
+                paintFmt();
+                fmt.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    timeFormat = timeFormat === 'iso' ? 'unix' : 'iso';
+                    paintFmt();
+                });
+                for (const [scope, label, title] of [
+                    ['visible', 'Visible', 'Save only the bars currently in view as CSV'],
+                    ['all', 'All', 'Save every loaded bar as CSV'],
+                ] as const) {
+                    const b = doc.createElement('button');
+                    b.type = 'button';
+                    b.className = 'vela-lp-csvseg';
+                    b.textContent = label;
+                    b.title = title;
+                    b.setAttribute('aria-label', `Export chart data — ${label.toLowerCase()} range as CSV`);
+                    b.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const res = this.opts.onExportData?.(scope, timeFormat);
+                        // The receipt is the point: a download the browser swallows is
+                        // otherwise indistinguishable from a dead button.
+                        if (res) {
+                            cap.textContent = `${res.rows} bars · ${timeFormat === 'iso' ? 'ISO' : 'UNIX'} · ${res.filename}`;
+                            cap.dataset.done = '1';
+                            setTimeout(() => {
+                                cap.textContent = 'Export chart data';
+                                delete cap.dataset.done;
+                            }, 2600);
+                        }
+                    });
+                    csv.appendChild(b);
+                }
+                csv.appendChild(fmt);
+                this.footEl.appendChild(csv);
+            }
             // TradingView's "Open layout…" is a searchable list; ours only needs the
             // search once the list is long enough that scanning costs more than typing.
             const total = saved().length;
@@ -1739,6 +1866,15 @@ export class LayoutPicker {
                     const json = this.opts.onExportLayout?.(l.name);
                     if (json) downloadText(this.doc, `${l.name}.vela-layout.json`, json);
                 }));
+                // SHARE THIS ONE LAYOUT — a link that lands the recipient in this exact
+                // layout, imported through the same sanitizer as a file. Same "say it on
+                // the button" rule as the workspace permalink above.
+                if (this.opts.onShareLayout) {
+                    const share = this.savedAction('link', `Copy a link to “${l.name}”`, () => {
+                        void this.shareLayout(share, l.name);
+                    });
+                    row.appendChild(share);
+                }
                 const del = this.savedAction('trash', `Delete ${l.name}`, () => {
                     this.opts.onDeleteLayout?.(l.name);
                     this.renderFooter();

@@ -53,6 +53,7 @@ const FIBONACCI_TYPES: DrawingTypeKey[] = [
     'fibextension',
     'fibextensiontrend',
     'fibfan',
+    'fibpitchfan',
     'fibtimezones',
     'fibchannel',
     'fibspeedfan',
@@ -65,22 +66,23 @@ const FIBONACCI_TYPES: DrawingTypeKey[] = [
 
 const PRICE_ACTION_TYPES: DrawingTypeKey[] = ['fairvaluegap', 'orderblock', 'liquidity'];
 
-const GANN_TYPES: DrawingTypeKey[] = ['gannfan', 'gannbox', 'gannsquare'];
+// The reference's order: fan, box, the two squares (plain = chart ratio, fixed = pixels).
+const GANN_TYPES: DrawingTypeKey[] = ['gannfan', 'gannbox', 'gannsquare', 'gannsquarefixed'];
 
 const GEOMETRY_TYPES: DrawingTypeKey[] = ['dedekind', 'sonic', 'supersonic', 'goldensonic', 'goldensupersonic'];
 
-const PATTERN_TYPES: DrawingTypeKey[] = ['xabcd', 'abcd', 'headshoulders'];
-const ELLIOTT_TYPES: DrawingTypeKey[] = ['elliottimpulse', 'elliottcorrection'];
+const PATTERN_TYPES: DrawingTypeKey[] = ['xabcd', 'abcd', 'trianglepattern', 'threedrives', 'headshoulders'];
+const ELLIOTT_TYPES: DrawingTypeKey[] = ['elliottimpulse', 'elliottcorrection', 'elliotttriangle', 'elliottdoublecombo', 'elliottriplecombo'];
 const HARMONIC_TYPES: DrawingTypeKey[] = ['gartley', 'bat', 'butterfly', 'crab', 'shark', 'cypher'];
 
-const MEASUREMENT_TYPES: DrawingTypeKey[] = ['position', 'datepricerange', 'magnifier'];
+const MEASUREMENT_TYPES: DrawingTypeKey[] = ['datepricerange', 'pricerange', 'daterange', 'position', 'magnifier'];
 const VOLUME_TYPES: DrawingTypeKey[] = ['anchoredvwap', 'fixedrangevp'];
 
 const BRUSH_TYPES: DrawingTypeKey[] = ['freehand', 'highlighter'];
 const ARROW_TYPES: DrawingTypeKey[] = ['arrow', 'arrowmarkup', 'arrowmarkdown'];
-const SHAPE_TYPES: DrawingTypeKey[] = ['box', 'ellipse', 'triangle', 'polyline', 'circle', 'rotatedrect', 'path', 'arc', 'curve'];
+const SHAPE_TYPES: DrawingTypeKey[] = ['box', 'ellipse', 'triangle', 'polyline', 'circle', 'rotatedrect', 'path', 'arc', 'curve', 'doublecurve'];
 
-const TEXT_TYPES: DrawingTypeKey[] = ['text', 'callout', 'note', 'pricenote', 'comment', 'pricelabel', 'signpost'];
+const TEXT_TYPES: DrawingTypeKey[] = ['text', 'callout', 'note', 'pricenote', 'pin', 'comment', 'pricelabel', 'signpost'];
 const ICON_TYPES: DrawingTypeKey[] = ['flagmark', 'iconstamp'];
 
 type SectionSource = { label: string; registryGroup: string } | { label: string; types: readonly DrawingTypeKey[] };

@@ -9,7 +9,12 @@ export const OFFLINE = process.env.SYNC_BASE_OFFLINE ?? 'http://127.0.0.1:5190/o
 
 export async function open(opts = {}) {
     const base = opts.base ?? BASE;
-    const browser = await chromium.launch({ args: ['--no-sandbox'] });
+    // `--disable-dev-shm-usage`: a container's /dev/shm defaults to 64 MB and the
+    // 8-and-16-chart pages crash the renderer there. `--js-flags` caps the heap for the
+    // same reason — a crash reads as a test failure and hides the real cause.
+    const browser = await chromium.launch({
+        args: ['--no-sandbox', '--disable-dev-shm-usage', ...(process.env.CHROMIUM_EXTRA_ARGS ?? '').split(' ').filter(Boolean)],
+    });
     const context = await browser.newContext({
         viewport: opts.viewport ?? { width: 1440, height: 900 },
         ...(opts.mobile ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}),

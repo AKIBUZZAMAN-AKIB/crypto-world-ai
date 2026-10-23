@@ -8,6 +8,7 @@ import type { CoordinateSystem } from '../core/CoordinateSystem';
 import type { SceneGraph, PaneNode } from '../core/SceneGraph';
 import { candleTier, wickWidth, candleGeometry, snapY, aggregateCandleColumns } from './candle-lod';
 import { BASELINE_TOP_LINE, BASELINE_BOTTOM_LINE, BASELINE_FILL_ALPHA, BASELINE_FILL_ALPHA_FAR, withAlpha, effectiveCandlePaint } from '../core/chartConfig';
+import { paintFamily, volumeWidthShare } from '../../../core/price-styles/variants';
 import type { IRenderBackend } from './IRenderBackend';
 
 /**
@@ -184,7 +185,41 @@ export class Canvas2dBackend implements IRenderBackend {
         if (scene.basePainting === 'none') return; // plugin style fully replaces the price series
         const bars = scene.bars;
         const st = scene.style;
-        switch (scene.priceStyle) {
+        switch (paintFamily(scene.priceStyle)) {
+            // ── the painting variants: same bars, different paint ──
+            case 'hollow-candles':
+                this.drawHollowCandles(ctx, scene, bars, i0, i1, coords, pane, theme, barColors);
+                return;
+            case 'volume-candles':
+                this.drawVolumeCandles(ctx, scene, bars, i0, i1, coords, pane, theme, barColors);
+                return;
+            case 'line-markers':
+                this.drawPriceLineWithMarkers(ctx, bars, i0, i1, coords, pane, st.line.color ?? theme.upColor, st.line.width, st.variants.markerRadius);
+                return;
+            case 'stepline':
+                this.drawStepLine(ctx, bars, i0, i1, coords, pane, st.line.color ?? theme.upColor, st.line.width);
+                return;
+            case 'hlc-area':
+                this.drawHlcArea(ctx, bars, i0, i1, coords, pane, st.area.lineColor ?? theme.upColor, st.area.topColor ?? st.area.lineColor ?? theme.upColor, st.area.width);
+                return;
+            case 'columns':
+                this.drawColumns(ctx, bars, i0, i1, coords, pane, st.bars.upColor ?? theme.upColor, st.bars.downColor ?? theme.downColor, st.variants.columnBaseline);
+                return;
+            case 'high-low':
+                this.drawHighLow(ctx, bars, i0, i1, coords, pane, st.variants.highLowColor ?? st.line.color ?? theme.upColor);
+                return;
+            case 'hlc-bars':
+                this.drawHlcBars(ctx, bars, i0, i1, coords, pane, st.bars.upColor ?? theme.upColor, st.bars.downColor ?? theme.downColor, barColors);
+                return;
+            case 'kagi':
+                this.drawKagi(ctx, bars, i0, i1, coords, pane, theme);
+                return;
+            case 'pnf':
+                this.drawPnf(ctx, bars, i0, i1, coords, pane, theme);
+                return;
+            case 'linebreak':
+                this.drawLineBreak(ctx, bars, i0, i1, coords, pane, theme);
+                return;
             case 'bars':
                 this.drawBars(ctx, bars, i0, i1, coords, pane, st.bars.upColor ?? theme.upColor, st.bars.downColor ?? theme.downColor, barColors);
                 return;
@@ -203,6 +238,499 @@ export class Canvas2dBackend implements IRenderBackend {
             default: // 'candles' + candle-drawn styles (a plugin style may fade candles to reveal its
                 // order-flow layer) and 'heikinashi' (the bars themselves arrive already transformed)
                 this.drawCandles(ctx, scene, bars, i0, i1, coords, pane, theme, barColors);
+        }
+    }
+
+    // ── painting variants ────────────────────────────────────────────────────────
+    // Each painter below reuses this file's geometry helpers (candleGeometry, snapY,
+    // candleTier) so a variant lands on the same device-pixel grid as the candles it
+    // stands in for — a style switch must not shift the chart by half a pixel.
+
+    /** The per-bar direction colour, honouring a `barcolor()` override and the variant's
+     *  optional "colour by the previous close" rule (TradingView's volume-candle switch). */
+    private barInk(
+        bar: OHLCV,
+        prev: OHLCV | undefined,
+        up: string,
+        down: string,
+        byPrevClose: boolean,
+        barColors: ReadonlyMap<number, string>,
+    ): string {
+        const bc = barColors.get(bar.time);
+        if (bc) return bc;
+        const rising = byPrevClose && prev ? bar.close >= prev.close : bar.close >= bar.open;
+        return rising ? up : down;
+    }
+
+    /** Hollow candles: an OUTLINE body when the close is at/above the open, filled below. */
+    private drawHollowCandles(
+        ctx: CanvasRenderingContext2D,
+        scene: SceneGraph,
+        bars: OHLCV[],
+        i0: number,
+        i1: number,
+        coords: CoordinateSystem,
+        pane: PaneNode,
+        theme: VelaTheme,
+        barColors: ReadonlyMap<number, string>,
+    ): void {
+        const spacing = coords.bodySpacing();
+        const tier = candleTier(spacing);
+        const paint = effectiveCandlePaint(scene.style.candle, scene.candleOverride, theme.upColor, theme.downColor);
+        const cs = paint.candle;
+        const hollowUp = scene.style.variants.hollowUp;
+        if (tier !== 'full') {
+            // Too thin for a body: the stick IS the candle (same rule as drawCandles).
+            this.drawCandlesAggregated(ctx, bars, i0, i1, coords, pane, (b) => barColors.get(b.time) ?? (b.close >= b.open ? paint.up : paint.down));
+            return;
+        }
+        for (let i = i0; i <= i1; i += 1) {
+            const b = bars[i];
+            if (!b || b.high <= b.low) continue;
+            const g = candleGeometry(coords.logicalToX(i), spacing, coords.dpr, this.candleBodyScale);
+            const up = b.close >= b.open;
+            const color = barColors.get(b.time) ?? (up ? paint.up : paint.down);
+            const oY = coords.priceToY(b.open, pane.scale, pane.bounds);
+            const cY = coords.priceToY(b.close, pane.scale, pane.bounds);
+            const top = snapY(Math.min(oY, cY), coords.dpr);
+            const bottom = snapY(Math.max(oY, cY), coords.dpr);
+            const bodyH = Math.max(1 / coords.dpr, bottom - top);
+            if (cs.wickVisible) {
+                const hY = snapY(coords.priceToY(b.high, pane.scale, pane.bounds), coords.dpr);
+                const lY = snapY(coords.priceToY(b.low, pane.scale, pane.bounds), coords.dpr);
+                ctx.strokeStyle = (up ? cs.wickUpColor : cs.wickDownColor) ?? color;
+                ctx.lineWidth = g.wickW;
+                ctx.beginPath();
+                ctx.moveTo(g.center, hY);
+                ctx.lineTo(g.center, top);
+                ctx.moveTo(g.center, bottom);
+                ctx.lineTo(g.center, lY);
+                ctx.stroke();
+            }
+            const hollow = hollowUp && up;
+            const bw = Math.max(0, g.bodyW - 1);
+            const bh = Math.max(0, bodyH - 1);
+            if (!hollow && cs.bodyVisible) {
+                ctx.globalAlpha = this.candleBodyAlpha;
+                ctx.fillStyle = color;
+                ctx.fillRect(g.bodyX, top, g.bodyW, bodyH);
+            }
+            // The outline is the point of the style, so it is always stroked — that is what
+            // separates a hollow candle from a 1px wick with nothing around it.
+            ctx.globalAlpha = this.candleStructureAlpha;
+            ctx.strokeStyle = (up ? cs.borderUpColor : cs.borderDownColor) ?? color;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(g.bodyX + 0.5, top + 0.5, bw, bh);
+        }
+    }
+
+    /**
+     * Volume candles: the body's WIDTH carries the volume (TradingView: "the greater the
+     * trading volume, the wider the candle"). Width is a share of the bar pitch from
+     * {@link volumeWidthShare}, floored so a dead bar still reads as a candle, and the
+     * OHLC heights are untouched.
+     */
+    private drawVolumeCandles(
+        ctx: CanvasRenderingContext2D,
+        scene: SceneGraph,
+        bars: OHLCV[],
+        i0: number,
+        i1: number,
+        coords: CoordinateSystem,
+        pane: PaneNode,
+        theme: VelaTheme,
+        barColors: ReadonlyMap<number, string>,
+    ): void {
+        const spacing = coords.bodySpacing();
+        const tier = candleTier(spacing);
+        const paint = effectiveCandlePaint(scene.style.candle, scene.candleOverride, theme.upColor, theme.downColor);
+        const vs = scene.style.variants;
+        if (tier !== 'full') {
+            // The aggregate path sees one bar at a time, so the previous close is looked up
+            // by time rather than by index (the same rule the wick tier uses).
+            this.drawCandlesAggregated(ctx, bars, i0, i1, coords, pane, (b) =>
+                this.barInk(b, bars[bars.indexOf(b) - 1], paint.up, paint.down, vs.volumeColorByPrevClose, barColors),
+            );
+            return;
+        }
+        let maxVol = 0;
+        for (let i = i0; i <= i1; i += 1) {
+            const v = bars[i]?.volume ?? 0;
+            if (v > maxVol) maxVol = v;
+        }
+        ctx.globalAlpha = this.candleStructureAlpha;
+        for (let i = i0; i <= i1; i += 1) {
+            const b = bars[i];
+            if (!b || b.high <= b.low) continue;
+            const color = this.barInk(b, bars[i - 1], paint.up, paint.down, vs.volumeColorByPrevClose, barColors);
+            const share = volumeWidthShare(b.volume ?? 0, maxVol, vs.volumeMinWidthPct);
+            const bodyW = Math.max(1 / coords.dpr, Math.round(spacing * share * coords.dpr) / coords.dpr);
+            const center = Math.round(coords.logicalToX(i) * coords.dpr) / coords.dpr;
+            const bodyX = center - bodyW / 2;
+            const hY = snapY(coords.priceToY(b.high, pane.scale, pane.bounds), coords.dpr);
+            const lY = snapY(coords.priceToY(b.low, pane.scale, pane.bounds), coords.dpr);
+            const oY = coords.priceToY(b.open, pane.scale, pane.bounds);
+            const cY = coords.priceToY(b.close, pane.scale, pane.bounds);
+            const top = snapY(Math.min(oY, cY), coords.dpr);
+            const bottom = snapY(Math.max(oY, cY), coords.dpr);
+            const bodyH = Math.max(1 / coords.dpr, bottom - top);
+            const wickW = Math.max(1 / coords.dpr, Math.min(1.5, bodyW / 2));
+            ctx.strokeStyle = color;
+            ctx.lineWidth = wickW;
+            ctx.beginPath();
+            ctx.moveTo(center, hY);
+            ctx.lineTo(center, top);
+            ctx.moveTo(center, bottom);
+            ctx.lineTo(center, lY);
+            ctx.stroke();
+            if (paint.candle.bodyVisible) {
+                ctx.globalAlpha = this.candleBodyAlpha;
+                ctx.fillStyle = color;
+                ctx.fillRect(bodyX, top, bodyW, bodyH);
+                ctx.globalAlpha = this.candleStructureAlpha;
+            }
+            if (paint.candle.borderVisible) {
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(bodyX + 0.5, top + 0.5, Math.max(0, bodyW - 1), Math.max(0, bodyH - 1));
+            }
+        }
+    }
+
+    /** Line with markers: the close line plus a dot at every plotted point. */
+    private drawPriceLineWithMarkers(
+        ctx: CanvasRenderingContext2D,
+        bars: OHLCV[],
+        i0: number,
+        i1: number,
+        coords: CoordinateSystem,
+        pane: PaneNode,
+        color: string,
+        width: number,
+        radius: number,
+    ): void {
+        this.drawPriceLine(ctx, bars, i0, i1, coords, pane, color, width);
+        ctx.fillStyle = color;
+        // One dot per bar only while there is room for distinct dots; past that they merge
+        // into the line itself and the loop is wasted work.
+        if (coords.bodySpacing() < radius * 2.4) return;
+        for (let i = Math.max(0, i0); i <= i1; i += 1) {
+            const b = bars[i];
+            if (!b) continue;
+            ctx.beginPath();
+            ctx.arc(coords.logicalToX(i), coords.priceToY(b.close, pane.scale, pane.bounds), radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    /** Step line: horizontal runs joined by vertical steps (value holds until the next bar). */
+    private drawStepLine(
+        ctx: CanvasRenderingContext2D,
+        bars: OHLCV[],
+        i0: number,
+        i1: number,
+        coords: CoordinateSystem,
+        pane: PaneNode,
+        color: string,
+        width: number,
+    ): void {
+        ctx.lineWidth = width;
+        ctx.lineJoin = 'miter';
+        ctx.lineCap = 'butt';
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        let prevX = 0;
+        let prevY = 0;
+        let started = false;
+        for (let i = Math.max(0, i0 - 1); i <= i1; i += 1) {
+            const b = bars[i];
+            if (!b) {
+                started = false;
+                continue;
+            }
+            const x = coords.logicalToX(i);
+            const y = coords.priceToY(b.close, pane.scale, pane.bounds);
+            if (!started) {
+                ctx.moveTo(x, y);
+                started = true;
+            } else {
+                ctx.lineTo(x, prevY); // hold the previous value to this bar's x…
+                ctx.lineTo(x, y); // …then step to the new one
+            }
+            prevX = x;
+            prevY = y;
+        }
+        void prevX;
+        ctx.stroke();
+    }
+
+    /** HLC area: a filled band between each bar's high and low, with the close as a line. */
+    private drawHlcArea(
+        ctx: CanvasRenderingContext2D,
+        bars: OHLCV[],
+        i0: number,
+        i1: number,
+        coords: CoordinateSystem,
+        pane: PaneNode,
+        lineColor: string,
+        bandColor: string,
+        width: number,
+    ): void {
+        const hi: Array<{ x: number; y: number }> = [];
+        const lo: Array<{ x: number; y: number }> = [];
+        for (let i = Math.max(0, i0 - 1); i <= i1; i += 1) {
+            const b = bars[i];
+            if (!b) continue;
+            const x = coords.logicalToX(i);
+            hi.push({ x, y: coords.priceToY(b.high, pane.scale, pane.bounds) });
+            lo.push({ x, y: coords.priceToY(b.low, pane.scale, pane.bounds) });
+        }
+        if (hi.length < 2) return;
+        ctx.fillStyle = bandColor;
+        ctx.beginPath();
+        ctx.moveTo(hi[0]!.x, hi[0]!.y);
+        for (const p of hi) ctx.lineTo(p.x, p.y);
+        for (let i = lo.length - 1; i >= 0; i -= 1) ctx.lineTo(lo[i]!.x, lo[i]!.y);
+        ctx.closePath();
+        ctx.fill();
+        this.drawPriceLine(ctx, bars, i0, i1, coords, pane, lineColor, width);
+    }
+
+    /** Columns: each close as a column from the zero line, coloured by direction. */
+    private drawColumns(
+        ctx: CanvasRenderingContext2D,
+        bars: OHLCV[],
+        i0: number,
+        i1: number,
+        coords: CoordinateSystem,
+        pane: PaneNode,
+        up: string,
+        down: string,
+        baseline: 'zero' | 'first',
+    ): void {
+        const spacing = coords.bodySpacing();
+        const w = Math.max(1, Math.round(spacing * 0.7));
+        const zeroY = coords.priceToY(0, pane.scale, pane.bounds);
+        // An instrument trading at 80,000 has no visible zero line: clamp the base to the
+        // pane edge so the columns still read as columns (and say so by starting there).
+        const baseY = baseline === 'first'
+            ? coords.priceToY(bars[Math.max(0, i0)]?.close ?? 0, pane.scale, pane.bounds)
+            : Math.min(pane.bounds.top + pane.bounds.height, Math.max(pane.bounds.top, zeroY));
+        for (let i = i0; i <= i1; i += 1) {
+            const b = bars[i];
+            if (!b) continue;
+            const y = coords.priceToY(b.close, pane.scale, pane.bounds);
+            const top = Math.min(y, baseY);
+            const h = Math.max(1 / coords.dpr, Math.abs(baseY - y));
+            ctx.fillStyle = b.close >= (bars[i - 1]?.close ?? b.open) ? up : down;
+            const x = coords.logicalToX(i);
+            ctx.fillRect(Math.round(x) - w / 2, top, w, h);
+        }
+    }
+
+    /** High-low: one column per bar spanning high→low, in a single colour (no trend bias). */
+    /**
+     * Line break: each bar is one LINE — a hairline from its open to its close, coloured by
+     * direction. Bodies would read as candles and lose the whole point (the reference draws
+     * a bare stroke per line), so the width here is a stroke, not a slot share.
+     */
+    private drawLineBreak(
+        ctx: CanvasRenderingContext2D,
+        bars: OHLCV[],
+        i0: number,
+        i1: number,
+        coords: CoordinateSystem,
+        pane: PaneNode,
+        theme: VelaTheme,
+    ): void {
+        const spacing = coords.bodySpacing();
+        const w = Math.max(1, Math.round(Math.min(3 * coords.dpr, spacing * 0.5)));
+        ctx.lineCap = 'butt';
+        for (let i = Math.max(0, i0); i <= i1; i += 1) {
+            const b = bars[i];
+            if (!b) continue;
+            const x = Math.round(coords.logicalToX(i)) + 0.5;
+            const y0 = coords.priceToY(b.open, pane.scale, pane.bounds);
+            const y1 = coords.priceToY(b.close, pane.scale, pane.bounds);
+            ctx.strokeStyle = b.close >= b.open ? theme.upColor : theme.downColor;
+            ctx.lineWidth = w;
+            ctx.beginPath();
+            ctx.moveTo(x, y0);
+            ctx.lineTo(x, y1);
+            ctx.stroke();
+        }
+    }
+
+    /**
+     * Kagi: one continuous line, each leg a vertical run at its own slot. Legs are joined
+     * by a short horizontal step (the reference draws them touching, but a step keeps two
+     * adjacent legs readable when the price barely turned). Thick (yang) legs carry the
+     * stronger weight — the whole point of the chart is that thickness encodes strength.
+     */
+    private drawKagi(
+        ctx: CanvasRenderingContext2D,
+        bars: OHLCV[],
+        i0: number,
+        i1: number,
+        coords: CoordinateSystem,
+        pane: PaneNode,
+        theme: VelaTheme,
+    ): void {
+        const yOf = (p: number): number => coords.priceToY(p, pane.scale, pane.bounds);
+        const thin = Math.max(1, Math.round(1 * coords.dpr));
+        const thick = Math.max(thin + 1, Math.round(3 * coords.dpr));
+        let prevX: number | null = null;
+        let prevY: number | null = null;
+        for (let i = Math.max(0, i0 - 1); i <= i1; i += 1) {
+            const b = bars[i];
+            if (!b) continue;
+            const x = coords.logicalToX(i);
+            const up = b.close >= b.open;
+            const color = up ? theme.upColor : theme.downColor;
+            const w = b.styleHint?.yang ? thick : thin;
+            const y0 = yOf(b.open);
+            const y1 = yOf(b.close);
+            if (prevX != null && prevY != null) {
+                // the connector: a hairline step from the last leg's end to this one's start
+                ctx.strokeStyle = color;
+                ctx.lineWidth = thin;
+                ctx.beginPath();
+                ctx.moveTo(prevX, prevY);
+                ctx.lineTo(x, y0);
+                ctx.stroke();
+            }
+            ctx.strokeStyle = color;
+            ctx.lineWidth = w;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(x, y0);
+            ctx.lineTo(x, y1);
+            ctx.stroke();
+            prevX = x;
+            prevY = y1;
+        }
+    }
+
+    /**
+     * Point & figure: one column per bar, a stack of X (rising) or O (falling) glyphs, one
+     * glyph per BOX. The glyph pitch is the pixel height of a box, so the stack always fills
+     * the column exactly however the price scale is zoomed.
+     */
+    private drawPnf(
+        ctx: CanvasRenderingContext2D,
+        bars: OHLCV[],
+        i0: number,
+        i1: number,
+        coords: CoordinateSystem,
+        pane: PaneNode,
+        theme: VelaTheme,
+    ): void {
+        const yOf = (p: number): number => coords.priceToY(p, pane.scale, pane.bounds);
+        const spacing = coords.bodySpacing();
+        const half = Math.max(2, Math.min(spacing * 0.42, 14 * coords.dpr));
+        const lw = Math.max(1, Math.round(1 * coords.dpr));
+        for (let i = Math.max(0, i0); i <= i1; i += 1) {
+            const b = bars[i];
+            if (!b) continue;
+            const x = coords.logicalToX(i);
+            const top = yOf(b.high);
+            const bottom = yOf(b.low);
+            const boxes = Math.max(1, Math.round(b.styleHint?.box ? (b.high - b.low) / b.styleHint.box : 1));
+            const pitch = (bottom - top) / boxes;
+            const rising = b.styleHint?.mark !== 'o';
+            ctx.strokeStyle = rising ? theme.upColor : theme.downColor;
+            ctx.lineWidth = lw;
+            ctx.lineCap = 'round';
+            const pad = Math.min(half, pitch / 2) * 0.86;
+            for (let k = 0; k < boxes; k += 1) {
+                const yc = top + pitch * (k + 0.5);
+                ctx.beginPath();
+                if (rising) {
+                    ctx.moveTo(x - pad, yc - pad);
+                    ctx.lineTo(x + pad, yc + pad);
+                    ctx.moveTo(x + pad, yc - pad);
+                    ctx.lineTo(x - pad, yc + pad);
+                } else {
+                    // An octagon ring reads as the reference's O at any body width.
+                    const r = pad;
+                    for (let a = 0; a < 8; a += 1) {
+                        const t = (Math.PI / 4) * a + Math.PI / 8;
+                        const px = x + Math.cos(t) * r;
+                        const py = yc + Math.sin(t) * r;
+                        if (a === 0) ctx.moveTo(px, py);
+                        else ctx.lineTo(px, py);
+                    }
+                    ctx.closePath();
+                }
+                ctx.stroke();
+            }
+        }
+    }
+
+    private drawHighLow(
+        ctx: CanvasRenderingContext2D,
+        bars: OHLCV[],
+        i0: number,
+        i1: number,
+        coords: CoordinateSystem,
+        pane: PaneNode,
+        color: string,
+    ): void {
+        const spacing = coords.bodySpacing();
+        const tier = candleTier(spacing);
+        if (tier === 'aggregate') {
+            this.drawCandlesAggregated(ctx, bars, i0, i1, coords, pane, () => color);
+            return;
+        }
+        const w = Math.max(1, Math.round(spacing * 0.7));
+        ctx.fillStyle = color;
+        for (let i = i0; i <= i1; i += 1) {
+            const b = bars[i];
+            if (!b || b.high <= b.low) continue;
+            const hY = coords.priceToY(b.high, pane.scale, pane.bounds);
+            const lY = coords.priceToY(b.low, pane.scale, pane.bounds);
+            ctx.fillRect(Math.round(coords.logicalToX(i)) - w / 2, hY, w, Math.max(1 / coords.dpr, lY - hY));
+        }
+    }
+
+    /** HLC bars: the OHLC bar without its open tick (high-low stick + close tick). */
+    private drawHlcBars(
+        ctx: CanvasRenderingContext2D,
+        bars: OHLCV[],
+        i0: number,
+        i1: number,
+        coords: CoordinateSystem,
+        pane: PaneNode,
+        up: string,
+        down: string,
+        barColors: ReadonlyMap<number, string>,
+    ): void {
+        const spacing = coords.bodySpacing();
+        const tier = candleTier(spacing);
+        if (tier === 'aggregate') {
+            this.drawCandlesAggregated(ctx, bars, i0, i1, coords, pane, (b) => barColors.get(b.time) ?? (b.close >= b.open ? up : down));
+            return;
+        }
+        const tickW = Math.max(1, Math.round(spacing * 0.35));
+        const drawTicks = tier === 'full';
+        ctx.lineWidth = 1;
+        for (let i = i0; i <= i1; i += 1) {
+            const b = bars[i];
+            if (!b || b.high <= b.low) continue;
+            const x = Math.round(coords.logicalToX(i)) + 0.5;
+            const color = barColors.get(b.time) ?? (b.close >= b.open ? up : down);
+            const hY = coords.priceToY(b.high, pane.scale, pane.bounds);
+            const lY = coords.priceToY(b.low, pane.scale, pane.bounds);
+            ctx.strokeStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(x, hY);
+            ctx.lineTo(x, lY);
+            if (drawTicks) {
+                const cY = coords.priceToY(b.close, pane.scale, pane.bounds);
+                ctx.moveTo(x, cY);
+                ctx.lineTo(x + tickW, cY);
+            }
+            ctx.stroke();
         }
     }
 

@@ -527,7 +527,7 @@ describe('buildToolbar grouping', () => {
         const fibGroup = definition.groups.find((g) => g.id === 'fibonacci-gann');
         expect(fibGroup?.sections?.map((s) => s.label)).toEqual(['Fibonacci', 'Price Action', 'Gann', 'Geometry']);
         expect(fibGroup?.sections?.find((s) => s.label === 'Price Action')?.tools.map((t) => t.type)).toEqual(['fairvaluegap', 'orderblock', 'liquidity']);
-        expect(fibGroup?.sections?.find((s) => s.label === 'Gann')?.tools.map((t) => t.type)).toEqual(['gannfan', 'gannbox', 'gannsquare']);
+        expect(fibGroup?.sections?.find((s) => s.label === 'Gann')?.tools.map((t) => t.type)).toEqual(['gannfan', 'gannbox', 'gannsquare', 'gannsquarefixed']); // fixed added in round 22
         expect(fibGroup?.sections?.find((s) => s.label === 'Geometry')?.tools.map((t) => t.type)).toEqual([
             'dedekind',
             'sonic',
@@ -562,6 +562,7 @@ describe('buildToolbar grouping', () => {
             'callout',
             'note',
             'pricenote',
+            'pin', // added in round 22
             'comment',
             'pricelabel',
             'signpost',
@@ -573,9 +574,16 @@ describe('buildToolbar grouping', () => {
         const measureGroup = definition.groups.find((g) => g.id === 'measurements');
         expect(measureGroup?.label).toBe('Measurements');
         expect(measureGroup?.tools.map((t) => t.type)).toEqual(expect.arrayContaining(['datepricerange', 'position']));
-        // Long/Short Position is the group's default (tools[0] arms when the button is clicked directly).
-        expect(measureGroup?.tools[0]?.type).toBe('position');
-        expect(measureGroup?.sections?.find((s) => s.label === 'Measurements')?.tools.map((t) => t.type)).toEqual(['position', 'datepricerange', 'magnifier']);
+        // The combined ruler is the group's default (tools[0] arms when the button is
+        // clicked directly) — the reference platform's Measure button does the same.
+        expect(measureGroup?.tools[0]?.type).toBe('datepricerange');
+        expect(measureGroup?.sections?.find((s) => s.label === 'Measurements')?.tools.map((t) => t.type)).toEqual([
+            'datepricerange',
+            'pricerange',
+            'daterange',
+            'position',
+            'magnifier',
+        ]);
     });
     it('explicit groups resolve type keys + drop unknown ones', () => {
         const { definition } = buildToolbar({

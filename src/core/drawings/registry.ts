@@ -64,6 +64,11 @@ import { GoldenSonic, GoldenSupersonic } from './types/GoldenMach';
 import { XABCD } from './types/XABCD';
 import { ABCDPattern } from './types/ABCDPattern';
 import { ElliottImpulse } from './types/ElliottImpulse';
+import { ElliottTriangle } from './types/ElliottTriangle';
+import { ElliottDoubleCombo } from './types/ElliottDoubleCombo';
+import { ElliottTripleCombo } from './types/ElliottTripleCombo';
+import { TrianglePattern } from './types/TrianglePattern';
+import { ThreeDrives } from './types/ThreeDrives';
 import { ElliottCorrection } from './types/ElliottCorrection';
 import { HeadShoulders } from './types/HeadShoulders';
 import { Gartley } from './types/Gartley';
@@ -72,6 +77,12 @@ import { Butterfly } from './types/Butterfly';
 import { Crab } from './types/Crab';
 import { Shark } from './types/Shark';
 import { Cypher } from './types/Cypher';
+import { DoubleCurve } from './types/DoubleCurve';
+import { GannSquareFixed } from './types/GannSquareFixed';
+import { FibPitchfan } from './types/FibPitchfan';
+import { Pin } from './types/Pin';
+import { PriceRange } from './types/PriceRange';
+import { DateRange } from './types/DateRange';
 import { DatePriceRange } from './types/DatePriceRange';
 import { PositionTool } from './types/PositionTool';
 import { Magnifier } from './types/Magnifier';
@@ -335,6 +346,22 @@ registerDrawingType({
     create: (init) => new Signpost(init),
 });
 
+// A pin head on the exact price with the note hanging off it: the annotation a trader
+// reaches for when the LEVEL is the point and the words are secondary.
+const PIN_ICON = svg24(
+    '<path d="M12 21c4-6 6-8.4 6-11a6 6 0 1 0-12 0c0 2.6 2 5 6 11Z"/><circle cx="12" cy="10" r="2.2"/>',
+);
+
+registerDrawingType({
+    type: 'pin',
+    group: 'annotations',
+    label: 'Pin',
+    icon: PIN_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid', fillColor: `${DEFAULT_DRAWING_COLOR}d9` },
+    placementHint: 'Click the level, then drag the note off it',
+    create: (init) => new Pin(init),
+});
+
 // ── lines & channels ──
 const PARALLEL_ICON =
     svg24('<line x1="3" y1="16" x2="21" y2="8"/><line x1="3" y1="21" x2="21" y2="13"/>');
@@ -554,6 +581,20 @@ registerDrawingType({
     create: (init) => new Curve(init),
 });
 
+// The two-bend sibling: one more control point, its own glyph (an S rather than an arc),
+// and four anchors in the reference's Price 1/2/3/4 order.
+const DOUBLE_CURVE_ICON = svg24('<path d="M3 18c3 0 3-10 6.5-10S13 14 16 14s3-8 5-8"/>');
+
+registerDrawingType({
+    type: 'doublecurve',
+    group: 'shapes',
+    label: 'Double curve',
+    icon: DOUBLE_CURVE_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 2, lineStyle: 'solid' },
+    placementHint: 'Click the start, then the end, then pull each bend into place',
+    create: (init) => new DoubleCurve(init),
+});
+
 registerDrawingType({
     type: 'arrowmarkup',
     group: 'shapes',
@@ -645,6 +686,22 @@ registerDrawingType({
     icon: FIB_FAN_ICON,
     defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
     create: (init) => new FibFan(init),
+});
+
+// Three anchors, rays fanning from the trend origin through the fib divisions of the
+// first correction — the reference's "Pitchfan", which sits with the Fibonacci tools.
+const FIB_PITCHFAN_ICON = svg24(
+    '<path d="M4 20 9 4" opacity="0.9"/><path d="M4 20 14 5"/><path d="M4 20 19 8"/><path d="M4 20 20 18" opacity="0.75"/>',
+);
+
+registerDrawingType({
+    type: 'fibpitchfan',
+    group: 'fibonacci',
+    label: 'Fib Pitchfan',
+    icon: FIB_PITCHFAN_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
+    placementHint: 'Trend origin, trend extreme, then the first correction extreme',
+    create: (init) => new FibPitchfan(init),
 });
 
 registerDrawingType({
@@ -771,6 +828,24 @@ registerDrawingType({
     create: (init) => new GannSquare(init),
 });
 
+// Same grid + fan + arcs, squared in PIXELS instead of chart units (the reference ships
+// both because the choice is analytical: fixed sides need a locked scale).
+const GANN_SQUARE_FIXED_ICON = svg24(
+    '<rect x="4" y="4" width="16" height="16"/>' +
+        '<path d="M4 12h16M12 4v16" opacity="0.55"/>' +
+        '<path d="M4 20 20 4" opacity="0.9"/>',
+);
+
+registerDrawingType({
+    type: 'gannsquarefixed',
+    group: 'fibonacci',
+    label: 'Gann Square Fixed',
+    icon: GANN_SQUARE_FIXED_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
+    placementHint: 'Drag the width — the height follows in equal pixels',
+    create: (init) => new GannSquareFixed(init),
+});
+
 const DEDEKIND_ICON = svg24(
     '<path d="M2 20h20"/><path d="M4 20a8 8 0 0 1 16 0" opacity="0.9"/>' +
         '<path d="M6 20a4 4 0 0 1 8 0" opacity="0.75"/><path d="M10 20a2 2 0 0 1 4 0" opacity="0.6"/>' +
@@ -846,6 +921,11 @@ registerDrawingType({
 const XABCD_ICON = svg24('<path d="M3 18 7 8 11 14 15 6 20 16"/>');
 const ABCD_ICON = svg24('<path d="M4 17 9 7 14 15 20 5"/>');
 const ELLIOTT_IMPULSE_ICON = svg24('<path d="M3 19 8 9 12 13 17 5 21 9"/>');
+const ELLIOTT_TRIANGLE_ICON = svg24('<path d="M3 8 8 17 13 9 17 15 21 10"/><path d="M3 8 21 10" opacity=".55"/><path d="M8 17 17 15" opacity=".55"/>');
+const ELLIOTT_DOUBLE_ICON = svg24('<path d="M3 17 7 9 11 15 16 6 21 12"/>');
+const ELLIOTT_TRIPLE_ICON = svg24('<path d="M2 18 6 10 9 15 13 8 16 14 20 6"/>');
+const TRIANGLE_PATTERN_ICON = svg24('<path d="M3 7 9 18 14 9 18 16 21 8"/>');
+const THREE_DRIVES_ICON = svg24('<path d="M3 18 6 8 9 14 12 6 15 12 18 4 21 10"/>');
 const ELLIOTT_CORRECTION_ICON = svg24('<path d="M4 7 11 16 20 9"/>');
 const HEAD_SHOULDERS_ICON = svg24('<path d="M3 18 6 12 9 16 12 5 15 16 18 12 21 18"/>');
 
@@ -886,6 +966,51 @@ registerDrawingType({
 });
 
 registerDrawingType({
+    type: 'elliotttriangle',
+    group: 'patterns',
+    label: 'Elliott Triangle Wave (ABCDE)',
+    icon: ELLIOTT_TRIANGLE_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
+    create: (init) => new ElliottTriangle(init),
+});
+
+registerDrawingType({
+    type: 'elliottdoublecombo',
+    group: 'patterns',
+    label: 'Elliott Double Combo Wave (WXY)',
+    icon: ELLIOTT_DOUBLE_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
+    create: (init) => new ElliottDoubleCombo(init),
+});
+
+registerDrawingType({
+    type: 'elliottriplecombo',
+    group: 'patterns',
+    label: 'Elliott Triple Combo Wave (WXYXZ)',
+    icon: ELLIOTT_TRIPLE_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
+    create: (init) => new ElliottTripleCombo(init),
+});
+
+registerDrawingType({
+    type: 'trianglepattern',
+    group: 'patterns',
+    label: 'Triangle Pattern',
+    icon: TRIANGLE_PATTERN_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
+    create: (init) => new TrianglePattern(init),
+});
+
+registerDrawingType({
+    type: 'threedrives',
+    group: 'patterns',
+    label: 'Three Drives Pattern',
+    icon: THREE_DRIVES_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
+    create: (init) => new ThreeDrives(init),
+});
+
+registerDrawingType({
     type: 'headshoulders',
     group: 'patterns',
     label: 'Head & Shoulders',
@@ -916,6 +1041,32 @@ registerDrawingType({
     icon: MEASURE_ICON,
     defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
     create: (init) => new DatePriceRange(init),
+});
+
+// The two halves of the ruler, in TradingView's order: price-only, then date-only.
+// Separate glyphs so the flyout reads at a glance — a vertical bracket vs. a horizontal
+// one, both with the diagonal the combined ruler carries.
+const PRICE_RANGE_ICON = svg24('<path d="M12 5v14"/><path d="M8.5 5h7M8.5 19h7"/><path d="M15.5 9.5 12 6l-3.5 3.5" opacity="0.55"/>');
+const DATE_RANGE_ICON = svg24('<path d="M5 12h14"/><path d="M5 8.5v7M19 8.5v7"/><path d="M9.5 15.5 6 12l3.5-3.5" opacity="0.55"/>');
+
+registerDrawingType({
+    type: 'pricerange',
+    group: 'measure',
+    label: 'Price Range',
+    icon: PRICE_RANGE_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
+    placementHint: 'Drag to measure a move in price',
+    create: (init) => new PriceRange(init),
+});
+
+registerDrawingType({
+    type: 'daterange',
+    group: 'measure',
+    label: 'Date Range',
+    icon: DATE_RANGE_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
+    placementHint: 'Drag to measure a move in time',
+    create: (init) => new DateRange(init),
 });
 
 // ── positions ──

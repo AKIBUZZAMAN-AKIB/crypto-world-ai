@@ -5,6 +5,7 @@ import { Tooltip } from '../ui/components/tooltip';
 import { LayoutPicker, type LayoutPickerShape } from './layout-picker';
 import { iconEl, iconMarkup, registerIcon } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
+import { installSmoothScrolling } from '../ui/scrolling';
 import { chartType } from '../chart-types/registry';
 import { topbarActionOverride, widgetActions, type SidePanelButton, type WidgetContext } from './contributions';
 import { resolveTopbarComposition, topbarHas, TOPBAR_BUILTIN_IDS, type ResolvedTopbarComposition, type TopbarComposition } from './topbar-composition';
@@ -150,6 +151,15 @@ const BUILTIN_STYLE_LABELS: Record<string, string> = {
     line: 'Line',
     area: 'Area',
     baseline: 'Baseline',
+    heikinashi: 'Heikin Ashi',
+    'hollow-candles': 'Hollow candles',
+    'volume-candles': 'Volume candles',
+    'line-markers': 'Line with markers',
+    stepline: 'Step line',
+    'hlc-area': 'HLC area',
+    columns: 'Columns',
+    'high-low': 'High-low',
+    'hlc-bars': 'HLC bars',
 };
 
 export function priceStyleLabel(id: string): string {
@@ -254,6 +264,10 @@ export interface TopbarOptions {
         onDeleteLayout?: (name: string) => void;
         onRenameLayout?: (from: string, to: string) => boolean;
         onExportLayout?: (name: string) => string | null;
+        /** Copy a link that carries THIS one saved layout (Tier-2 #8). */
+        onShareLayout?: (name: string) => Promise<string | null>;
+        /** Write the active chart's bars as CSV (visible window or everything loaded). */
+        onExportData?: (scope: 'visible' | 'all', timeFormat: 'iso' | 'unix') => { rows: number; filename: string } | null;
         onImportLayout?: (json: string) => string | null;
         /** Copy a permalink for the whole workspace (null = clipboard refused). */
         onCopyLink?: () => Promise<string | null>;
@@ -350,6 +364,7 @@ export class Topbar {
         const vis = (id: string): boolean => topbarHas(this.comp, id);
         const doc = host.ownerDocument;
         injectStyles(STYLE_ID, CSS, doc);
+        installSmoothScrolling(doc);
 
         this.el = doc.createElement('div');
         this.el.className = 'vela-widget-topbar';
@@ -572,6 +587,8 @@ export class Topbar {
                 ...(layout.onDeleteLayout ? { onDeleteLayout: (name) => layout.onDeleteLayout?.(name) } : {}),
                 ...(layout.onRenameLayout ? { onRenameLayout: (from, to) => layout.onRenameLayout?.(from, to) ?? false } : {}),
                 ...(layout.onExportLayout ? { onExportLayout: (name) => layout.onExportLayout?.(name) ?? null } : {}),
+                ...(layout.onShareLayout ? { onShareLayout: (name: string) => layout.onShareLayout?.(name) ?? Promise.resolve(null) } : {}),
+                ...(layout.onExportData ? { onExportData: layout.onExportData } : {}),
                 ...(layout.onImportLayout ? { onImportLayout: (json) => layout.onImportLayout?.(json) ?? null } : {}),
                 ...(layout.onCopyLink ? { onCopyLink: () => layout.onCopyLink?.() ?? Promise.resolve(null) } : {}),
                 ...(layout.linkGroup ? { linkGroup: () => layout.linkGroup?.() ?? null } : {}),

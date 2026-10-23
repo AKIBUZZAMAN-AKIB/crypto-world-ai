@@ -1,0 +1,16 @@
+{
+  "barsInChart": 500,
+  "csvRows": 500,
+  "rowsMatchChart": true,
+  "isoOk": true,
+  "unixOk": true,
+  "visibleSubset": true,
+  "colsOk": true,
+  "filename": "BTCUSDT_60_all_bars.csv",
+  "errors": [
+    "Access to fetch at 'https://api.binance.com/api/v3/ping' from origin 'http://127.0.0.1:5190' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "Failed to load resource: net::ERR_FAILED",
+    "Access to fetch at 'https://fapi.binance.com/fapi/v1/exchangeInfo' from origin 'http://127.0.0.1:5190' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "Failed to load resource: net::ERR_FAILED"
+  ]
+}

@@ -8,6 +8,7 @@ import type { CoordinateSystem } from '../core/CoordinateSystem';
 import type { SceneGraph, PaneNode } from '../core/SceneGraph';
 import { candleTier, wickWidth, candleGeometry, snapY, aggregateCandleColumns } from './candle-lod';
 import { BASELINE_TOP_LINE, BASELINE_BOTTOM_LINE, BASELINE_FILL_ALPHA, BASELINE_FILL_ALPHA_FAR, withAlpha as cssWithAlpha, effectiveCandlePaint } from '../core/chartConfig';
+import { paintFamily, volumeWidthShare } from '../../../core/price-styles/variants';
 import type { IRenderBackend } from './IRenderBackend';
 import { Batch, type RGBA } from './gl/Batch';
 import { parseColor } from './gl/color';
@@ -678,7 +679,41 @@ export class WebGL2Backend implements IRenderBackend {
         if (scene.basePainting === 'none') return; // plugin style fully replaces the price series
         const bars = scene.bars;
         const st = scene.style;
-        switch (scene.priceStyle) {
+        switch (paintFamily(scene.priceStyle)) {
+            // ── the painting variants (mirrors Canvas2dBackend.drawPriceSeries) ──
+            case 'hollow-candles':
+                this.emitHollowCandles(b, scene, bars, i0, i1, coords, pane, theme, barColors);
+                return;
+            case 'volume-candles':
+                this.emitVolumeCandles(b, scene, bars, i0, i1, coords, pane, theme, barColors);
+                return;
+            case 'line-markers':
+                this.emitPriceLineWithMarkers(b, bars, i0, i1, coords, pane, parseColor(st.line.color ?? theme.upColor), st.line.width, st.variants.markerRadius);
+                return;
+            case 'stepline':
+                this.emitStepLine(b, bars, i0, i1, coords, pane, parseColor(st.line.color ?? theme.upColor), st.line.width);
+                return;
+            case 'hlc-area':
+                this.emitHlcArea(b, bars, i0, i1, coords, pane, parseColor(st.area.lineColor ?? theme.upColor), parseColor(st.area.topColor ?? st.area.lineColor ?? theme.upColor), st.area.width);
+                return;
+            case 'columns':
+                this.emitColumns(b, bars, i0, i1, coords, pane, parseColor(st.bars.upColor ?? theme.upColor), parseColor(st.bars.downColor ?? theme.downColor), st.variants.columnBaseline);
+                return;
+            case 'high-low':
+                this.emitHighLow(b, bars, i0, i1, coords, pane, st.variants.highLowColor ?? st.line.color ?? theme.upColor);
+                return;
+            case 'hlc-bars':
+                this.emitHlcBars(b, bars, i0, i1, coords, pane, st.bars.upColor ?? theme.upColor, st.bars.downColor ?? theme.downColor, barColors);
+                return;
+            case 'kagi':
+                this.emitKagi(b, bars, i0, i1, coords, pane, theme);
+                return;
+            case 'pnf':
+                this.emitPnf(b, bars, i0, i1, coords, pane, theme);
+                return;
+            case 'linebreak':
+                this.emitLineBreak(b, bars, i0, i1, coords, pane, theme);
+                return;
             case 'bars':
                 this.emitBars(b, bars, i0, i1, coords, pane, st.bars.upColor ?? theme.upColor, st.bars.downColor ?? theme.downColor, barColors);
                 return;
@@ -850,6 +885,298 @@ export class WebGL2Backend implements IRenderBackend {
                 b.seg(xCross, baseY, c.x, c.y, bs.width, cUp ? topLine : bottomLine);
             } else {
                 b.seg(a.x, a.y, c.x, c.y, bs.width, aUp ? topLine : bottomLine);
+            }
+        }
+    }
+
+    // ── painting variants (mirror of Canvas2dBackend's painters) ────────────────
+    // Same geometry helpers as `emitCandles`, so switching a style never shifts the
+    // chart by a fraction of a pixel between backends.
+
+    /** Direction ink, honouring a `barcolor()` override and the previous-close rule. */
+    private variantInk(
+        bar: OHLCV,
+        prev: OHLCV | undefined,
+        up: string,
+        down: string,
+        byPrevClose: boolean,
+        barColors: ReadonlyMap<number, string>,
+    ): string {
+        return barColors.get(bar.time) ?? ((byPrevClose && prev ? bar.close >= prev.close : bar.close >= bar.open) ? up : down);
+    }
+
+    private emitHollowCandles(b: Batch, scene: SceneGraph, bars: OHLCV[], i0: number, i1: number, coords: CoordinateSystem, pane: PaneNode, theme: VelaTheme, barColors: ReadonlyMap<number, string>): void {
+        const spacing = coords.bodySpacing();
+        const tier = candleTier(spacing);
+        const paint = effectiveCandlePaint(scene.style.candle, scene.candleOverride, theme.upColor, theme.downColor);
+        const cs = paint.candle;
+        const hollowUp = scene.style.variants.hollowUp;
+        if (tier !== 'full') {
+            this.emitCandlesAggregated(b, bars, i0, i1, coords, pane, (bar) => barColors.get(bar.time) ?? (bar.close >= bar.open ? paint.up : paint.down));
+            return;
+        }
+        for (let i = i0; i <= i1; i += 1) {
+            const bar = bars[i];
+            if (!bar || bar.high <= bar.low) continue;
+            const g = candleGeometry(coords.logicalToX(i), spacing, coords.dpr, this.candleBodyScale);
+            const isUp = bar.close >= bar.open;
+            const colorStr = barColors.get(bar.time) ?? (isUp ? paint.up : paint.down);
+            const c = parseColor(colorStr);
+            const oY = coords.priceToY(bar.open, pane.scale, pane.bounds);
+            const cY = coords.priceToY(bar.close, pane.scale, pane.bounds);
+            const top = snapY(Math.min(oY, cY), coords.dpr);
+            const bodyH = Math.max(1 / coords.dpr, snapY(Math.max(oY, cY), coords.dpr) - top);
+            if (cs.wickVisible) {
+                const hY = snapY(coords.priceToY(bar.high, pane.scale, pane.bounds), coords.dpr);
+                const lY = snapY(coords.priceToY(bar.low, pane.scale, pane.bounds), coords.dpr);
+                b.alpha = this.candleStructureAlpha;
+                const wCol = parseColor((isUp ? cs.wickUpColor : cs.wickDownColor) ?? colorStr);
+                b.rect(g.wickX, hY, g.wickW, Math.max(0, top - hY), wCol);
+                b.rect(g.wickX, top + bodyH, g.wickW, Math.max(0, lY - (top + bodyH)), wCol);
+            }
+            const hollow = hollowUp && isUp;
+            if (!hollow && cs.bodyVisible) {
+                b.alpha = this.candleBodyAlpha;
+                b.rect(g.bodyX, top, g.bodyW, bodyH, c);
+            }
+            // The outline is the style: always stroked, unlike a plain candle where the
+            // border is optional.
+            b.alpha = this.candleStructureAlpha;
+            const bord = parseColor((isUp ? cs.borderUpColor : cs.borderDownColor) ?? colorStr);
+            b.rectStroke(g.bodyX + 0.5, top + 0.5, Math.max(0, g.bodyW - 1), Math.max(0, bodyH - 1), 1, bord);
+        }
+    }
+
+    private emitVolumeCandles(b: Batch, scene: SceneGraph, bars: OHLCV[], i0: number, i1: number, coords: CoordinateSystem, pane: PaneNode, theme: VelaTheme, barColors: ReadonlyMap<number, string>): void {
+        const spacing = coords.bodySpacing();
+        const tier = candleTier(spacing);
+        const paint = effectiveCandlePaint(scene.style.candle, scene.candleOverride, theme.upColor, theme.downColor);
+        const vs = scene.style.variants;
+        if (tier !== 'full') {
+            this.emitCandlesAggregated(b, bars, i0, i1, coords, pane, (bar) => this.variantInk(bar, bars[bars.indexOf(bar) - 1], paint.up, paint.down, vs.volumeColorByPrevClose, barColors));
+            return;
+        }
+        let maxVol = 0;
+        for (let i = i0; i <= i1; i += 1) {
+            const v = bars[i]?.volume ?? 0;
+            if (v > maxVol) maxVol = v;
+        }
+        for (let i = i0; i <= i1; i += 1) {
+            const bar = bars[i];
+            if (!bar || bar.high <= bar.low) continue;
+            const colorStr = this.variantInk(bar, bars[i - 1], paint.up, paint.down, vs.volumeColorByPrevClose, barColors);
+            const c = parseColor(colorStr);
+            const share = volumeWidthShare(bar.volume ?? 0, maxVol, vs.volumeMinWidthPct);
+            const bodyW = Math.max(1 / coords.dpr, Math.round(spacing * share * coords.dpr) / coords.dpr);
+            const center = Math.round(coords.logicalToX(i) * coords.dpr) / coords.dpr;
+            const bodyX = center - bodyW / 2;
+            const hY = snapY(coords.priceToY(bar.high, pane.scale, pane.bounds), coords.dpr);
+            const lY = snapY(coords.priceToY(bar.low, pane.scale, pane.bounds), coords.dpr);
+            const top = snapY(coords.priceToY(Math.max(bar.open, bar.close), pane.scale, pane.bounds), coords.dpr);
+            const bottom = snapY(coords.priceToY(Math.min(bar.open, bar.close), pane.scale, pane.bounds), coords.dpr);
+            const bodyH = Math.max(1 / coords.dpr, bottom - top);
+            const wickW = Math.max(1 / coords.dpr, Math.min(1.5, bodyW / 2));
+            b.alpha = this.candleStructureAlpha;
+            b.rect(center - wickW / 2, hY, wickW, Math.max(0, top - hY), c);
+            b.rect(center - wickW / 2, top + bodyH, wickW, Math.max(0, lY - (top + bodyH)), c);
+            if (paint.candle.bodyVisible) {
+                b.alpha = this.candleBodyAlpha;
+                b.rect(bodyX, top, bodyW, bodyH, c);
+            }
+            if (paint.candle.borderVisible) {
+                b.alpha = this.candleStructureAlpha;
+                b.rectStroke(bodyX + 0.5, top + 0.5, Math.max(0, bodyW - 1), Math.max(0, bodyH - 1), 1, c);
+            }
+        }
+    }
+
+    private emitPriceLineWithMarkers(b: Batch, bars: OHLCV[], i0: number, i1: number, coords: CoordinateSystem, pane: PaneNode, c: RGBA, width: number, radius: number): void {
+        this.emitPriceLine(b, bars, i0, i1, coords, pane, c, width);
+        if (coords.bodySpacing() < radius * 2.4) return;
+        const segs = joinSegments(radius);
+        for (let i = Math.max(0, i0); i <= i1; i += 1) {
+            const bar = bars[i];
+            if (!bar) continue;
+            b.circle(coords.logicalToX(i), coords.priceToY(bar.close, pane.scale, pane.bounds), radius, c, segs);
+        }
+    }
+
+    private emitStepLine(b: Batch, bars: OHLCV[], i0: number, i1: number, coords: CoordinateSystem, pane: PaneNode, c: RGBA, width: number): void {
+        let have = false;
+        let px = 0;
+        let py = 0;
+        for (let i = Math.max(0, i0 - 1); i <= i1; i += 1) {
+            const bar = bars[i];
+            if (!bar) {
+                have = false;
+                continue;
+            }
+            const x = coords.logicalToX(i);
+            const y = coords.priceToY(bar.close, pane.scale, pane.bounds);
+            if (have) {
+                // hold the previous value to this bar's x, then step
+                b.seg(px, py, x, py, width, c);
+                b.seg(x, py, x, y, width, c);
+            }
+            px = x;
+            py = y;
+            have = true;
+        }
+    }
+
+    private emitHlcArea(b: Batch, bars: OHLCV[], i0: number, i1: number, coords: CoordinateSystem, pane: PaneNode, line: RGBA, band: RGBA, width: number): void {
+        let prevHi: { x: number; y: number } | null = null;
+        let prevLo: { x: number; y: number } | null = null;
+        const tops: Array<{ x: number; y: number }> = [];
+        const bots: Array<{ x: number; y: number }> = [];
+        for (let i = Math.max(0, i0 - 1); i <= i1; i += 1) {
+            const bar = bars[i];
+            if (!bar) continue;
+            const x = coords.logicalToX(i);
+            const hi = { x, y: coords.priceToY(bar.high, pane.scale, pane.bounds) };
+            const lo = { x, y: coords.priceToY(bar.low, pane.scale, pane.bounds) };
+            if (prevHi && prevLo) b.quad(prevHi.x, prevHi.y, x, hi.y, x, lo.y, prevLo.x, prevLo.y, band);
+            tops.push(hi);
+            bots.push(lo);
+            prevHi = hi;
+            prevLo = lo;
+        }
+        if (tops.length < 2) return;
+        this.emitPriceLine(b, bars, i0, i1, coords, pane, line, width);
+    }
+
+    private emitColumns(b: Batch, bars: OHLCV[], i0: number, i1: number, coords: CoordinateSystem, pane: PaneNode, up: RGBA, down: RGBA, baseline: 'zero' | 'first'): void {
+        const spacing = coords.bodySpacing();
+        const w = Math.max(1, Math.round(spacing * 0.7));
+        const zeroY = coords.priceToY(0, pane.scale, pane.bounds);
+        const paneTop = pane.bounds.top;
+        const paneBottom = pane.bounds.top + pane.bounds.height;
+        const baseY = baseline === 'first'
+            ? coords.priceToY(bars[Math.max(0, i0)]?.close ?? 0, pane.scale, pane.bounds)
+            : Math.min(paneBottom, Math.max(paneTop, zeroY));
+        for (let i = i0; i <= i1; i += 1) {
+            const bar = bars[i];
+            if (!bar) continue;
+            const y = coords.priceToY(bar.close, pane.scale, pane.bounds);
+            const top = Math.min(y, baseY);
+            const h = Math.max(1 / coords.dpr, Math.abs(baseY - y));
+            const c = bar.close >= (bars[i - 1]?.close ?? bar.open) ? up : down;
+            b.rect(Math.round(coords.logicalToX(i)) - w / 2, top, w, h, c);
+        }
+    }
+
+    private emitHighLow(b: Batch, bars: OHLCV[], i0: number, i1: number, coords: CoordinateSystem, pane: PaneNode, colorStr: string): void {
+        const spacing = coords.bodySpacing();
+        if (candleTier(spacing) === 'aggregate') {
+            this.emitCandlesAggregated(b, bars, i0, i1, coords, pane, () => colorStr);
+            return;
+        }
+        const c = parseColor(colorStr);
+        const w = Math.max(1, Math.round(spacing * 0.7));
+        for (let i = i0; i <= i1; i += 1) {
+            const bar = bars[i];
+            if (!bar || bar.high <= bar.low) continue;
+            const hY = coords.priceToY(bar.high, pane.scale, pane.bounds);
+            const lY = coords.priceToY(bar.low, pane.scale, pane.bounds);
+            b.rect(Math.round(coords.logicalToX(i)) - w / 2, hY, w, Math.max(1 / coords.dpr, lY - hY), c);
+        }
+    }
+
+    /** Line break — mirrored in Canvas2dBackend.drawLineBreak (one stroke per line). */
+    private emitLineBreak(b: Batch, bars: OHLCV[], i0: number, i1: number, coords: CoordinateSystem, pane: PaneNode, theme: VelaTheme): void {
+        const spacing = coords.bodySpacing();
+        const w = Math.max(1, Math.min(3 * coords.dpr, spacing * 0.5));
+        for (let i = Math.max(0, i0); i <= i1; i += 1) {
+            const bar = bars[i];
+            if (!bar) continue;
+            const x = coords.logicalToX(i);
+            const c = parseColor(bar.close >= bar.open ? theme.upColor : theme.downColor);
+            b.seg(x, coords.priceToY(bar.open, pane.scale, pane.bounds), x, coords.priceToY(bar.close, pane.scale, pane.bounds), w, c);
+        }
+    }
+
+    /** Kagi — mirrored in Canvas2dBackend.drawKagi (one segment per leg + a connector). */
+    private emitKagi(b: Batch, bars: OHLCV[], i0: number, i1: number, coords: CoordinateSystem, pane: PaneNode, theme: VelaTheme): void {
+        const yOf = (p: number): number => coords.priceToY(p, pane.scale, pane.bounds);
+        const thin = Math.max(1, 1 * coords.dpr);
+        const thick = Math.max(thin + 1, 3 * coords.dpr);
+        let prevX: number | null = null;
+        let prevY: number | null = null;
+        for (let i = Math.max(0, i0 - 1); i <= i1; i += 1) {
+            const bar = bars[i];
+            if (!bar) continue;
+            const x = coords.logicalToX(i);
+            const up = bar.close >= bar.open;
+            const c = parseColor(up ? theme.upColor : theme.downColor);
+            const w = bar.styleHint?.yang ? thick : thin;
+            const y0 = yOf(bar.open);
+            const y1 = yOf(bar.close);
+            if (prevX != null && prevY != null) b.seg(prevX, prevY, x, y0, thin, c);
+            b.seg(x, y0, x, y1, w, c);
+            prevX = x;
+            prevY = y1;
+        }
+    }
+
+    /** Point & figure — mirrored in Canvas2dBackend.drawPnf (X = 2 segs, O = an 8-gon ring). */
+    private emitPnf(b: Batch, bars: OHLCV[], i0: number, i1: number, coords: CoordinateSystem, pane: PaneNode, theme: VelaTheme): void {
+        const yOf = (p: number): number => coords.priceToY(p, pane.scale, pane.bounds);
+        const spacing = coords.bodySpacing();
+        const half = Math.max(2, Math.min(spacing * 0.42, 14 * coords.dpr));
+        const lw = Math.max(1, 1 * coords.dpr);
+        for (let i = Math.max(0, i0); i <= i1; i += 1) {
+            const bar = bars[i];
+            if (!bar) continue;
+            const x = coords.logicalToX(i);
+            const top = yOf(bar.high);
+            const bottom = yOf(bar.low);
+            const boxes = Math.max(1, Math.round(bar.styleHint?.box ? (bar.high - bar.low) / bar.styleHint.box : 1));
+            const pitch = (bottom - top) / boxes;
+            const rising = bar.styleHint?.mark !== 'o';
+            const c = parseColor(rising ? theme.upColor : theme.downColor);
+            const pad = Math.min(half, pitch / 2) * 0.86;
+            for (let k = 0; k < boxes; k += 1) {
+                const yc = top + pitch * (k + 0.5);
+                if (rising) {
+                    b.seg(x - pad, yc - pad, x + pad, yc + pad, lw, c);
+                    b.seg(x + pad, yc - pad, x - pad, yc + pad, lw, c);
+                } else {
+                    let px = 0;
+                    let py = 0;
+                    for (let a = 0; a < 8; a += 1) {
+                        const t = (Math.PI / 4) * a + Math.PI / 8;
+                        const nx = x + Math.cos(t) * pad;
+                        const ny = yc + Math.sin(t) * pad;
+                        if (a > 0) b.seg(px, py, nx, ny, lw, c);
+                        px = nx;
+                        py = ny;
+                    }
+                    b.seg(px, py, x + Math.cos(Math.PI / 8) * pad, yc + Math.sin(Math.PI / 8) * pad, lw, c);
+                }
+            }
+        }
+    }
+
+    private emitHlcBars(b: Batch, bars: OHLCV[], i0: number, i1: number, coords: CoordinateSystem, pane: PaneNode, up: string, down: string, barColors: ReadonlyMap<number, string>): void {
+        const spacing = coords.bodySpacing();
+        const tier = candleTier(spacing);
+        if (tier === 'aggregate') {
+            this.emitCandlesAggregated(b, bars, i0, i1, coords, pane, (bar) => barColors.get(bar.time) ?? (bar.close >= bar.open ? up : down));
+            return;
+        }
+        const tickW = Math.max(1, Math.round(spacing * 0.35));
+        const drawTicks = tier === 'full';
+        for (let i = i0; i <= i1; i += 1) {
+            const bar = bars[i];
+            if (!bar || bar.high <= bar.low) continue;
+            const x = Math.round(coords.logicalToX(i));
+            const c = parseColor(barColors.get(bar.time) ?? (bar.close >= bar.open ? up : down));
+            const hY = coords.priceToY(bar.high, pane.scale, pane.bounds);
+            const lY = coords.priceToY(bar.low, pane.scale, pane.bounds);
+            b.rect(x - 0.5, hY, 1, lY - hY, c);
+            if (drawTicks) {
+                const cY = coords.priceToY(bar.close, pane.scale, pane.bounds);
+                b.rect(x, cY - 0.5, tickW, 1, c);
             }
         }
     }

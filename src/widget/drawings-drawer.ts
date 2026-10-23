@@ -7,6 +7,7 @@
 import { Drawer } from '../ui/components/drawer';
 import { iconEl } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
+import { installSmoothScrolling } from '../ui/scrolling';
 import type { ToolbarDefinition, ToolDefinition } from '../core/drawings/toolbar';
 import type { DrawingTypeKey } from '../core/drawings/Drawing';
 
@@ -130,6 +131,7 @@ export class DrawingsDrawer {
     constructor(private readonly opts: DrawingsDrawerOptions) {
         const doc = opts.host.ownerDocument;
         injectStyles(STYLE_ID, CSS, doc);
+        installSmoothScrolling(doc);
         this.drawer = new Drawer({
             host: opts.host,
             title: 'Drawings',

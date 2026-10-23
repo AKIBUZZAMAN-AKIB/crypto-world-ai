@@ -1,5 +1,5 @@
 import type { Drawing, Projector, DrawingStyle } from '../../../core/drawings';
-import { SegmentDrawing, TrendLine, FibRatios, RadialFib, FibSpiral, GannSquare, GANN_SQUARE_ARCS, DedekindTessellation, MachFigure, MeasureBox, PositionTool, PatternDrawing, CalloutBase, Callout, Comment, PriceNote, Signpost, Note, PriceLabel, ArrowMark, GlyphStamp, RegressionChannel, AnchoredVwap, FixedRangeVolumeProfile, Magnifier, PriceActionZone, Liquidity, magnifierTimeframeLabel, lineSegmentIntersection, effectiveFillColor, VALID_FILL, INVALID_FILL, DEFAULT_DRAWING_COLOR } from '../../../core/drawings';
+import { SegmentDrawing, TrendLine, FibRatios, RadialFib, FibSpiral, GannSquare, GANN_SQUARE_ARCS, Pin, DedekindTessellation, MachFigure, MeasureBox, PositionTool, PatternDrawing, CalloutBase, Callout, Comment, PriceNote, Signpost, Note, PriceLabel, ArrowMark, GlyphStamp, RegressionChannel, AnchoredVwap, FixedRangeVolumeProfile, Magnifier, PriceActionZone, Liquidity, magnifierTimeframeLabel, lineSegmentIntersection, effectiveFillColor, VALID_FILL, INVALID_FILL, DEFAULT_DRAWING_COLOR } from '../../../core/drawings';
 import type { VelaTheme } from '../../../core/options';
 import { contrastColor, dashPattern, extendEndpoints, namedFontSize, labelLineHeight, TEXT_FRAME_INSET, TEXT_FRAME_RISE, uprightLineAngle } from '../../shared/drawing-geometry';
 import { BEARISH, BULLISH, NEUTRAL, SLATE, SLATE_DEEP } from '../../../core/palette';
@@ -296,6 +296,10 @@ export class DrawingPainter {
         }
         if (d instanceof PriceNote) {
             this.paintPriceNote(ctx, d, proj, theme);
+            return;
+        }
+        if (d instanceof Pin) {
+            this.paintPin(ctx, d, proj, theme);
             return;
         }
         if (d instanceof Signpost) {
@@ -1444,6 +1448,51 @@ export class DrawingPainter {
         ctx.arc(bx, by, 3.5, 0, Math.PI * 2);
         ctx.fill();
         this.paintTextPlate(ctx, d, theme, sx - w / 2, sy - h / 2, w, h, lines, lh, padX, padY);
+    }
+
+    /**
+     * A Pin: a round head over a tapered stem whose tip sits exactly on the target, with
+     * the note plate beside the box anchor and a hairline joining the two. The tip — not
+     * the head and not the plate — is the anchor, so a magnet snap lands on the level the
+     * trader meant instead of a point a few pixels above it.
+     */
+    private paintPin(ctx: CanvasRenderingContext2D, d: Pin, proj: Projector, theme: VelaTheme): void {
+        const p = d.points(proj);
+        if (!p) return;
+        const [tx, ty] = p[0]; // the target: the pin's TIP
+        const [bx, by] = p[1]; // the plate's centre
+        const { lines, tw, lh } = this.measureText(ctx, d, theme, 'Pin');
+        const padX = 9;
+        const padY = 6;
+        const w = tw + padX * 2;
+        const h = lines.length * lh + padY * 2;
+        const r = 6; // head radius
+        const headY = ty - r * 2.6; // the head floats above the tip
+        // Hairline from the plate to the head — behind the glyph so the pin stays crisp.
+        this.stroke(ctx, { ...d.style, lineWidth: 1 }, () => {
+            ctx.moveTo(bx, by);
+            ctx.lineTo(tx, headY + r);
+        });
+        // Stem: a triangle tapering from the head's flanks to the tip.
+        ctx.save();
+        ctx.fillStyle = d.style.lineColor;
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(tx - r * 0.62, headY + r * 0.55);
+        ctx.lineTo(tx + r * 0.62, headY + r * 0.55);
+        ctx.closePath();
+        ctx.fill();
+        // Head: a filled disc with a hole punched in the plate's ink, so the pin reads as a
+        // pin on any background (a ring alone disappears over a light chart).
+        ctx.beginPath();
+        ctx.arc(tx, headY, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = effectiveFillColor(d, theme) ?? theme.background;
+        ctx.beginPath();
+        ctx.arc(tx, headY, r * 0.42, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        this.paintTextPlate(ctx, d, theme, bx - w / 2, by - h / 2, w, h, lines, lh, padX, padY);
     }
 
     /** A Price Label: a left-pointing tag at the anchor showing the auto-formatted price. */

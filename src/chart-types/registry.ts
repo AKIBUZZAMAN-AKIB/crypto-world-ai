@@ -10,6 +10,7 @@
 // once at import time, before or after charts are constructed.
 import type { OHLCV } from '../core/model/ohlcv';
 import type { BarTransform } from '../core/price-styles/BarTransform';
+import type { BarRebucket } from '../core/price-styles/rebucket';
 import type { DataControl } from '../core/DataControl';
 
 /** The environment a chart hands to a style's data engine when the style activates. */
@@ -78,6 +79,13 @@ export interface ChartTypeDefinition {
     settings?: ChartTypeSettingsSection;
     /** View-bar transform applied at the chart's outbound bar seam (1:1, time-preserving). */
     barTransform?: BarTransform;
+    /**
+     * A style that REBUCKETS the series instead of transforming it bar-by-bar: N raw bars
+     * in, M derived bars out (Renko, Range, Line break). Mutually exclusive with
+     * `barTransform` — a style that changes the bar count cannot also be 1:1. The derived
+     * bars carry synthetic but strictly increasing times, so the time axis keeps working.
+     */
+    rebucket?: BarRebucket;
     /**
      * Whether the type participates in extended tickers (`"SYM;id"` — scripts request the
      * transformed series via `ticker.*`). Defaults to `true` when `barTransform` is set:
@@ -397,6 +405,12 @@ export function chartTypes(): ChartTypeDefinition[] {
 }
 
 /** Ids that act as extended-ticker modifiers (`"SYM;id"`). */
+/** The re-bucketing style behind `style` (null ≡ an ordinary, index-aligned view). */
+export function rebucketFor(style: unknown): BarRebucket | null {
+    if (typeof style !== 'string') return null;
+    return registry.get(style)?.rebucket ?? null;
+}
+
 export function tickerModifierIds(): string[] {
     return [...registry.values()].filter((d) => d.tickerModifier ?? d.barTransform != null).map((d) => d.id);
 }

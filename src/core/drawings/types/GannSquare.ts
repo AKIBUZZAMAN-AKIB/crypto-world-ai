@@ -23,7 +23,7 @@ export const GANN_SQUARE_ARCS: ReadonlyArray<{ k: number; color: string }> = [
     { k: 1, color: LEVEL_TEAL },
 ];
 
-interface GannBox {
+export interface GannSquareBox {
     ox: number;
     oy: number;
     bx: number;
@@ -40,7 +40,8 @@ interface GannBox {
  * straight {@link FibEntryLine}s (the shared fib painter); the arcs get a dedicated paint branch.
  */
 export class GannSquare extends FibRatios {
-    readonly type = 'gannsquare' as const;
+    /** `gannsquarefixed` shares every painter with this class — see {@link GannSquareFixed}. */
+    readonly type: 'gannsquare' | 'gannsquarefixed' = 'gannsquare';
 
     defaultLevels(): readonly FibLevel[] {
         return GRID_LEVELS;
@@ -49,7 +50,17 @@ export class GannSquare extends FibRatios {
     // Placed click-move-click (the inherited 'click' mode): first click sets a corner, the second
     // sets the opposite one — matching the plain Rectangle tool.
 
-    private box(proj: Projector): GannBox | null {
+    /**
+     * Whether the H/V grid divides the BOX or the price span between the anchors. False
+     * for the plain square (its box height IS the price span); true for the fixed square,
+     * whose box is forced square in pixels and therefore no longer maps to prices.
+     */
+    protected get priceAxisFollowsBox(): boolean {
+        return false;
+    }
+
+    /** The painted box. Protected + virtual: {@link GannSquareFixed} squares it in px. */
+    protected box(proj: Projector): GannSquareBox | null {
         const c1 = this.anchors[0];
         const c2 = this.anchors[1];
         if (!c1 || !c2) return null;
@@ -75,7 +86,13 @@ export class GannSquare extends FibRatios {
         const out: FibEntryLine[] = [];
         for (const lv of this.levels) {
             if (!lv.enabled) continue;
-            const hy = proj.yOf(c1.price + lv.ratio * (c2.price - c1.price), this.paneId); // horizontal (price) line
+            // Horizontal (price) line. On the plain square the ratio is a fraction of the
+            // PRICE span between the corners; on the fixed square the box height no longer
+            // matches that span, so the line is placed at the same fraction of the BOX —
+            // otherwise the grid hangs off the box it is supposed to divide.
+            const hy = this.priceAxisFollowsBox
+                ? b.top + lv.ratio * (b.bot - b.top)
+                : proj.yOf(c1.price + lv.ratio * (c2.price - c1.price), this.paneId);
             if (hy != null) {
                 out.push({ color: lv.color, x1: b.left, y1: hy, x2: b.right, y2: hy, numberText: lv.label ?? String(lv.ratio), numberX: b.left - 5, numberY: hy, numberAlign: 'right', labelX: b.left, labelY: hy });
             }

@@ -1,8 +1,9 @@
-import type { AxisLongPressEvent, ClickEvent, CrosshairEvent, DataWindowReadout, IChartRenderer, LegendActionView, LegendCalloutView, RendererCapabilities } from './ports/IChartRenderer';
+import type { AxisLongPressEvent, ClickEvent, CrosshairEvent, DataWindowReadout, IChartRenderer, LegendActionView, LegendCalloutView, RendererCapabilities, VisibleRange } from './ports/IChartRenderer';
 import type { Unsubscribe } from './util/types';
 import type { WallClock } from './util/wall-clock';
 import type { SymbolPickerFn } from './model/inputs';
 import type { OHLCV } from './model/ohlcv';
+
 
 /**
  * The public control surface for the active renderer — `chart.renderer`. A thin
@@ -35,6 +36,19 @@ export class RendererControl {
      * instant is off the loaded series. Crosshair sync uses it to give every follower the
      * leader's instant in ITS data.
      */
+    /**
+     * The loaded bars, oldest first (source OHLCV, not the price style's output).
+     * An empty array when the renderer cannot hand its data back.
+     */
+    getBars(): readonly OHLCV[] {
+        return this.renderer.getBars?.() ?? [];
+    }
+
+    /** The data-bounded window on screen — both edges are REAL bar times. */
+    getVisibleRange(): VisibleRange | null {
+        return this.renderer.getVisibleRange();
+    }
+
     barAt(time: number): OHLCV | null {
         const fn = (this.renderer as { barAt?: (t: number) => OHLCV | null }).barAt;
         return typeof fn === 'function' ? fn.call(this.renderer, time) : null;

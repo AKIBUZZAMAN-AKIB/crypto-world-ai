@@ -1,0 +1,55 @@
+{
+  "report": {
+    "Renko": {
+      "file": "audit/r23-style-renko.png",
+      "sig": {
+        "ink": 0,
+        "mean": null,
+        "w": 697,
+        "h": 411
+      }
+    },
+    "Range": {
+      "file": "audit/r23-style-range.png",
+      "sig": {
+        "ink": 0,
+        "mean": null,
+        "w": 697,
+        "h": 411
+      }
+    },
+    "Kagi": {
+      "file": "audit/r23-style-kagi.png",
+      "sig": {
+        "ink": 0,
+        "mean": null,
+        "w": 697,
+        "h": 411
+      }
+    },
+    "Point & figure": {
+      "file": "audit/r23-style-point-figure.png",
+      "sig": {
+        "ink": 0,
+        "mean": null,
+        "w": 697,
+        "h": 411
+      }
+    },
+    "Line break": {
+      "file": "audit/r23-style-line-break.png",
+      "sig": {
+        "ink": 0,
+        "mean": null,
+        "w": 697,
+        "h": 411
+      }
+    }
+  },
+  "errors": [
+    "Access to fetch at 'https://api.binance.com/api/v3/ping' from origin 'http://127.0.0.1:5190' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "Failed to load resource: net::ERR_FAILED",
+    "Access to fetch at 'https://fapi.binance.com/fapi/v1/exchangeInfo' from origin 'http://127.0.0.1:5190' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+    "Failed to load resource: net::ERR_FAILED"
+  ]
+}

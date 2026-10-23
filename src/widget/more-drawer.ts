@@ -9,6 +9,7 @@ import { Drawer } from '../ui/components/drawer';
 import { iconEl } from '../ui/icons';
 import { downloadText } from '../ui/download';
 import { injectStyles } from '../ui/styles';
+import { installSmoothScrolling } from '../ui/scrolling';
 import { SyncMatrix } from './sync-matrix';
 import { layoutGridCanvas, paintLayoutGrid } from './layout-picker';
 import { IMPLICIT_GROUP } from '../state/document';
@@ -807,6 +808,13 @@ const CSS = `
 .vela-md-more .vela-icon { width: 14px; height: 14px; font-size: 14px; transform: rotate(0deg); transition: transform 120ms ease; }
 .vela-md-more[aria-expanded='true'] .vela-icon { transform: rotate(180deg); }
 .vela-md-lghost { color: var(--vela-fg); }
+/* Export chart data: the ghost row, then the two scopes indented under it. */
+.vela-md-lcsvexp { display: flex; flex-direction: column; }
+.vela-md-lcsvexp-open { display: flex; flex-direction: column; gap: 2px; }
+.vela-md-lcsvexp-open:not(:empty) { padding: 2px 0 4px 22px; }
+.vela-md-lcsvexp-open .vela-md-lghost { min-height: 34px; font-size: 12px; }
+.vela-md-lcsvexp-fmt .vela-md-lghost { color: var(--vela-fg-muted); }
+.vela-md-lcsvexp-fmt .vela-md-lghost[data-on='1'] { color: var(--vela-fg-bright); }
 .vela-md-lghost .vela-icon { width: 15px; height: 15px; font-size: 15px; color: var(--vela-fg-muted); }
 .vela-md-lghost:active, .vela-md-more:active { background: var(--vela-hover); }
 .vela-md-lghost:focus-visible, .vela-md-more:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
@@ -947,6 +955,8 @@ export interface MoreDrawerOptions {
         onRenameLayout?: (from: string, to: string) => boolean;
         onExportLayout?: (name: string) => string | null;
         onImportLayout?: (json: string) => string | null;
+        /** Write the active chart's bars as CSV (the sheet's one data export). */
+        onExportData?: (scope: 'visible' | 'all', timeFormat: 'iso' | 'unix') => { rows: number; filename: string } | null;
         /** Save with a preview picture (the row then SHOWS the layout). */
         onSaveLayoutWithThumb?: (name: string) => boolean;
         /** Chart templates (indicator sets; drawings never travel). */
@@ -1006,6 +1016,7 @@ export class MoreDrawer {
 
     constructor(private readonly opts: MoreDrawerOptions) {
         injectStyles(STYLE_ID, CSS, opts.host.ownerDocument);
+        installSmoothScrolling(opts.host.ownerDocument);
         this.drawer = new Drawer({ host: opts.host, onOpenChange: opts.onOpenChange });
     }
 
@@ -2141,6 +2152,50 @@ export class MoreDrawer {
         }
         if (layout.onImportLayout) {
             pane.appendChild(this.fileButton(doc, 'layout', layout.onImportLayout));
+        }
+        // Export chart data — one ghost row that opens the two scopes in place. Idle it
+        // costs the same height as Import; the two chips only appear once the trader has
+        // asked for the verb, because a third file button on every open is noise.
+        if (layout.onExportData) {
+            const row = doc.createElement('div');
+            row.className = 'vela-md-lcsvexp';
+            const open = doc.createElement('div');
+            open.className = 'vela-md-lcsvexp-open';
+            row.appendChild(open);
+            const trigger = this.ghostButton(doc, 'download', 'Export chart data (CSV)', () => {
+                if (open.childElementCount > 0) {
+                    open.replaceChildren();
+                    return;
+                }
+                const fmtRow = doc.createElement('div');
+                fmtRow.className = 'vela-md-lcsvexp-fmt';
+                let timeFormat: 'iso' | 'unix' = 'iso';
+                const paintFmt = (): void => {
+                    fmtBtn.textContent = `Time: ${timeFormat === 'iso' ? 'ISO-8601' : 'UNIX ms'}`;
+                    fmtBtn.dataset.on = timeFormat === 'unix' ? '1' : '0';
+                };
+                const fmtBtn = this.ghostButton(doc, 'clock', '', () => {
+                    timeFormat = timeFormat === 'iso' ? 'unix' : 'iso';
+                    paintFmt();
+                });
+                fmtBtn.title = 'Toggle the time column between ISO-8601 and UNIX milliseconds';
+                paintFmt();
+                fmtRow.appendChild(fmtBtn);
+                open.appendChild(fmtRow);
+                for (const [scope, label] of [
+                    ['visible', 'Visible range'],
+                    ['all', 'All data'],
+                ] as const) {
+                    open.appendChild(
+                        this.ghostButton(doc, 'download', label, () => {
+                            layout.onExportData?.(scope, timeFormat);
+                            open.replaceChildren();
+                        }),
+                    );
+                }
+            });
+            row.insertBefore(trigger, open);
+            pane.appendChild(row);
         }
     }
 

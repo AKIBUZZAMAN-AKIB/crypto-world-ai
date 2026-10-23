@@ -351,8 +351,29 @@ export type NativeBackend = 'auto' | 'canvas2d' | 'webgl2';
  *  `'heikinashi'` draws Heikin Ashi candles: a 1:1 display transform of the raw
  *  bars applied at the core's bar seam, so indicators compute on the same
  *  smoothed values the chart shows (raw data stays untouched underneath). */
-/** Built-in styles plus any id registered through the chart-type SDK (`registerChartType`). */
-export type PriceStyle = 'candles' | 'bars' | 'line' | 'area' | 'baseline' | 'heikinashi' | (string & {});
+/**
+ * Built-in styles plus any id registered through the chart-type SDK (`registerChartType`).
+ *
+ * The last eight are the PAINTING VARIANTS (`src/core/price-styles/variants.ts`): same
+ * 1:1 bar stream, different painting — see that file for each one's semantics. They need
+ * no chart-type registration because they change nothing about the data.
+ */
+export type PriceStyle =
+    | 'candles'
+    | 'bars'
+    | 'line'
+    | 'area'
+    | 'baseline'
+    | 'heikinashi'
+    | 'hollow-candles'
+    | 'volume-candles'
+    | 'line-markers'
+    | 'stepline'
+    | 'hlc-area'
+    | 'columns'
+    | 'high-low'
+    | 'hlc-bars'
+    | (string & {});
 
 /** Display options passed to a renderer at construction. */
 export interface RendererDisplayOptions {

@@ -4,6 +4,7 @@ import { withAlpha } from '../../../core/color';
 import { ACCENT, BEARISH, BULLISH, CHIP_PLATE, CROSSHAIR, SERIES_LINE, WARNING } from '../../../core/palette';
 import type { PriceStyle } from '../../../core/options';
 import type { ScaleMode } from './SceneGraph';
+import { PAINT_VARIANTS, DEFAULT_VARIANT_SETTINGS, normalizeVariantSettings, type PaintVariantSettings } from '../../../core/price-styles/variants';
 
 /**
  * Comprehensive, **serializable** native-renderer style/config (item 15).
@@ -169,6 +170,9 @@ export interface ChartStyle {
     line: LineSeriesStyle;
     area: AreaSeriesStyle;
     baseline: BaselineSeriesStyle;
+    /** The painting variants' knobs — live in the style store so both backends read one
+     *  object per frame, exactly like the candle block. */
+    variants: PaintVariantSettings;
     sessions: SessionShadeStyle;
 }
 
@@ -205,6 +209,7 @@ export function defaultChartStyle(): ChartStyle {
             width: 2,
             baselineLevel: BASELINE_LEVEL_DEFAULT,
         },
+        variants: { ...DEFAULT_VARIANT_SETTINGS },
         sessions: { premarketColor: PREMARKET_SHADE, postmarketColor: POSTMARKET_SHADE, extendedColor: EXTENDED_SHADE },
     };
 }
@@ -324,6 +329,10 @@ export interface ChartConfig {
         width: number;
         baselineLevel: number;
     };
+    /** The painting variants' knobs (hollow-up, volume width floor, marker radius, …).
+     *  One bag for all of them: the styles are mutually exclusive, so their settings
+     *  never compete, and an exported chart keeps them with the rest of its cosmetics. */
+    variants: PaintVariantSettings;
     series: {
         style: PriceStyle;
         baseline: number | null;
@@ -353,7 +362,16 @@ export interface ChartConfig {
 const LINE_STYLES: readonly LineStyle[] = ['solid', 'dashed', 'dotted'];
 /** The library's own price styles, in picker order — {@link priceStyleIds} appends the
  *  SDK-registered chart types after these, so UIs can group the two families. */
-export const BUILTIN_PRICE_STYLES: readonly PriceStyle[] = ['candles', 'bars', 'line', 'area', 'baseline', 'heikinashi'];
+export const BUILTIN_PRICE_STYLES: readonly PriceStyle[] = [
+    'candles',
+    'bars',
+    'line',
+    'area',
+    'baseline',
+    'heikinashi',
+    // Painting variants — same bars, different paint (see core/price-styles/variants).
+    ...PAINT_VARIANTS.map((v) => v.id as PriceStyle),
+];
 
 /** Base price-series painting for a style: built-ins paint themselves; a plugin type
  *  may declare `basePainting: 'none'` to suppress candles under its layer. */
@@ -618,7 +636,7 @@ export function factoryResetConfig(factory: ChartConfig, priceStyle: PriceStyle 
     for (const [typeId, vals] of Object.entries(factory.chartTypes)) {
         bag[typeId] = { ...(bag[typeId] ?? {}), ...vals };
     }
-    return { ...factory, chartTypes: bag, series: { ...factory.series, style: priceStyle } };
+    return { ...factory, chartTypes: bag, variants: { ...DEFAULT_VARIANT_SETTINGS }, series: { ...factory.series, style: priceStyle } };
 }
 
 /**
@@ -762,6 +780,8 @@ export function mergeConfig(base: ChartConfig, patch: unknown): ChartConfig {
             width: isNum(baseline.width) ? clampWidth(baseline.width) : base.baseline.width,
             baselineLevel: isNum(baseline.baselineLevel) ? clampLevel(baseline.baselineLevel) : base.baseline.baselineLevel,
         },
+        // Variant knobs merge PER KEY: a patch naming one switch must not reset the rest.
+        variants: normalizeVariantSettings({ ...base.variants, ...asObject(p.variants) }),
         series: {
             style: isPriceStyle(series.style) ? series.style : base.series.style,
             baseline: series.baseline === null ? null : isNum(series.baseline) ? series.baseline : base.series.baseline,

@@ -40,6 +40,7 @@ import {
 import type { Unsubscribe } from '../../core/util/types';
 import { SecondClock, type WallClock } from '../../core/util/wall-clock';
 import { isLineLikeSeries, seriesShownOn, type SeriesSurface } from '../../core/model/series';
+import { candlePrices, nearestByPixel } from './core/snap-candidates';
 import { InputsUI, type LegendPlotValue } from '../shared/InputsUI';
 import { PaneControls } from './chrome/PaneControls';
 import { AxisScaleButtons, type AxisScaleView } from './chrome/AxisScaleButtons';
@@ -908,6 +909,7 @@ export class NativeRenderer implements IChartRenderer {
                     baselineLevel: s.baseline.baselineLevel,
                 };
             })(),
+            variants: { ...s.variants },
             series: { style: this.scene.priceStyle, baseline: this.scene.baselineValue, spacing: this.coords.spacingScale },
             sessions: { premarketColor: s.sessions.premarketColor, postmarketColor: s.sessions.postmarketColor, extendedColor: s.sessions.extendedColor },
         };
@@ -1047,6 +1049,9 @@ export class NativeRenderer implements IChartRenderer {
         // did not change, but the per-type bag (candle* keys) may have — this is the live
         // path behind the Symbol tab's Candles group for plugin styles.
         this.scene.candleOverride = candleOverrideFor(this.scene.priceStyle, s.chartTypes);
+        // Painting variants: the knobs are plain cosmetics, so they land on the live
+        // style store under the same lock-free path as the candle block.
+        s.variants = { ...next.variants };
         this.scene.baselineValue = next.series.baseline;
         // Spacing multiplier: widens the center-to-center pitch (and crosshair step) without
         // touching body width. Re-clamp because it changes how many bars fit → the zoom/pan limits.
@@ -1680,6 +1685,8 @@ export class NativeRenderer implements IChartRenderer {
             priceDecimals: () => (this.scene.priceMintick ? tickDecimals(this.scene.priceMintick) : null),
             snap: (pt, paneId, mode, cursorPx) => this.snapToCandle(pt, paneId, mode, cursorPx),
             setSnapMode: (mode) => this.setSnapMode(mode),
+            snapToIndicators: () => this.snapToIndicatorsOn(),
+            setSnapToIndicators: (on) => this.setSnapToIndicators(on),
             setToolbarGutter: (px) => this.setToolbarGutter(px),
             // The zoom tool: the dragged region becomes the visible time range (with a
             // hair of padding, so the region's own edges are not clipped to the frame).
@@ -1997,7 +2004,16 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     // ── price data ──
-    setBars(bars: OHLCV[], opts?: { preserveView?: boolean }): void {
+    /**
+     * The source bars this chart is showing, oldest first. Read-only and deliberately
+     * NOT the style's output: exporting a Renko or Heikin Ashi chart still writes the
+     * underlying OHLCV, because the bricks are a rendering of the data, not the data.
+     */
+    getBars(): readonly OHLCV[] {
+        return this.bars;
+    }
+
+    setBars(bars: OHLCV[], opts?: { preserveView?: boolean; resetView?: boolean }): void {
         if (this.introRaf != null) { cancelAnimationFrame(this.introRaf); this.introRaf = null; this.modelAlpha = 1; } // a re-set interrupts a running reveal
         // A series replacement invalidates the forming-bar glide: after an in-place market
         // switch the NEW market's forming bar shares the same bucket open-time, so a stale
@@ -2049,7 +2065,8 @@ export class NativeRenderer implements IChartRenderer {
         // always an initial frame.
         const skipFit = opts?.preserveView === true && this.didInitialFit;
         if (this.coords.width > 0 && !skipFit) {
-            if (this.didInitialFit) this.reframeKeepZoom();
+            if (opts?.resetView) this.fitContent();
+            else if (this.didInitialFit) this.reframeKeepZoom();
             else this.fitContent();
             this.didInitialFit = true;
         }
@@ -3709,9 +3726,52 @@ export class NativeRenderer implements IChartRenderer {
     /** Sticky magnet mode for user drawings (off/weak/strong); the drawings toolbar drives it. */
     private snapMode: SnapMode = 'off';
 
+    /**
+     * "Snap to indicators" — the magnet's second axis, and a separate toggle from its
+     * strength (as on the reference platform, where the magnet menu carries both). On,
+     * an overlay indicator's value at the cursor bar is an attachment point just like
+     * open/high/low/close; the nearest wins. Weak/strong still decide the reach.
+     */
+    private snapToIndicators = false;
+
     /** Set the sticky magnet mode (called by the drawings toolbar's 3-state button). */
     setSnapMode(mode: SnapMode): void {
         this.snapMode = mode;
+    }
+
+    /** Whether the magnet also treats overlay indicator values as snap targets. */
+    snapToIndicatorsOn(): boolean {
+        return this.snapToIndicators;
+    }
+
+    /** Toggle "Snap to indicators" (the magnet flyout's row). */
+    setSnapToIndicators(on: boolean): void {
+        this.snapToIndicators = on;
+    }
+
+    /**
+     * Price candidates at bar `index`: the bar's own OHLC, plus — when "snap to
+     * indicators" is on — the value of every VISIBLE overlay series at that bar. Only
+     * series drawn on the price pane count: a value in an oscillator pane has no pixel
+     * on the pane the drawing lives in, so snapping to it would teleport the anchor.
+     */
+    private snapPriceCandidates(index: number): number[] {
+        const out: number[] = [];
+        const bar = this.bars[index];
+        if (bar) out.push(...candlePrices(bar));
+        if (!this.snapToIndicators) return out;
+        for (const model of this.scene.orderedIndicatorsForPane(PRICE_PANE_ID)) {
+            // Index-aligned payloads, offset by the model's anchor bar (the same read the
+            // crosshair uses): a script that ran over a suffix must not shift every value.
+            const off = this.scene.offsetOf(model.id);
+            for (const spec of model.series) {
+                if (!isLineLikeSeries(spec)) continue;
+                if (!seriesShownOn(spec, 'pane') && !seriesShownOn(spec, 'priceScale')) continue;
+                const value = spec.points[index - off]?.value;
+                if (value != null && Number.isFinite(value)) out.push(value);
+            }
+        }
+        return out;
     }
 
     /**
@@ -3736,10 +3796,15 @@ export class NativeRenderer implements IChartRenderer {
         if (paneId !== PRICE_PANE_ID) {
             snapped = { time: bar.time, price: point.price };
         } else {
-            let price = bar.open;
-            for (const v of [bar.high, bar.low, bar.close]) {
-                if (Math.abs(v - point.price) < Math.abs(price - point.price)) price = v;
-            }
+
+            const proj = this.drawingProjector();
+            const cursorY = proj.yOf(point.price, paneId) ?? 0;
+            const price = nearestByPixel(
+                this.snapPriceCandidates(i),
+                cursorY,
+                (v) => proj.yOf(v, paneId),
+                bar.close,
+            );
             snapped = { time: bar.time, price };
         }
         if (mode === 'weak' && cursorPx) {

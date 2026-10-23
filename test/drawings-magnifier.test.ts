@@ -47,9 +47,13 @@ describe('drawings/Magnifier', () => {
     it('appears under the Measurements section of the toolbar', () => {
         const { definition } = buildToolbar(true);
         const measure = definition.groups.find((g) => g.id === 'measurements');
+        // The ruler leads the section (the reference platform's order), then its two
+        // one-axis halves, then the position tool and the magnifier.
         expect(measure?.sections?.find((s) => s.label === 'Measurements')?.tools.map((t) => t.type)).toEqual([
-            'position',
             'datepricerange',
+            'pricerange',
+            'daterange',
+            'position',
             'magnifier',
         ]);
     });

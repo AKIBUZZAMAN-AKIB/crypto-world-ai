@@ -34,6 +34,11 @@ export interface DrawingToolbarOptions {
      *  linked — edits and removals follow (a multi-chart host's concern — a
      *  single-chart bar omits the callback and never shows it). */
     onDrawingsSync?: (on: boolean) => void;
+    /** Read "Snap to indicators" (the magnet flyout's second axis). Omitted ⇒ the row is
+     *  not offered, which is right for a host with no indicator model behind it. */
+    snapToIndicators?: () => boolean;
+    /** Toggle "Snap to indicators". Omitted ⇒ no row (see above). */
+    onSnapToIndicators?: (on: boolean) => void;
     /** The pointer style this bar shows as chosen. Omitted ⇒ the cursor cell stays a plain
      *  "back to select" button and no flyout is offered (single-chart embeds). */
     cursorStyle?: () => CursorStyle;
@@ -125,6 +130,9 @@ export class DrawingToolbar {
     private readonly dock: 'absolute' | 'static';
     private readonly onCollapse: (collapsed: boolean) => void;
     private readonly onDrawingsSync: ((on: boolean) => void) | null;
+    /** "Snap to indicators" read/toggle; both null ⇒ the magnet flyout offers no row. */
+    private readonly snapToIndicatorsFn: (() => boolean) | null;
+    private readonly onSnapToIndicatorsFn: ((on: boolean) => void) | null;
 
     constructor(
         private readonly host: HTMLElement,
@@ -142,6 +150,8 @@ export class DrawingToolbar {
         this.dock = options.dock ?? 'absolute';
         this.onCollapse = options.onCollapse ?? (() => {});
         this.onDrawingsSync = options.onDrawingsSync ?? null;
+        this.snapToIndicatorsFn = options.snapToIndicators ?? null;
+        this.onSnapToIndicatorsFn = options.onSnapToIndicators ?? null;
         this.cursorStyleFn = options.cursorStyle ?? null;
         this.onCursorStyleFn = options.onCursorStyle ?? null;
         this.onZoomFn = options.onZoom ?? null;
@@ -730,6 +740,27 @@ export class DrawingToolbar {
                     onSelect: () => {
                         this.applyMagnet(mode);
                         this.closeFlyout();
+                    },
+                }),
+            );
+        }
+        // The second axis of the magnet — a toggle, not a fourth strength: on, overlay
+        // indicator values are attachment points beside OHLC, and weak/strong still
+        // decide how far the pull reaches. It is deliberately NOT closed on click: the
+        // trader usually turns it on and then picks a strength.
+        if (this.snapToIndicatorsFn && this.onSnapToIndicatorsFn) {
+            const sep = document.createElement('div');
+            sep.className = 'vela-dtb-sep';
+            sep.style.cssText = `height:1px;margin:4px 6px;background:${this.theme.borderColor};opacity:0.55;`;
+            fly.appendChild(sep);
+            fly.appendChild(
+                this.makeFlyoutItem({
+                    label: 'Snap to indicators',
+                    selected: this.snapToIndicatorsFn(),
+                    onSelect: () => {
+                        this.onSnapToIndicatorsFn?.(!this.snapToIndicatorsFn?.());
+                        this.closeFlyout();
+                        this.openMagnetFlyout(); // repaint the row's check against the new state
                     },
                 }),
             );

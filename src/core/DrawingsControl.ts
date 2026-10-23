@@ -45,6 +45,17 @@ export class DrawingsControl {
         return this.ctrl.getSnapMode();
     }
 
+    /** Treat overlay indicator values as magnet targets, beside OHLC (`Snap to indicators`). */
+    setSnapToIndicators(on: boolean): this {
+        this.ctrl.setSnapToIndicators(on);
+        return this;
+    }
+
+    /** Whether indicator values are magnet targets — follow `drawing:snap-to-indicators`. */
+    getSnapToIndicators(): boolean {
+        return this.ctrl.getSnapToIndicators();
+    }
+
     /** Keep the armed tool after each placement (`true`) or one-shot disarm (`false`). */
     setStayMode(on: boolean): this {
         if (this.ok('setStayMode')) this.ctrl.setStayMode(on);

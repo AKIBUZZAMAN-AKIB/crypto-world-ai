@@ -59,6 +59,7 @@ export class DrawingController {
     private activeTool: DrawingTypeKey | null = null;
     /** Mirror of the renderer's sticky magnet mode (the renderer default is 'off'). */
     private snapMode: SnapMode = 'off';
+    private snapToIndicators = false;
     /** When on, finishing a drawing leaves the tool armed (instead of one-shot disarm). */
     private stayInDrawingMode = false;
     private allHidden = false;
@@ -120,6 +121,18 @@ export class DrawingController {
     // driven from both ends: facade setters push port commands, in-chart toolbar clicks
     // arrive as intents. Equal values no-op on either path, which keeps the
     // command→intent echo loop convergent.
+    /** "Snap to indicators" — the magnet's second axis, mirrored like the mode. */
+    getSnapToIndicators(): boolean {
+        return this.snapToIndicators;
+    }
+
+    setSnapToIndicators(on: boolean): void {
+        if (!this.port || on === this.snapToIndicators) return;
+        this.snapToIndicators = on;
+        this.port.setSnapToIndicators?.(on);
+        this.events.emit('drawing:snap-to-indicators', { on });
+    }
+
     getSnapMode(): SnapMode {
         return this.snapMode;
     }
