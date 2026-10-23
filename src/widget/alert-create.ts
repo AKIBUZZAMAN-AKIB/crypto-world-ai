@@ -9,7 +9,7 @@
 import { Drawer } from '../ui/components/drawer';
 import { injectStyles } from '../ui/styles';
 import { iconEl } from '../ui/icons';
-import { CONDITION_LABELS, FREQUENCY_LABELS, formatLevel, type AlertCondition, type AlertFrequency } from '../workspace/price-alerts';
+import { CONDITION_LABELS, DEFAULT_MOVE_BARS, FREQUENCY_LABELS, formatLevel, isMoveCondition, type AlertCondition, type AlertFrequency } from '../workspace/price-alerts';
 
 const STYLE_ID = 'vela-widget-alert-create';
 const CSS = `
@@ -92,6 +92,10 @@ const CSS = `
     color: var(--vela-fg-bright);
 }
 .vela-ac-hint { font-size: 12px; color: var(--vela-fg-muted); }
+.vela-ac-value[hidden] { display: none !important; }
+.vela-ac-value input::placeholder { color: var(--vela-fg-faint, var(--vela-fg-muted)); opacity: 0.7; }
+#condition grid: five price operators then the four Moving forms read best in pairs.
+.vela-ac-seg .vela-ac-opt { min-width: 0; }
 .vela-ac-create {
     all: unset;
     box-sizing: border-box;
@@ -119,13 +123,19 @@ const CSS = `
 }
 `;
 
-const CONDITIONS: readonly AlertCondition[] = ['cross', 'cross-up', 'cross-down', 'gt', 'lt'];
+// The reference splits its conditions into "price" (the five level operators) and the
+// Moving family; the sheet shows both in one grid, price first.
+const CONDITIONS: readonly AlertCondition[] = ['cross', 'cross-up', 'cross-down', 'gt', 'lt', 'move-up', 'move-down', 'move-up-pct', 'move-down-pct'];
 const CONDITION_ICONS: Readonly<Record<AlertCondition, string>> = {
     cross: 'wave',
     'cross-up': 'arrow-up',
     'cross-down': 'arrow-down',
     gt: 'chevron-up',
     lt: 'chevron-down',
+    'move-up': 'arrow-up',
+    'move-down': 'arrow-down',
+    'move-up-pct': 'arrow-up',
+    'move-down-pct': 'arrow-down',
 };
 
 export interface AlertCreateOptions {
@@ -135,7 +145,7 @@ export interface AlertCreateOptions {
     /** The last print, used to prefill the level; null while nothing is loaded. */
     currentPrice: () => number | null;
     /** Create the alert. Returns false when the level was rejected (the sheet stays open). */
-    onCreate: (request: { condition: AlertCondition; value: number; frequency: AlertFrequency }) => boolean;
+    onCreate: (request: { condition: AlertCondition; value: number; frequency: AlertFrequency; bars: number }) => boolean;
     onOpenChange?: (open: boolean) => void;
 }
 
@@ -144,11 +154,14 @@ export class AlertCreateSheet {
     private condition: AlertCondition = 'cross';
     private frequency: AlertFrequency = 'once';
     private value = '';
+    private bars = DEFAULT_MOVE_BARS;
     private opts: AlertCreateOptions;
     private readonly symbolEl: HTMLElement;
     private readonly input: HTMLInputElement;
     private readonly hint: HTMLElement;
     private readonly createBtn: HTMLButtonElement;
+    private readonly barsRow: HTMLElement;
+    private readonly barsInput: HTMLInputElement;
     private readonly conditionOpts = new Map<AlertCondition, HTMLButtonElement>();
     private readonly freqOpts = new Map<AlertFrequency, HTMLButtonElement>();
 
@@ -177,7 +190,11 @@ export class AlertCreateSheet {
             b.appendChild(doc.createTextNode(CONDITION_LABELS[condition]));
             b.setAttribute('aria-pressed', 'false');
             b.addEventListener('click', () => {
+                const wasMoving = isMoveCondition(this.condition);
                 this.condition = condition;
+                // A price and a distance are different kinds of number: carrying 143.52 over
+                // as "move up by 143.52" would arm an alert nobody asked for.
+                if (wasMoving !== isMoveCondition(condition)) this.resetValue();
                 this.paint();
             });
             this.conditionOpts.set(condition, b);
@@ -221,6 +238,27 @@ export class AlertCreateSheet {
             freqWrap.appendChild(b);
         }
 
+        // ── lookback (Moving conditions only) ──
+        this.barsRow = doc.createElement('div');
+        this.barsRow.className = 'vela-ac-value';
+        const barsLabel = doc.createElement('span');
+        barsLabel.className = 'vela-ac-hint';
+        barsLabel.textContent = 'within';
+        this.barsInput = doc.createElement('input');
+        this.barsInput.type = 'text';
+        this.barsInput.inputMode = 'numeric';
+        this.barsInput.setAttribute('aria-label', 'Number of bars');
+        this.barsInput.value = String(DEFAULT_MOVE_BARS);
+        this.barsInput.addEventListener('input', () => {
+            const n = Math.round(Number(this.barsInput.value));
+            this.bars = Number.isFinite(n) && n > 0 ? Math.min(500, n) : DEFAULT_MOVE_BARS;
+            this.paint();
+        });
+        const barsUnit = doc.createElement('span');
+        barsUnit.className = 'vela-ac-hint';
+        barsUnit.textContent = 'bars';
+        this.barsRow.append(barsLabel, this.barsInput, barsUnit);
+
         this.createBtn = doc.createElement('button');
         this.createBtn.type = 'button';
         this.createBtn.className = 'vela-ac-create';
@@ -231,15 +269,16 @@ export class AlertCreateSheet {
                 this.input.focus({ preventScroll: true });
                 return;
             }
-            const ok = this.opts.onCreate({ condition: this.condition, value, frequency: this.frequency });
+            const ok = this.opts.onCreate({ condition: this.condition, value, frequency: this.frequency, bars: this.bars });
             if (ok) this.drawer.hide();
         });
 
         const note = doc.createElement('div');
         note.className = 'vela-ac-note';
-        note.textContent = 'The level is drawn on the chart. It is checked against every price your chart prints — closing or reloading the page clears it.';
+        note.textContent = 'The level is drawn on the chart and checked against every price it prints. Armed alerts are saved with the layout.';
 
-        this.drawer.body.append(head, condLabel, condWrap, valueLabel, valueRow, freqLabel, freqWrap, this.createBtn, note);
+        this.drawer.body.append(head, condLabel, condWrap, valueLabel, valueRow, this.barsRow, freqLabel, freqWrap, this.createBtn, note);
+        this.paint();
     }
 
     private label(doc: Document, text: string): HTMLElement {
@@ -260,8 +299,32 @@ export class AlertCreateSheet {
         }
         const price = this.opts.currentPrice();
         const value = Number(this.value.replace(',', '.'));
-        this.hint.textContent = this.distanceHint(price, value);
-        this.createBtn.disabled = !Number.isFinite(value);
+        const moving = isMoveCondition(this.condition);
+        this.barsRow.hidden = !moving;
+        // A Moving condition is a DISTANCE, so "x% from now" would be nonsense — it says
+        // what the number means for that operator instead.
+        this.hint.textContent = moving
+            ? this.condition.endsWith('-pct')
+                ? 'percent'
+                : 'price move'
+            : this.distanceHint(price, value);
+        this.valuePlaceholder(moving);
+        this.createBtn.disabled = !Number.isFinite(value) || (moving && value <= 0);
+    }
+
+    /** Seed the field for the CURRENT condition: the live price for a level, empty for a
+     *  distance (with its placeholder saying what kind of number goes there). */
+    private resetValue(): void {
+        const moving = isMoveCondition(this.condition);
+        const price = this.opts.currentPrice();
+        this.value = !moving && price != null ? String(Number(price.toFixed(2))) : '';
+        this.input.value = this.value;
+    }
+
+    /** The level field means a PRICE for the level operators and a DISTANCE for the Moving
+     *  family; the placeholder is the only place that can say so without a legend. */
+    private valuePlaceholder(moving: boolean): void {
+        this.input.placeholder = moving ? (this.condition.endsWith('-pct') ? '1.5' : '2.00') : '';
     }
 
     /** "at market" / "+0.35% from now" — the one number that tells the user where they
@@ -276,16 +339,14 @@ export class AlertCreateSheet {
 
     open(): void {
         this.symbolEl.replaceChildren(iconEl('bell', this.symbolEl.ownerDocument), this.symbolEl.ownerDocument.createTextNode(this.opts.symbol()));
-        const price = this.opts.currentPrice();
         // Prefill with the live print: "alert me if it crosses HERE" is the common case, and
         // a keyboard-first sheet that opens empty makes the user retype a number the chart
-        // already knows.
-        // Two decimals is what the price axis prints; more digits make the field look like
-        // a raw float and force the user to clear it before typing.
-        this.value = price != null ? String(Number(price.toFixed(2))) : '';
-        this.input.value = this.value;
+        // already knows. Two decimals is what the price axis prints.
         this.condition = 'cross';
+        this.resetValue();
         this.frequency = 'once';
+        this.bars = DEFAULT_MOVE_BARS;
+        this.barsInput.value = String(DEFAULT_MOVE_BARS);
         this.paint();
         this.drawer.show();
     }

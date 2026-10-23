@@ -171,6 +171,19 @@ export interface ChartTemplate {
     timeframe?: string;
 }
 
+/** One armed price alert, as the document stores it (no ids that belong to a live session). */
+export interface SavedPriceAlert {
+    cellId: string;
+    symbol: string;
+    condition: string;
+    value: number;
+    frequency: 'once' | 'each';
+    bars: number;
+    state: 'active' | 'fired' | 'paused';
+    createdAt: number;
+    fires: number;
+}
+
 export interface WorkspaceState {
     version: 1;
     /** The layout id — always `'1'` for a widget. Restoring an id that is not
@@ -221,6 +234,13 @@ export interface WorkspaceState {
      * optionally (the symbol/timeframe chips are off by default, as in TradingView).
      */
     templates?: Record<string, ChartTemplate>;
+    /**
+     * PRICE ALERTS — the level/watch rows the user armed, per chart. Persisted because an
+     * alert is a decision the trader made about a market, not a session artifact: a reload
+     * that silently dropped them would leave someone believing they were still covered.
+     * (A script/indicator alert's LOG is session-only — it is a record of what the chart did.)
+     */
+    priceAlerts?: SavedPriceAlert[];
     /** The shell's watchlist — symbols in display order, newest appended. */
     watchlist?: string[];
     /** User-given names for sync groups, keyed by the STABLE group id (`'red'`), not by
@@ -345,6 +365,30 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
             if (cell) byId.set(id, { id, ...cell });
         }
         out.charts = [...byId.values()];
+    }
+    if (Array.isArray(d.priceAlerts)) {
+        const rows: SavedPriceAlert[] = [];
+        for (const raw of d.priceAlerts as unknown[]) {
+            if (raw == null || typeof raw !== 'object') continue;
+            const a = raw as Record<string, unknown>;
+            // A row without a cell id or a numeric level cannot be re-armed — drop it rather
+            // than restoring an alert that can never fire.
+            if (typeof a.cellId !== 'string' || typeof a.symbol !== 'string') continue;
+            if (typeof a.value !== 'number' || !Number.isFinite(a.value)) continue;
+            if (typeof a.condition !== 'string') continue;
+            rows.push({
+                cellId: a.cellId,
+                symbol: a.symbol,
+                condition: a.condition,
+                value: a.value,
+                frequency: a.frequency === 'each' ? 'each' : 'once',
+                bars: typeof a.bars === 'number' && a.bars > 0 ? Math.floor(a.bars) : 5,
+                state: a.state === 'fired' || a.state === 'paused' ? a.state : 'active',
+                createdAt: typeof a.createdAt === 'number' ? a.createdAt : 0,
+                fires: typeof a.fires === 'number' && a.fires >= 0 ? Math.floor(a.fires) : 0,
+            });
+        }
+        if (rows.length > 0) out.priceAlerts = rows;
     }
     if (typeof d.activeCellId === 'string') out.activeCellId = d.activeCellId;
     if (typeof d.timezone === 'string' && d.timezone) out.timezone = d.timezone;

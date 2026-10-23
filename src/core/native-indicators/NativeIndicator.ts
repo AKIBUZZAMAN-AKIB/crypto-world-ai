@@ -52,11 +52,11 @@ export interface NativeIndicatorContext {
     /** The canonical bar array (a live accessor — always current). */
     bars(): readonly OHLCV[];
     /**
-     * The visible bar window (indices into {@link bars}), or null when the renderer has not
-     * reported a range yet. Read LIVE — a native that anchors to "the first visible bar"
-     * (Compare's percent base) needs it at start, not only after the first scroll.
+     * The visible BAR WINDOW — indices into {@link bars} (never times; `onViewport`'s
+     * argument is the visible TIME range). Read LIVE: a native that anchors to "the first
+     * visible bar" (Compare's percent base) needs it at start, not only after a scroll.
      */
-    visibleRange?: () => { from: number; to: number } | null;
+    visibleBars?: () => { from: number; to: number } | null;
     /** Market-data access (trades / capabilities) for data-driven natives. */
     readonly data: DataControl;
     /**

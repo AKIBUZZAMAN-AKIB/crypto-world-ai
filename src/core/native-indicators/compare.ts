@@ -1,15 +1,19 @@
-// Compare — the chart's second symbol, plotted as a study.
+// Compare — the chart's second symbol, with the reference's three display modes.
 //
-// The reference's Compare tool offers three modes: **Same % scale** (both series drawn on
-// the price pane in percent), **New price scale** (the symbol on its own right-hand axis)
-// and **New pane** (its own section below). Two of the three need a SECOND value axis, and
-// a pane here carries exactly one — so this indicator ships the mode that needs none and
-// still answers the question people open Compare for ("did it beat the chart?"):
+// TradingView's Compare tool offers **Same % scale** (both series in percent on the chart's
+// own axis), **New price scale** (the symbol on its own axis column beside the price), and
+// **New pane** (its own section below). All three are this one study — the mode decides the
+// numbers it emits and the pane/scale it is placed on:
 //
-//  · `percent` — both series normalised to % change from the first bar the two share, in
-//    their own pane. This IS the Same % scale arithmetic, moved into a pane because the
-//    price axis cannot be relabelled per series.
-//  · `price` — the other symbol in its own units, own pane (the New pane mode).
+//  · `same-percent` — the symbol is re-based into the CHART's price space
+//    (`chartAnchor × other / otherAnchor`, anchored at the first visible bar). The price
+//    axis is switched to percent by the host, and because the renderer's percent baseline
+//    is that same first visible bar, both lines then read 0% at the left edge and track
+//    each other's performance exactly as the reference does. Pan or zoom and the anchor —
+//    hence every percentage — follows.
+//  · `own-scale` — the symbol's real closes, on the price pane, with its own axis column
+//    (`ownScale`), so two price levels can be read at once.
+//  · `new-pane` — the same real closes in a pane of its own.
 //
 // The series is fetched through the engine's own `fetchSeries` gateway (the path
 // `request.security` uses), so a compare symbol resolves its provider exactly like the
@@ -19,21 +23,26 @@ import type { NativeIndicator, NativeIndicatorContext, NativeIndicatorDescriptor
 import type { InputSchema, InputValue } from '../model/inputs';
 import type { OHLCV } from '../model/ohlcv';
 import type { LineLikeSeries, SeriesPoint } from '../model/series';
-import type { PriceLine } from '../model/scene';
 import { stableSeriesId } from '../model/identity';
-import { ACCENT, NEUTRAL } from '../palette';
+import { ACCENT } from '../palette';
 
 export const COMPARE_TYPE = 'compare';
 
-/** Chart series colour (the "base" line in percent mode) — read like the candles: neutral. */
-const BASE_COLOR = NEUTRAL;
-/** The compare symbol's own line — the accent, so the eye finds the newcomer. */
+/** The reference's three placements, by their own names. */
+export type CompareDisplay = 'same-percent' | 'own-scale' | 'new-pane';
+
+export const COMPARE_DISPLAY_LABELS: Readonly<Record<CompareDisplay, string>> = {
+    'same-percent': 'Same % scale',
+    'own-scale': 'New price scale',
+    'new-pane': 'New pane',
+};
+
+/** The compare symbol's line — the accent, so the eye finds the newcomer. */
 const COMPARE_COLOR = ACCENT;
 
 export interface CompareInputs {
     symbol: string;
-    mode: 'percent' | 'price';
-    base: boolean;
+    display: CompareDisplay;
 }
 
 const INPUTS: InputSchema[] = [
@@ -46,27 +55,18 @@ const INPUTS: InputSchema[] = [
         tooltip: 'The symbol to measure against the chart.',
     },
     {
-        key: 'mode',
+        key: 'display',
         title: 'Display',
         type: 'string',
-        defval: 'percent',
-        options: ['percent', 'price'],
+        defval: 'same-percent',
+        options: ['same-percent', 'own-scale', 'new-pane'],
         group: 'Symbol',
-        tooltip: 'Percent — both series from 0% at the first shared bar. Price — the symbol in its own units.',
-    },
-    {
-        key: 'base',
-        title: 'Chart series',
-        type: 'bool',
-        defval: true,
-        group: 'Symbol',
-        when: { key: 'mode', equals: 'percent' },
-        tooltip: 'Draw the chart’s own % change beside the compare line.',
+        tooltip: 'Same % scale — both series in percent from the first visible bar. New price scale — the symbol on its own axis. New pane — its own section below the chart.',
     },
 ];
 
 /**
- * Align the fetched series onto the chart's bar times. Compare markets keep different
+ * Align the fetched series onto the chart's bar times. Two markets keep different
  * holidays and sessions, so a bar-for-bar zip is wrong — the value in force at each chart
  * bar is the compare symbol's LAST CLOSE AT OR BEFORE it (a step, the way a daily series
  * reads against an intraday chart). PURE — the interesting arithmetic, tested directly.
@@ -92,16 +92,30 @@ export function percentFrom(values: readonly (number | null)[]): Array<number | 
     return values.map((v) => (v == null || !Number.isFinite(v) ? null : (v / first - 1) * 100));
 }
 
+/**
+ * Re-base the compare series into the CHART's price space, anchored at `start` (the first
+ * visible bar): the value a bar would need so that the percent axis prints its own change.
+ * `null` anywhere before both anchors exist. PURE.
+ */
+export function rebaseIntoChart(
+    chartCloses: readonly number[],
+    other: readonly (number | null)[],
+    start: number,
+): Array<number | null> {
+    const chartAnchor = chartCloses[start];
+    const otherAnchor = other[start];
+    if (chartAnchor == null || otherAnchor == null || !Number.isFinite(chartAnchor) || !Number.isFinite(otherAnchor) || otherAnchor === 0) {
+        return chartCloses.map(() => null);
+    }
+    return other.map((v) => (v == null || !Number.isFinite(v) ? null : (chartAnchor * v) / otherAnchor));
+}
+
 class CompareIndicator implements NativeIndicator {
     private ctx: NativeIndicatorContext | null = null;
-    private inputs: CompareInputs = { symbol: '', mode: 'percent', base: true };
+    private inputs: CompareInputs = { symbol: '', display: 'same-percent' };
     private series: OHLCV[] = [];
     private loadedSymbol = '';
     private pending = 0;
-    /** The visible window in bar indices, when the host reports one. The percent base is
-     *  anchored at its LEFT EDGE — the reference's rule ("0% at the first visible bar"),
-     *  which is what makes the line readable instead of starting mid-climb. */
-    private viewport: { from: number; to: number } | null = null;
 
     start(ctx: NativeIndicatorContext, inputs: Record<string, InputValue>): void {
         this.ctx = ctx;
@@ -113,17 +127,19 @@ class CompareIndicator implements NativeIndicator {
         this.emit();
     }
 
-    onViewport(range: { from: number; to: number }): void {
-        this.viewport = range;
+    onViewport(): void {
+        // The anchor follows the LEFT EDGE of the visible window, so a scroll/zoom re-plots
+        // every percentage. The ranges themselves come from `visibleBars()` at emit time —
+        // `onViewport`'s argument is the visible TIME range, not bar indices.
         this.emit();
     }
 
     setInputs(inputs: Record<string, InputValue>): void {
         const next = readInputs(inputs);
-        const symbolChanged = next.symbol !== this.inputs.symbol || next.mode !== this.inputs.mode;
+        const reload = next.symbol !== this.inputs.symbol;
         this.inputs = next;
-        if (symbolChanged || next.symbol !== this.loadedSymbol) void this.load();
-        else this.emit();
+        if (reload || next.symbol !== this.loadedSymbol) void this.load();
+        else this.emit(); // a display switch only re-plots what is already fetched
     }
 
     suspend(): void {
@@ -178,54 +194,33 @@ class CompareIndicator implements NativeIndicator {
         if (!ctx) return;
         const bars = ctx.bars();
         const times = bars.map((b) => b.time);
-        const mode = this.inputs.mode;
+        const aligned = this.series.length > 0 ? alignCloses(times, this.series) : times.map(() => null);
+        const view = ctx.visibleBars?.() ?? null;
         // Everything before the visible window stays blank: the anchor must be the bar the
         // user is looking at, and a line that starts mid-slope reads as a bug.
-        const view = this.viewport ?? ctx.visibleRange?.() ?? null;
-        const start = view ? Math.max(0, Math.min(bars.length, view.from)) : 0;
-        const aligned = this.series.length > 0 ? alignCloses(times, this.series) : times.map(() => null);
-        const windowed = aligned.map((v, i) => (i < start ? null : v));
-        const compareValues = mode === 'percent' ? percentFrom(windowed) : windowed;
-        const series: LineLikeSeries[] = [];
+        const start = view ? Math.max(0, Math.min(Math.max(0, bars.length - 1), Math.floor(view.from))) : 0;
+        const mode = this.inputs.display;
+        const percent = mode === 'same-percent';
+        const values = percent ? rebaseIntoChart(bars.map((b) => b.close), aligned, start) : aligned.map((v, i) => (i < start ? null : v));
         const instanceId = ctx.id;
         const label = this.inputs.symbol.trim() || error || 'Compare';
-
-        series.push({
-            id: stableSeriesId({ instanceId, kind: 'line', title: 'compare', ordinal: 0 }),
-            title: label,
-            paneId: '',
-            kind: 'line',
-            points: toPoints(times, compareValues),
-            style: { color: COMPARE_COLOR, width: 2, lineStyle: 'solid' },
-        });
-        if (mode === 'percent' && this.inputs.base) {
-            const base = percentFrom(bars.map((b, i) => (i < start ? null : b.close)));
-            series.push({
-                id: stableSeriesId({ instanceId, kind: 'line', title: 'base', ordinal: 1 }),
-                title: 'Chart',
+        const series: LineLikeSeries[] = [
+            {
+                id: stableSeriesId({ instanceId, kind: 'line', title: 'compare', ordinal: 0 }),
+                title: percent ? `${label} %` : label,
                 paneId: '',
                 kind: 'line',
-                points: toPoints(times, base),
-                style: { color: BASE_COLOR, width: 1, lineStyle: 'solid' },
-            });
-        }
-        // A dashed 0% rail: without it a flat compare (two identical series, or a market
-        // that has not moved) reads as an EMPTY pane — the line sits on the pane's own
-        // bottom edge and the axis has nothing to label.
-        const priceLines: PriceLine[] =
-            mode === 'percent'
-                ? [
-                      {
-                          id: stableSeriesId({ instanceId, kind: 'hline', title: 'zero', ordinal: 0 }),
-                          paneId: '',
-                          price: 0,
-                          color: NEUTRAL,
-                          lineStyle: 'dashed' as const,
-                          width: 1,
-                      },
-                  ]
-                : [];
-        const out: NativeIndicatorOutput = { series, priceLines };
+                points: toPoints(times, values),
+                style: { color: COMPARE_COLOR, width: 2, lineStyle: 'solid' },
+                // Same-% mode re-bases the symbol into the CHART's price space, so the line
+                // must ride the price pane's own scale (it IS a price series there). In the
+                // other two modes the values are the symbol's real prices, which belong to
+                // the indicator's own axis column — `overlay` would drag them onto the
+                // price scale and leave that column measuring nothing.
+                overlay: percent,
+            },
+        ];
+        const out: NativeIndicatorOutput = { series };
         ctx.emit(out);
     }
 }
@@ -235,11 +230,10 @@ function toPoints(times: readonly number[], values: readonly (number | null)[]):
 }
 
 function readInputs(inputs: Record<string, InputValue>): CompareInputs {
-    const mode = inputs['mode'];
+    const display = inputs['display'];
     return {
         symbol: typeof inputs['symbol'] === 'string' ? inputs['symbol'] : '',
-        mode: mode === 'price' ? 'price' : 'percent',
-        base: inputs['base'] !== false,
+        display: display === 'own-scale' || display === 'new-pane' ? display : 'same-percent',
     };
 }
 
@@ -247,10 +241,12 @@ export const compareDescriptor: NativeIndicatorDescriptor = {
     type: COMPARE_TYPE,
     title: 'Compare',
     shortTitle: 'Compare',
-    paneHint: 'new',
-    overlay: false,
-    reactsToViewport: true,
+    // Mounts ON the price pane sharing its scale — the default mode ("Same % scale") needs
+    // no move at all; the host moves it for the other two.
+    paneHint: 'price',
+    overlay: true,
     category: 'Overlays',
+    reactsToViewport: true,
     inputsSchema: () => INPUTS,
     defaultInputs: () => Object.fromEntries(INPUTS.map((i) => [i.key, i.defval])),
     create: () => new CompareIndicator(),

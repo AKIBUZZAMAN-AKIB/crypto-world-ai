@@ -2411,9 +2411,37 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
                 live: this.config.live && this.replayQueue === null,
                 session: this.config.market.session,
                 bars: () => this.bars,
-                visibleRange: () => {
+                // The visible window as BAR INDICES. `currentVisibleRange()` speaks times
+                // (that is what scripts and `getVisibleRange()` use); a plot needs indices,
+                // and handing times to an index reader silently collapses the window to its
+                // last bar — so the conversion lives here, once.
+                visibleBars: () => {
                     const r = this.currentVisibleRange();
-                    return r ? { from: r.left, to: r.right } : null;
+                    const bars = this.bars;
+                    if (!r || bars.length === 0) return null;
+                    const firstAtOrAfter = (t: number): number => {
+                        let lo = 0;
+                        let hi = bars.length;
+                        while (lo < hi) {
+                            const mid = (lo + hi) >> 1;
+                            if (bars[mid]!.time < t) lo = mid + 1;
+                            else hi = mid;
+                        }
+                        return lo;
+                    };
+                    const lastAtOrBefore = (t: number): number => {
+                        let lo = 0;
+                        let hi = bars.length;
+                        while (lo < hi) {
+                            const mid = (lo + hi) >> 1;
+                            if (bars[mid]!.time <= t) lo = mid + 1;
+                            else hi = mid;
+                        }
+                        return lo - 1;
+                    };
+                    const from = Math.max(0, firstAtOrAfter(r.left));
+                    const to = Math.min(bars.length - 1, lastAtOrBefore(r.right));
+                    return to < from ? null : { from, to };
                 },
                 data: this.dataControl,
                 // A native that needs a SECOND symbol (Compare) rides the same gateway the
@@ -2680,12 +2708,15 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
     ): { paneId: string; ownScale: boolean; insert?: { before?: string; after?: string } } | null {
         if (target === 'price' || (typeof target === 'object' && 'pane' in target && target.pane === 'price')) {
             // Merge onto price: a price-unit overlay (declared overlay=true) keeps sharing the
-            // price scale; anything else gets its own scale column.
-            return { paneId: 'price', ownScale: !model.overlay };
+            // price scale; anything else gets its own scale column. An explicit `ownScale`
+            // wins — that is how Compare switches between "same % scale" (shared) and "new
+            // price scale" (its own column).
+            const explicit = typeof target === 'object' && 'ownScale' in target ? target.ownScale : undefined;
+            return { paneId: 'price', ownScale: explicit ?? !model.overlay };
         }
         if ('pane' in target) {
             if (!this.existingPaneIds().includes(target.pane)) return null;
-            return { paneId: target.pane, ownScale: true };
+            return { paneId: target.pane, ownScale: target.ownScale ?? true };
         }
         // A brand-new pane: the indicator owns it (shares its scale with itself → no own-scale column).
         // The natural name `pane-${id}` collides with this indicator's OWN pane when it is the

@@ -4,7 +4,7 @@
 // wrong in a hand-rolled version: an alert created AT the price (no side to come from) and
 // a repeat alert that must not re-fire while the price sits past the level.
 import { describe, it, expect } from 'vitest';
-import { advanceAlert, alertFires, formatLevel, nextAlertId, type PriceAlert } from '../src/workspace/price-alerts';
+import { advanceAlert, alertFires, formatLevel, movingFires, nextAlertId, type PriceAlert } from '../src/workspace/price-alerts';
 
 const alert = (over: Partial<PriceAlert> = {}): PriceAlert => ({
     id: 'a1',
@@ -16,6 +16,7 @@ const alert = (over: Partial<PriceAlert> = {}): PriceAlert => ({
     state: 'active',
     createdAt: 0,
     anchorPrice: null,
+    bars: 5,
     firedAt: 0,
     fires: 0,
     lineId: '',
@@ -104,5 +105,32 @@ describe('price alert — lifecycle', () => {
         expect(formatLevel(143.5)).toBe('143.50');
         expect(formatLevel(0.0000123)).toMatch(/^0\.00001230|^1\.23e-5/);
         expect(formatLevel(Number.NaN)).toBe('—');
+    });
+});
+
+describe('price alert — moving conditions', () => {
+    it('Moving up fires when the price travelled that far inside the window', () => {
+        expect(movingFires({ condition: 'move-up', value: 2, bars: 3 }, [100, 100, 100, 101, 102])).toBe(true);
+        expect(movingFires({ condition: 'move-up', value: 5, bars: 3 }, [100, 100, 100, 101, 102])).toBe(false);
+    });
+
+    it('Moving down only takes the down direction', () => {
+        expect(movingFires({ condition: 'move-down', value: 2, bars: 2 }, [100, 101, 98])).toBe(true);
+        expect(movingFires({ condition: 'move-down', value: 2, bars: 2 }, [100, 96, 99])).toBe(false);
+    });
+
+    it('the % forms measure percentage, not price units', () => {
+        expect(movingFires({ condition: 'move-up-pct', value: 5, bars: 2 }, [100, 100, 105])).toBe(true);
+        expect(movingFires({ condition: 'move-down-pct', value: 10, bars: 2 }, [100, 100, 90])).toBe(true);
+        expect(movingFires({ condition: 'move-down-pct', value: 10, bars: 2 }, [100, 100, 95])).toBe(false);
+    });
+
+    it('a window that is not filled yet stays quiet (never fires on the first bars)', () => {
+        expect(movingFires({ condition: 'move-up', value: 1, bars: 5 }, [100, 120])).toBe(false);
+    });
+
+    it('a level operator never answers a moving question', () => {
+        expect(movingFires({ condition: 'cross', value: 1, bars: 2 }, [100, 120, 130])).toBe(false);
+        expect(alertFires({ condition: 'move-up', value: 1 }, { prev: 100, now: 130 })).toBe(false);
     });
 });

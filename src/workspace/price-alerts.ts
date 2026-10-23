@@ -11,8 +11,12 @@
 // the crossing arithmetic testable — an off-by-one bar is a silently missed trade alert,
 // so the truth table here is covered by its own spec.
 
-/** The five price conditions a chart alert can carry. */
-export type AlertCondition = 'cross' | 'cross-up' | 'cross-down' | 'gt' | 'lt';
+/**
+ * The conditions a price alert can carry. The five level operators are the reference's
+ * "price alert" set; the four `move-*` ones are its Moving up/down (and % forms), which fire
+ * when the price travels a distance WITHIN a number of bars.
+ */
+export type AlertCondition = 'cross' | 'cross-up' | 'cross-down' | 'gt' | 'lt' | 'move-up' | 'move-down' | 'move-up-pct' | 'move-down-pct';
 
 /** How often the alert may fire. `once` is the reference default for a price alert. */
 export type AlertFrequency = 'once' | 'each';
@@ -32,6 +36,8 @@ export interface PriceAlert {
     createdAt: number;
     /** The price the watch started from — a `crossing` needs a side to come FROM. */
     anchorPrice: number | null;
+    /** Lookback in bars for the Moving family (ignored by the level operators). */
+    bars: number;
     /** When it last fired (0 = never). */
     firedAt: number;
     /** How many times it has fired (a repeat alert counts up). */
@@ -53,7 +59,19 @@ export const CONDITION_LABELS: Readonly<Record<AlertCondition, string>> = {
     'cross-down': 'Crossing down',
     gt: 'Greater than',
     lt: 'Less than',
+    'move-up': 'Moving up',
+    'move-down': 'Moving down',
+    'move-up-pct': 'Moving up %',
+    'move-down-pct': 'Moving down %',
 };
+
+/** Whether a condition needs a LOOKBACK window (the Moving family) rather than a level. */
+export function isMoveCondition(condition: AlertCondition): boolean {
+    return condition.startsWith('move-');
+}
+
+/** Default lookback for a Moving alert — the reference's own example number of bars. */
+export const DEFAULT_MOVE_BARS = 5;
 
 export const FREQUENCY_LABELS: Readonly<Record<AlertFrequency, string>> = {
     once: 'Once only',
@@ -61,7 +79,11 @@ export const FREQUENCY_LABELS: Readonly<Record<AlertFrequency, string>> = {
 };
 
 /** The condition's phrasing with its level, e.g. "Crossing up 143.50". */
-export function describeAlert(alert: Pick<PriceAlert, 'condition' | 'value'>): string {
+export function describeAlert(alert: Pick<PriceAlert, 'condition' | 'value' | 'bars'>): string {
+    if (isMoveCondition(alert.condition)) {
+        const amount = alert.condition.endsWith('-pct') ? `${alert.value}%` : formatLevel(alert.value);
+        return `${CONDITION_LABELS[alert.condition]} ${amount} in ${alert.bars} bar${alert.bars === 1 ? '' : 's'}`;
+    }
     return `${CONDITION_LABELS[alert.condition]} ${formatLevel(alert.value)}`;
 }
 
@@ -86,6 +108,7 @@ export function formatLevel(value: number): string {
  * current price must not fire on the next tick for no reason).
  */
 export function alertFires(alert: Pick<PriceAlert, 'condition' | 'value'>, tick: AlertTick): boolean {
+    if (isMoveCondition(alert.condition)) return false; // a level tick cannot answer a window question
     const { prev, now } = tick;
     if (!Number.isFinite(now)) return false;
     const v = alert.value;
@@ -116,6 +139,8 @@ export function alertFires(alert: Pick<PriceAlert, 'condition' | 'value'>, tick:
             return isAbove && !(prev > v);
         case 'lt':
             return isBelow && !(prev < v);
+        default:
+            return false; // the Moving family is answered by `movingFires`
     }
 }
 
@@ -136,6 +161,35 @@ export function advanceAlert(alert: PriceAlert, tick: AlertTick): { alert: Price
     };
 }
 
+/**
+ * Does a MOVING alert fire? It looks back `bars` bars: the price must have travelled at
+ * least `value` (absolute) or `value`% since the close that many bars ago — up for
+ * `move-up*`, down for `move-down*`. The reference starts the window at the last formed
+ * candle, which is what the caller's close history ends with. PURE.
+ */
+export function movingFires(alert: Pick<PriceAlert, 'condition' | 'value' | 'bars'>, history: readonly number[]): boolean {
+    if (!isMoveCondition(alert.condition)) return false;
+    const lookback = Math.max(1, Math.floor(alert.bars));
+    if (history.length < lookback + 1) return false;
+    const now = history[history.length - 1];
+    const then = history[history.length - 1 - lookback];
+    if (now == null || then == null || !Number.isFinite(now) || !Number.isFinite(then) || then === 0) return false;
+    const delta = now - then;
+    const pct = (delta / then) * 100;
+    switch (alert.condition) {
+        case 'move-up':
+            return delta >= alert.value;
+        case 'move-down':
+            return -delta >= alert.value;
+        case 'move-up-pct':
+            return pct >= alert.value;
+        case 'move-down-pct':
+            return -pct >= alert.value;
+        default:
+            return false;
+    }
+}
+
 /** A short id for a new alert (`a1`, `a2`, …) — unique within the workspace's own list. */
 export function nextAlertId(existing: readonly Pick<PriceAlert, 'id'>[]): string {
     let n = existing.length + 1;
@@ -145,7 +199,7 @@ export function nextAlertId(existing: readonly Pick<PriceAlert, 'id'>[]): string
 }
 
 /** The one-line row the bell shows for a price alert: "AAA · Crossing up 143.50". */
-export function alertRowLabel(alert: Pick<PriceAlert, 'symbol' | 'condition' | 'value' | 'state'>): string {
+export function alertRowLabel(alert: Pick<PriceAlert, 'symbol' | 'condition' | 'value' | 'bars' | 'state'>): string {
     const ticker = alert.symbol.split(':').pop() ?? alert.symbol;
     const state = alert.state === 'paused' ? ' (paused)' : '';
     return `${ticker} · ${describeAlert(alert)}${state}`;

@@ -37,7 +37,10 @@ import { TimeframeQuick } from '../widget/timeframe-quick';
 import { ShortcutsHelp } from '../widget/shortcuts-help';
 import { AlertList } from '../widget/alert-list';
 import { AlertCreateSheet } from '../widget/alert-create';
-import { advanceAlert, alertRowLabel, describeAlert, nextAlertId, type AlertCondition, type AlertFrequency, type PriceAlert } from './price-alerts';
+import { CompareSheet } from '../widget/compare-sheet';
+import type { CompareDisplay } from '../core/native-indicators/compare';
+import type { SavedPriceAlert } from '../state/document';
+import { advanceAlert, alertRowLabel, describeAlert, isMoveCondition, movingFires, nextAlertId, type AlertCondition, type AlertFrequency, type PriceAlert } from './price-alerts';
 import { Tip } from '../widget/tip';
 import { REDUCED_MOTION_CSS } from '../ui/motion';
 import { CommandPalette, type PaletteCommand } from '../widget/command-palette';
@@ -237,6 +240,8 @@ const GAP_PX = 2; // grid gap — the visible seam between cells (splitter strip
 const POOL_CAP = 16; // dormant slot states kept across layout shrinks
 const TIME_AXIS_H = 22; // px the renderer reserves for a time axis (mirrors NativeRenderer's)
 const ALERT_CAP = 50;
+/** Closes kept per chart for the Moving alerts' lookback window (the reference caps at 500). */
+const PRICE_HISTORY = 512;
 /** Fraction of the visible width "jump to real time" pans — many screens wide, so the
  *  renderer's own pan limit (the bounded whitespace past the newest bar) lands it. */
 const REPLAY_JUMP_PANS = 8;
@@ -568,6 +573,53 @@ export class VelaWorkspace {
         this.flushPendingState();
         this.persistNow();
     };
+    /**
+     * Re-arm the document's price alerts. Runs once the cells they name exist; an alert whose
+     * chart is gone (a layout change, a trimmed document) is dropped instead of floating with
+     * no chart to watch, and the level line is redrawn so the chart still shows what is armed.
+     */
+    private restorePriceAlerts(rows: readonly SavedPriceAlert[] | undefined): void {
+        // A document with no alerts CLEARS the arm list: applying a saved layout must not
+        // leave the previous document's levels watching markets they were never set on.
+        for (const alert of this.priceAlerts) {
+            if (!alert.lineId) continue;
+            try {
+                this.cellsById.get(alert.cellId)?.chart.drawings.remove(alert.lineId);
+            } catch {
+                /* the cell may be gone */
+            }
+        }
+        this.priceAlerts = [];
+        if (!rows || rows.length === 0) {
+            this.alertList?.refresh();
+            this.moreDrawer?.refreshAlerts();
+            return;
+        }
+        for (const row of rows) {
+            if (!this.cellsById.has(row.cellId)) continue;
+            const alert: PriceAlert = {
+                id: nextAlertId(this.priceAlerts),
+                cellId: row.cellId,
+                symbol: row.symbol,
+                condition: row.condition as AlertCondition,
+                value: row.value,
+                frequency: row.frequency,
+                state: row.state,
+                createdAt: row.createdAt,
+                anchorPrice: this.lastPrice.get(row.cellId) ?? null,
+                bars: row.bars,
+                firedAt: 0,
+                fires: row.fires,
+                lineId: '',
+            };
+            const cell = this.cellsById.get(row.cellId);
+            if (cell) alert.lineId = this.drawAlertLevel(cell, alert) ?? '';
+            this.priceAlerts.push(alert);
+        }
+        this.alertList?.refresh();
+        this.moreDrawer?.refreshAlerts();
+    }
+
     /** Re-entrance guard around one propagation tick: followers' synchronous echoes
      *  (their setVisibleRange re-emits viewport:changed) must not re-propagate. */
     private syncBusy = false;
@@ -609,11 +661,23 @@ export class VelaWorkspace {
     private priceAlerts: PriceAlert[] = [];
     /** The last price each cell printed, keyed by cell id — the level prefill + the tick feed. */
     private readonly lastPrice = new Map<string, number>();
+    /** The last {@link PRICE_HISTORY} closes per cell — the window a Moving alert looks back
+     *  over. Close-based, matching the reference's "within N bars" rule. */
+    private readonly closeHistory = new Map<string, number[]>();
+    /** The bar time of each entry in {@link closeHistory} (same length, same order). */
+    private readonly closeTimes = new Map<string, number[]>();
     private readonly lastBarTime = new Map<string, number>();
     private alertCreate: AlertCreateSheet | null = null;
     /** The single Compare study's symbol per cell, so a second pick RE-POINTS it instead of
      *  stacking a second pane (the reference keeps one compare per chart). */
     private comparePending = false;
+    /** Per cell+handle: the compare symbol and display the sheet reports (the study keeps
+     *  its own inputs; this is the shell's mirror for UI + placement retries). */
+    private readonly compareSymbols = new Map<string, string>();
+    private readonly compareDisplays = new Map<string, CompareDisplay>();
+    /** Cells whose price axis THIS shell switched to percent for a Same-% compare. */
+    private readonly compareAxisSwitched = new Set<string>();
+    private compareSheet: CompareSheet | null = null;
     /** ⌘K palette — built lazily on first open. */
     private palette: CommandPalette | null = null;
     /** Recently run palette commands, newest first (persisted with the document). */
@@ -1209,6 +1273,9 @@ export class VelaWorkspace {
         this.buildCells();
         this.syncCellPresentation();
         this.setActiveCell(bootActive != null && this.cellsById.has(bootActive) ? bootActive : (this.order[0] ?? null));
+        // Armed levels come back with the document — after the cells exist (their ids are
+        // what the rows name) and after the active cell, so the bell count is right away.
+        this.restorePriceAlerts(boot?.priceAlerts);
         // Shortcuts only fire while focus is INSIDE the workspace (the keymap listens
         // on the root) — autofocus makes them work before the first click.
         if (opts.autofocus) this.refocusActive();
@@ -1447,6 +1514,19 @@ export class VelaWorkspace {
         const state: WorkspaceState = { version: 1, layout: this.def.id, timezone: this.timezone, sync: { ...this.syncOpts }, charts };
         if (this.cursorStyle !== 'cross') state.cursor = this.cursorStyle;
         if (this.activeId) state.activeCellId = this.activeId;
+        if (this.priceAlerts.length > 0) {
+            state.priceAlerts = this.priceAlerts.map((a) => ({
+                cellId: a.cellId,
+                symbol: a.symbol,
+                condition: a.condition,
+                value: a.value,
+                frequency: a.frequency,
+                bars: a.bars,
+                state: a.state,
+                createdAt: a.createdAt,
+                fires: a.fires,
+            }));
+        }
         if (this.favs.length > 0) state.favorites = [...this.favs];
         if (this.tfFavs.length > 0) state.timeframeFavorites = [...this.tfFavs];
         if (this.styleFavs.length > 0) state.chartTypeFavorites = [...this.styleFavs];
@@ -1706,6 +1786,7 @@ export class VelaWorkspace {
             if (nextActive === this.activeId) this.projectActiveCell();
             else this.setActiveCell(nextActive);
             this.refreshRetention();
+            this.restorePriceAlerts(st.priceAlerts); // cells rehydrated in place — same ids
             // Document-level third-party state converges to the document (absent = none);
             // per-cell `ext` was handled by each cell's rehydrate above.
             this.extState = { ...(st.ext ?? {}) };
@@ -1741,6 +1822,7 @@ export class VelaWorkspace {
         if (nextActive === this.activeId) this.projectActiveCell();
         else this.setActiveCell(nextActive);
         this.refreshRetention();
+        this.restorePriceAlerts(st.priceAlerts);
         this.events.emit('layout:changed', { layout: this.def.id });
         // Same convergence as the in-place branch; the rebuilt cells already ran their
         // own cell-scope restores (buildCells → restorePersistedExt).
@@ -2040,6 +2122,7 @@ export class VelaWorkspace {
         this.drawingsDrawer?.destroy();
         this.moreDrawer?.destroy();
         this.alertCreate?.destroy();
+        this.compareSheet?.destroy();
         this.timezoneDrawer?.destroy();
         this.priceScaleDrawer?.destroy();
         this.layoutCtl.destroy();
@@ -2577,6 +2660,7 @@ export class VelaWorkspace {
         chart.on('bar', (bar) => {
             this.lastPrice.set(cell.id, bar.close);
             this.lastBarTime.set(cell.id, bar.time);
+            this.pushClose(cell.id, bar.close, bar.time);
             this.evaluatePriceAlerts(cell, bar.close, bar.time);
         });
         // A STATIC series (host `data`, a restored snapshot) never emits `bar`, so the
@@ -2589,6 +2673,7 @@ export class VelaWorkspace {
             if (!last) return;
             this.lastPrice.set(cell.id, last.close);
             this.lastBarTime.set(cell.id, last.time);
+            this.pushClose(cell.id, last.close, last.time);
         });
         chart.on('alert', (alert) => {
             // Provenance the way a user reads it — symbol, timeframe, and the indicator
@@ -4629,7 +4714,7 @@ export class VelaWorkspace {
             // drawer (its only other door is a right-click, which touch does not have).
             onResetView: () => this.active.resetView(),
             // D1: the second series — same door on for the phone and the desktop sheet.
-            onCompare: () => this.openComparePicker(),
+            onCompare: () => this.openCompare(),
             // …and the rest of that menu as one sheet ("Chart actions…"), so the phone gets
             // the bulk clears too — the one pair of verbs it had no door to at all.
             onChartMenu: () => this.active.openChartMenu(),
@@ -5068,26 +5153,164 @@ export class VelaWorkspace {
         return this.alerts;
     }
 
-    /** Open the symbol search in COMPARE mode — the door to the second series. */
+    /** Open the Compare sheet — symbol, the three displays, and the way back out. */
+    openCompare(): void {
+        this.compareSheet ??= new CompareSheet({
+            host: this.root,
+            getSymbol: () => this.compareSymbolOf(this.activeCell()),
+            getDisplay: () => this.compareDisplayOf(this.activeCell()),
+            onPickSymbol: () => {
+                this.comparePending = true;
+                this.symbolPicker.open('', 'Compare with');
+            },
+            onDisplay: (mode) => this.setCompareDisplay(mode),
+            onRemove: () => this.removeCompare(),
+            onOpenChange: (open) => this.trackDialog(open),
+        });
+        this.compareSheet.open();
+    }
+
+    /** Open the symbol search in COMPARE mode (the sheet's own symbol row). */
     openComparePicker(): void {
+        this.openCompare();
         this.comparePending = true;
         this.symbolPicker.open('', 'Compare with');
     }
 
-    /** Point the active chart's Compare study at `symbol` (add it once, then re-target). */
+    /** The active cell, or null before the first one is built / after teardown. */
+    private activeCell(): ChartCell | null {
+        return this.activeId ? (this.cellsById.get(this.activeId) ?? null) : null;
+    }
+
+    /** The compare study's symbol on a cell (null = nothing compared there). */
+    private compareSymbolOf(cell: ChartCell | null): string | null {
+        const handle = cell?.chart.indicators().find((h) => h.nativeType === 'compare');
+        return handle ? this.compareSymbols.get(`${cell!.id}:${handle.id}`) ?? null : null;
+    }
+
+    /** The compare study's display mode on a cell (the reference default: Same % scale). */
+    private compareDisplayOf(cell: ChartCell | null): CompareDisplay {
+        const handle = cell?.chart.indicators().find((h) => h.nativeType === 'compare');
+        if (!handle || !cell) return 'same-percent';
+        return this.compareDisplays.get(`${cell.id}:${handle.id}`) ?? 'same-percent';
+    }
+
+    /**
+     * Point the active chart's Compare study at `symbol` (add it once, then re-target) and
+     * keep the current display. The sheet stays open behind the picker, so the user lands
+     * back on a painted dialog with the new symbol already in it.
+     */
     setCompareSymbol(symbol: string): void {
         this.comparePending = false;
-        if (!symbol || !this.activeId) return;
-        const cell = this.cellsById.get(this.activeId);
+        const cell = this.activeCell();
         const chart = cell?.chart;
-        if (!chart) return;
+        if (!symbol || !cell || !chart) return;
         const existing = chart.indicators().find((h) => h.nativeType === 'compare');
+        const display = this.compareDisplayOf(cell);
         if (existing) {
-            existing.setInputs({ symbol });
+            existing.setInputs({ symbol, display });
+            this.compareSymbols.set(`${cell.id}:${existing.id}`, symbol);
+            this.applyCompareDisplay(cell, existing.id, display);
         } else {
-            chart.addNativeIndicator('compare', { inputs: { symbol } });
+            const handle = chart.addNativeIndicator('compare', { inputs: { symbol, display } });
+            this.compareSymbols.set(`${cell.id}:${handle.id}`, symbol);
+            // The model is mounted a beat later; place it once it exists (and once more if
+            // the host asked for a non-default mode).
+            this.applyCompareDisplay(cell, handle.id, display);
         }
         this.toast(`Comparing with ${parseSymbol(symbol).ticker || symbol}`, 'info', 2200);
+        this.compareSheet?.refresh();
+        this.markStateDirty();
+    }
+
+    /** Switch the active chart's compare between the reference's three displays. */
+    setCompareDisplay(mode: CompareDisplay): void {
+        const cell = this.activeCell();
+        const chart = cell?.chart;
+        if (!cell || !chart) return;
+        const handle = chart.indicators().find((h) => h.nativeType === 'compare');
+        if (!handle) return;
+        this.compareDisplays.set(`${cell.id}:${handle.id}`, mode);
+        handle.setInputs({ display: mode });
+        this.applyCompareDisplay(cell, handle.id, mode);
+        this.compareSheet?.refresh();
+        this.markStateDirty();
+    }
+
+    /** Take the compare off the active chart (and put the price axis back). */
+    removeCompare(): void {
+        const cell = this.activeCell();
+        const chart = cell?.chart;
+        if (!cell || !chart) return;
+        const handle = chart.indicators().find((h) => h.nativeType === 'compare');
+        if (!handle) return;
+        const key = `${cell.id}:${handle.id}`;
+        handle.remove();
+        this.compareSymbols.delete(key);
+        this.compareDisplays.delete(key);
+        this.restoreCompareAxis(cell);
+        this.compareSheet?.refresh();
+        this.markStateDirty();
+    }
+
+    /**
+     * Apply a display to a mounted compare study: the pane/scale placement and, for the
+     * Same-% mode, the price axis itself. Retried briefly because a freshly added native
+     * has no render handle for the first tick — a silent no-op would leave the line in a
+     * pane of its own while the sheet claims "Same % scale".
+     */
+    private applyCompareDisplay(cell: ChartCell, id: string, mode: CompareDisplay, attempt = 0): void {
+        const chart = cell.chart;
+        const handle = chart.indicators().find((h) => h.id === id);
+        if (!handle) return;
+        // The compare line reads ON TOP of the candles (the reference paints a compared
+        // symbol over the price) — a native indicator otherwise mounts BEHIND them, which
+        // hides the line wherever it tracks the chart's own price.
+        try {
+            chart.renderer.set('seriesOrder', { id, to: 'front' });
+        } catch {
+            /* a renderer without series ordering still draws the study */
+        }
+        const panes = chart.panes;
+        const placed = (() => {
+            if (!panes.supported) return true;
+            try {
+                if (mode === 'new-pane') panes.moveIndicator(id, { newPane: true });
+                else panes.moveIndicator(id, { pane: 'price', ownScale: mode === 'own-scale' });
+                // The engine's listing is the truth: is the study where the mode says?
+                const info = panes.list().find((p) => p.indicators.some((i) => i.id === id));
+                if (!info) return false;
+                if (mode === 'new-pane') return info.id !== 'price';
+                return info.id === 'price' && info.indicators.find((i) => i.id === id)?.ownScale === (mode === 'own-scale');
+            } catch {
+                return false;
+            }
+        })();
+        if (!placed && attempt < 12) {
+            const timer = setTimeout(() => this.applyCompareDisplay(cell, id, mode, attempt + 1), 120);
+            if (typeof timer === 'object' && 'unref' in timer) (timer as { unref?: () => void }).unref?.();
+        }
+        if (mode === 'same-percent') {
+            // The reference switches the axis itself: both series are shown in percent from
+            // the first visible bar. Remember that WE made the switch so leaving Compare can
+            // put back whatever the user had.
+            if (chart.renderer.get('scaleMode') !== 'percent') {
+                chart.renderer.set('scaleMode', 'percent');
+                this.compareAxisSwitched.add(cell.id);
+            }
+        } else {
+            this.restoreCompareAxis(cell);
+        }
+    }
+
+    /** Undo the percent axis this shell switched to for a Same-% compare. */
+    private restoreCompareAxis(cell: ChartCell): void {
+        if (!this.compareAxisSwitched.delete(cell.id)) return;
+        try {
+            if (cell.chart.renderer.get('scaleMode') === 'percent') cell.chart.renderer.set('scaleMode', 'price');
+        } catch {
+            /* the cell is on its way out */
+        }
     }
 
     /** The last price the ACTIVE chart printed (the alert sheet's default level), or null
@@ -5114,7 +5337,7 @@ export class VelaWorkspace {
     }
 
     /** Arm one price alert on the active chart, draw its level line, and tell the user. */
-    private createPriceAlert(req: { condition: AlertCondition; value: number; frequency: AlertFrequency }): boolean {
+    private createPriceAlert(req: { condition: AlertCondition; value: number; frequency: AlertFrequency; bars: number }): boolean {
         const id = this.activeId;
         if (!id) return false;
         const cell = this.cellsById.get(id);
@@ -5130,6 +5353,7 @@ export class VelaWorkspace {
             state: 'active',
             createdAt: Date.now(),
             anchorPrice: this.lastPrice.get(id) ?? null,
+            bars: req.bars,
             firedAt: 0,
             fires: 0,
             lineId: '',
@@ -5158,6 +5382,12 @@ export class VelaWorkspace {
     /** Draw the dotted level with the cell's own hline tool (the reference's alert line). */
     private drawAlertLevel(cell: ChartCell, alert: PriceAlert): string | null {
         try {
+            // A restored document already carries the line: user drawings persist with the
+            // cell, so re-arming would otherwise stack a SECOND dotted line on the level.
+            // Recovery is by what the line IS (a dotted hline at the alert's price) — a
+            // per-type `props` bag does not round-trip for an hline.
+            const existing = this.alertLineAt(cell, alert.value);
+            if (existing) return existing;
             const time = this.lastBarTime.get(cell.id) ?? Date.now();
             const drawing = cell.chart.drawings.add('hline', {
                 anchors: [{ time, price: alert.value }],
@@ -5171,6 +5401,18 @@ export class VelaWorkspace {
         }
     }
 
+    /** The id of the dotted level line at `price` on this cell, when one is already drawn. */
+    private alertLineAt(cell: ChartCell, price: number): string | null {
+        try {
+            const hit = cell.chart.drawings
+                .all()
+                .find((d) => d.type === 'hline' && d.style?.lineStyle === 'dotted' && d.anchors?.[0]?.price === price);
+            return hit ? String(hit.id) : null;
+        } catch {
+            return null;
+        }
+    }
+
     /** Delete an armed alert (and the drawing it owns). */
     removePriceAlert(alertId: string): void {
         const idx = this.priceAlerts.findIndex((a) => a.id === alertId);
@@ -5178,7 +5420,8 @@ export class VelaWorkspace {
         const removed = this.priceAlerts.splice(idx, 1)[0];
         if (!removed) return;
         const alert = removed;
-        if (alert.lineId) {
+        const shared = this.priceAlerts.some((other) => other.lineId === alert.lineId && other.lineId !== '');
+        if (alert.lineId && !shared) {
             const cell = this.cellsById.get(alert.cellId);
             try {
                 cell?.chart.drawings.remove(alert.lineId);
@@ -5212,6 +5455,31 @@ export class VelaWorkspace {
             .map((a) => ({ id: a.id, label: alertRowLabel(a), state: a.state, fires: a.fires, onDelete: () => this.removePriceAlert(a.id) }));
     }
 
+    /** Append a close to the cell's rolling window (one entry per BAR — a live tick that
+     *  updates the same bar REPLACES its entry, so "within 5 bars" counts bars, not ticks). */
+    private pushClose(cellId: string, close: number, time: number): void {
+        let hist = this.closeHistory.get(cellId);
+        if (!hist) {
+            hist = [];
+            this.closeHistory.set(cellId, hist);
+        }
+        let times = this.closeTimes.get(cellId);
+        if (!times) {
+            times = [];
+            this.closeTimes.set(cellId, times);
+        }
+        const lastTime = times[times.length - 1];
+        if (lastTime === time && hist.length > 0) hist[hist.length - 1] = close;
+        else {
+            hist.push(close);
+            times.push(time);
+            if (hist.length > PRICE_HISTORY) {
+                hist.shift();
+                times.shift();
+            }
+        }
+    }
+
     /** Evaluate every armed alert that belongs to this cell against one printed price. */
     private evaluatePriceAlerts(cell: ChartCell, price: number, time: number): void {
         if (this.priceAlerts.length === 0) return;
@@ -5219,6 +5487,21 @@ export class VelaWorkspace {
         for (let i = 0; i < this.priceAlerts.length; i += 1) {
             const current = this.priceAlerts[i];
             if (!current || current.cellId !== cell.id) continue;
+            if (isMoveCondition(current.condition)) {
+                // A Moving alert asks a WINDOW question, not a level one.
+                if (current.state !== 'active') continue;
+                if (!movingFires(current, this.closeHistory.get(cell.id) ?? [])) continue;
+                const next: PriceAlert = {
+                    ...current,
+                    state: current.frequency === 'once' ? 'fired' : 'active',
+                    firedAt: time,
+                    fires: current.fires + 1,
+                };
+                this.priceAlerts[i] = next;
+                changed = true;
+                this.recordPriceAlert(next);
+                continue;
+            }
             const prev = current.anchorPrice;
             const { alert, fired } = advanceAlert(current, { prev, now: price });
             if (alert !== current) {

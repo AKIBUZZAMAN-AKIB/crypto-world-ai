@@ -8,5 +8,7 @@ import { defineConfig } from 'vite';
  */
 export default defineConfig({
     root: 'playground',
-    server: { port: 5190, strictPort: true },
+    // `allowedHosts`: the playground is routinely served through a proxy/tunnel (a sandbox
+    // preview, a share link), and Vite's host check would answer those with a blank 403.
+    server: { host: '0.0.0.0', port: 5190, strictPort: true, allowedHosts: true },
 });

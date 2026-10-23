@@ -405,7 +405,13 @@ export interface RendererDisplayOptions {
  */
 export type MoveTarget =
     | 'price'
-    | { pane: string }
+    /**
+     * An existing pane. `ownScale` decides whether the indicator KEEPS its own value-axis
+     * column beside the pane's (TradingView's "new price scale") or joins the pane's scale:
+     * on the price pane the default follows the model (a price-unit overlay shares it,
+     * anything else takes a column); on a study pane the default is its own column.
+     */
+    | { pane: string; ownScale?: boolean }
     | { newPane: { before?: string; after?: string } | true };
 
 /** A pane and the indicators it holds — a `chart.panes.list()` entry. */
