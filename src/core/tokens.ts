@@ -86,6 +86,9 @@ export function themeTokens(t: VelaTheme): Record<string, string> {
         // Fixed ink for saturated fills (accent buttons, categorical avatars) — those fills
         // are theme-independent, so their ink is too.
         '--vela-fg-on-fill': '#ffffff',
+        // The star (favourites). Gold rather than the accent blue: a star that reads as a
+        // star, and one glance separates "this is selected" from "this is pinned".
+        '--vela-star': dark ? '#f5b93b' : '#c98a08',
         '--vela-up': t.upColor,
         '--vela-down': t.downColor,
         '--vela-danger': t.downColor,

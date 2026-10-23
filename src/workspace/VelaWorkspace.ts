@@ -447,7 +447,8 @@ export class VelaWorkspace {
      *  stay transient and per-cell: they exit when the focus leaves. */
     private globalTool: DrawingTypeKey | null = null;
     private globalSnap: SnapMode = 'off';
-    private globalStay = false;
+    /** Sticky drawing (TradingView's stay-in-drawing-mode) is the DEFAULT. */
+    private globalStay = true;
     /** Live subscription to the ACTIVE cell's unified history (rebound on every projection). */
     private historyUnsub: (() => void) | null = null;
     /** Favorite drawing tools — a WORKSPACE preference (one star set, every cell). */
@@ -2083,7 +2084,9 @@ export class VelaWorkspace {
         if (Object.keys(this.toolDefs).length > 0) out.defaults = { ...this.toolDefs };
         if (Object.keys(this.toolTemplates).length > 0) out.templates = { ...this.toolTemplates } as Record<string, unknown[]>;
         if (this.globalSnap !== 'off') out.magnet = this.globalSnap;
-        if (this.globalStay) out.stay = true;
+        // Only a DEVIATION is written: sticky drawing is the default, so a document records
+        // `stay: false` when its owner opted out.
+        if (!this.globalStay) out.stay = false;
         return Object.keys(out).length > 0 ? out : null;
     }
 

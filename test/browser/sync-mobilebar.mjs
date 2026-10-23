@@ -32,7 +32,7 @@ const read = () =>
             drawH: draw ? Math.round(draw.getBoundingClientRect().height) : 0,
             legacyLayoutStop: !!document.querySelector('.vela-mb-layout'),
             sheetOpen: !!sheet && sheet.getBoundingClientRect().width > 0,
-            tiles: sheet ? [...sheet.querySelectorAll('.vela-cts-tile')].map((t) => ({ id: t.dataset.id, on: t.dataset.on === '1' })) : [],
+            tiles: sheet ? [...sheet.querySelectorAll('.vela-cts-cell')].map((c) => ({ id: c.dataset.id, on: c.dataset.on === '1' })) : [],
             style: ws?.active?.priceStyle ?? null,
             tool: ws?.active?.chart?.drawings?.getTool?.() ?? null,
             scrollX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -41,6 +41,9 @@ const read = () =>
 
 try {
     await page.goto(OFFLINE, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__ws?.cells().length >= 1, null, { timeout: 60000 });
+    await page.evaluate(() => localStorage.removeItem('vela-favorites-v1'));
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__ws?.cells().length >= 1, null, { timeout: 60000 });
     await page.waitForTimeout(1200);
 
@@ -72,6 +75,42 @@ try {
     assert(!m.sheetOpen, 'the sheet closes on a pick', m.sheetOpen);
     assert(m.styleGlyph !== before && m.styleLabel?.includes('Line') === true, 'the stop mirrors the new style', { glyphChanged: m.styleGlyph !== before, label: m.styleLabel });
     facts.pick = { style: m.style, label: m.styleLabel };
+
+    // ── favourites: a star per tile, pinned above the rest, filterable ──────────
+    await page.locator('.vela-mb-style').tap();
+    await page.waitForTimeout(300);
+    for (const id of ['candles', 'renko']) {
+        await page.locator(`.vela-cts-cell[data-id="${id}"] .vela-cts-star`).tap();
+        await page.waitForTimeout(150);
+    }
+    const fav = await page.evaluate(() => {
+        const sheet = document.querySelector('.vela-cts');
+        const favSec = sheet?.querySelector('[data-sec="fav"]');
+        const allSec = sheet?.querySelector('[data-sec="all"]');
+        return {
+            pinned: [...(favSec?.querySelectorAll('.vela-cts-cell') ?? [])].map((c) => c.dataset.id),
+            rest: [...(allSec?.querySelectorAll('.vela-cts-cell') ?? [])].map((c) => c.dataset.id),
+            stars: sheet?.querySelectorAll('.vela-cts-star[aria-pressed="true"]').length ?? 0,
+            gold: getComputedStyle(sheet.querySelector('.vela-cts-star[aria-pressed="true"]')).color,
+        };
+    });
+    assert(fav.pinned.length === 2 && fav.stars === 2, 'starred styles are pinned above the rest', fav);
+    assert(!fav.rest.includes('candles') && !fav.rest.includes('renko'), 'a pinned style leaves the All list (no duplicates)', fav.rest.slice(0, 3));
+
+    await page.locator('.vela-cts-only').tap();
+    await page.waitForTimeout(300);
+    const only = await page.evaluate(() => ({
+        pressed: document.querySelector('.vela-cts-only')?.getAttribute('aria-pressed'),
+        visible: [...document.querySelectorAll('.vela-cts-cell')].filter((c) => !c.hidden).map((c) => c.dataset.id),
+        allHidden: document.querySelector('[data-sec="all"]')?.hidden,
+    }));
+    assert(only.pressed === 'true' && only.allHidden === true, 'the star filter drops every non-favourite', only);
+    assert(only.visible.length === 2, 'exactly the starred styles remain', only.visible);
+    await page.locator('.vela-cts-only').tap();
+    await page.waitForTimeout(250);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+    facts.favourites = { pinned: fav.pinned, gold: fav.gold, only: only.visible };
 
     // ── API path → the mirror is truthful without a tap ─────────────────────────
     await page.evaluate(() => window.__ws.active.setPriceStyle('renko'));
@@ -116,6 +155,44 @@ try {
     await page.evaluate(() => window.__ws.active.chart.drawings.setMode(null));
     await page.waitForTimeout(300);
     facts.drawings = { idle: m.drawLabel };
+
+    // ── sticky drawing: TradingView keeps the tool in hand; so do we ───────────
+    // Back to the first cell (top-left) so the fixed plot coordinates below are inside it.
+    await page.evaluate(() => window.__ws.setActiveCell(window.__ws.cells()[0].id));
+    await page.waitForTimeout(400);
+    const sticky = await page.evaluate(() => ({ stay: window.__ws.active.chart.drawings.getStayMode() }));
+    assert(sticky.stay === true, 'stay-in-drawing-mode is ON by default', sticky);
+    await page.evaluate(() => window.__ws.active.chart.drawings.setTool('trendline'));
+    await page.waitForTimeout(250);
+    // Two gestures: the first pointer-down after a sheet closes is consumed by the chart's
+    // own dismissal path, so the SECOND placement is the one the assertions read. Both are
+    // the same armed tool — which is exactly the point.
+    const place = async (y1, x2, y2) => {
+        await page.mouse.move(60, y1);
+        await page.mouse.down();
+        await page.mouse.move(x2, y2, { steps: 6 });
+        await page.mouse.up();
+        await page.waitForTimeout(400);
+    };
+    await place(180, 140, 130);
+    await place(260, 150, 210);
+    const placed = await page.evaluate(() => ({
+        tool: window.__ws.active.chart.drawings.getTool(),
+        count: window.__ws.active.chart.drawings.all().length,
+        label: document.querySelector('.vela-mb-drawings')?.getAttribute('aria-label'),
+        pillShown: document.querySelector('.vela-drawpill')?.hidden === false,
+    }));
+    assert(placed.count >= 1, 'a drag places a drawing', placed);
+    assert(placed.tool === 'trendline', 'the tool is STILL armed after the placement', placed);
+    assert(placed.label?.startsWith('Drawing — Trend Line') === true, 'the bar still mirrors it', placed.label);
+    assert(placed.pillShown, 'the drawing pill stays on screen (the tool is not gone)', placed);
+    await page.evaluate(() => {
+        const d = window.__ws.active.chart.drawings;
+        d.setTool(null);
+        for (const one of d.all()) d.remove(one.id);
+    });
+    await page.waitForTimeout(250);
+    facts.sticky = placed;
 
     // ── the layout door the bar gave up: one row inside the sheet ──────────────
     await page.locator('.vela-mb-style').tap();

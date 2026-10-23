@@ -4,6 +4,10 @@
 // every group into one filtered list. Data comes from the same DOM-free toolbar model
 // the docked bar paints (`ToolbarDefinition`), so custom `options.drawings` sets and
 // plugin-registered types appear here automatically.
+//
+// FAVOURITES: the star on a row was decoration without a door. A lead tab (★) now lists
+// every starred tool across all groups — TradingView's favourites tab — so a trader who
+// has pinned four tools never pages through five categories to reach them.
 import { Drawer } from '../ui/components/drawer';
 import { iconEl } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
@@ -67,6 +71,10 @@ const CSS = `
     -webkit-tap-highlight-color: transparent;
 }
 .vela-dd-tab[data-active='1'] { color: var(--vela-fg-bright); background: var(--vela-hover); }
+/* The favourites tab is a glyph, not a word: it is a MODE over the same list. */
+.vela-dd-tab[data-fav='1'] { padding: 0 10px; }
+.vela-dd-tab[data-fav='1'] .vela-icon { font-size: 15px; width: 15px; height: 15px; }
+.vela-dd-tab[data-fav='1'][data-active='1'] { color: var(--vela-star, var(--vela-highlight)); }
 .vela-dd-list { padding: 6px 0 4px; }
 .vela-dd-section {
     padding: 10px 2px 6px;
@@ -105,9 +113,12 @@ const CSS = `
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
-.vela-dd-star[data-on='1'] { color: var(--vela-highlight); }
+.vela-dd-star[data-on='1'] { color: var(--vela-star, var(--vela-highlight)); }
 .vela-dd-empty { padding: 18px 2px; color: var(--vela-fg-muted); font-size: 13px; }
 `;
+
+/** The favourites tab's sentinel id — never a real group id. */
+const FAV_TAB = '__fav';
 
 export interface DrawingsDrawerOptions {
     host: HTMLElement;
@@ -164,7 +175,9 @@ export class DrawingsDrawer {
 
     open(): void {
         this.definition = this.opts.toolbar();
-        if (!this.definition.groups.some((g) => g.id === this.activeGroup)) this.activeGroup = this.definition.groups[0]?.id ?? '';
+        if (this.activeGroup !== FAV_TAB && !this.definition.groups.some((g) => g.id === this.activeGroup)) {
+            this.activeGroup = this.definition.groups[0]?.id ?? '';
+        }
         this.input.value = '';
         this.renderTabs();
         this.renderList();
@@ -183,10 +196,10 @@ export class DrawingsDrawer {
      *  shows the flattened results — no tabs to page through, so the swipe is inert. */
     private stepGroup(step: number): void {
         if (this.input.value.trim()) return;
-        const groups = this.definition.groups;
-        const next = groups[groups.findIndex((g) => g.id === this.activeGroup) + step];
-        if (!next) return;
-        this.activeGroup = next.id;
+        const ids = [FAV_TAB, ...this.definition.groups.map((g) => g.id)];
+        const next = ids[ids.indexOf(this.activeGroup) + step];
+        if (next === undefined) return;
+        this.activeGroup = next;
         this.renderTabs();
         this.renderList();
         this.tabs.querySelector('[data-active="1"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
@@ -195,6 +208,23 @@ export class DrawingsDrawer {
     private renderTabs(): void {
         const doc = this.tabs.ownerDocument;
         this.tabs.replaceChildren();
+        const fav = doc.createElement('button');
+        fav.className = 'vela-dd-tab';
+        fav.dataset.fav = '1';
+        fav.setAttribute('aria-label', 'Favourites');
+        fav.appendChild(iconEl('star', doc));
+        if (this.activeGroup === FAV_TAB) {
+            fav.dataset.active = '1';
+            fav.setAttribute('aria-label', 'Favourites');
+            fav.replaceChildren(iconEl('star-filled', doc));
+        }
+        fav.addEventListener('click', () => {
+            this.activeGroup = FAV_TAB;
+            this.input.value = '';
+            this.renderTabs();
+            this.renderList();
+        });
+        this.tabs.appendChild(fav);
         for (const group of this.definition.groups) {
             const tab = doc.createElement('button');
             tab.className = 'vela-dd-tab';
@@ -246,6 +276,8 @@ export class DrawingsDrawer {
                 const on = !this.opts.isFavorite(tool.type);
                 this.opts.onFavorite(tool.type, on);
                 paintStar(on);
+                // Unstarring INSIDE the favourites tab removes the row it sits on.
+                if (this.activeGroup === FAV_TAB) this.renderList();
             });
             el.append(glyph, label, star);
             el.addEventListener('click', () => {
@@ -269,6 +301,26 @@ export class DrawingsDrawer {
                 const empty = doc.createElement('div');
                 empty.className = 'vela-dd-empty';
                 empty.textContent = 'No tools match.';
+                this.list.appendChild(empty);
+            }
+            return;
+        }
+
+        if (this.activeGroup === FAV_TAB) {
+            // Every starred tool, across every group, under its own group's heading —
+            // the short list TradingView's favourites tab gives you.
+            let any = false;
+            for (const g of this.definition.groups) {
+                const pinned = g.tools.filter((t) => this.opts.isFavorite(t.type));
+                if (pinned.length === 0) continue;
+                any = true;
+                section(g.label);
+                for (const tool of pinned) row(tool);
+            }
+            if (!any) {
+                const empty = doc.createElement('div');
+                empty.className = 'vela-dd-empty';
+                empty.textContent = 'No favourites yet — tap the star on any tool to pin it here.';
                 this.list.appendChild(empty);
             }
             return;

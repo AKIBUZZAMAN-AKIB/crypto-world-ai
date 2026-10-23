@@ -80,19 +80,21 @@ describe('drawing tool preferences in a workspace', () => {
         expect(second.cell('c1')!.chart.drawings.add('hline', { anchors: [ANCHORS[1]!] })!.style.lineColor).toBe('#00aa55');
     });
 
-    it('the magnet and stay-in-drawing-mode come back after a restore', () => {
+    it('the magnet and an OPT-OUT of sticky drawing come back after a restore', () => {
         const first = mountWorkspace({ layout: '1' });
         const c1 = first.cell('c1')!.chart.drawings;
+        expect(c1.getStayMode()).toBe(true); // sticky drawing is the house default
         c1.setSnapMode('strong');
-        c1.setStayMode(true);
+        c1.setStayMode(false); // …and this owner turned it off
         const saved = JSON.parse(JSON.stringify(first.getState()));
-        expect(saved.drawingTools).toMatchObject({ magnet: 'strong', stay: true });
+        expect(saved.drawingTools).toMatchObject({ magnet: 'strong', stay: false });
 
         const second = mountWorkspace({ layout: '1' });
+        expect(second.cell('c1')!.chart.drawings.getStayMode()).toBe(true); // a fresh boot is sticky
         second.applyState(saved);
         const c = second.cell('c1')!.chart.drawings;
         expect(c.getSnapMode()).toBe('strong');
-        expect(c.getStayMode()).toBe(true);
+        expect(c.getStayMode()).toBe(false);
     });
 
     it('a style saved on one chart is offered on every chart and survives a restore', () => {

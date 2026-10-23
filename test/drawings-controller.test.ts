@@ -171,6 +171,7 @@ describe('DrawingController (enabled)', () => {
 
     it('settings + tool-finished intents', () => {
         const { port, ctrl, seen } = setup();
+        ctrl.setStayMode(false); // opt out of sticky drawing to exercise the one-shot path
         ctrl.setTool('trendline');
         port.fire({ kind: 'tool-finished', type: 'trendline' });
         expect(port.activeTool).toBeNull(); // one-shot disarm
@@ -194,14 +195,15 @@ describe('DrawingController (enabled)', () => {
         expect(port.activeTool).toBe('highlighter');
     });
 
-    it('stay-in-drawing-mode keeps a one-shot tool armed after placement', () => {
+    it('a placed tool stays armed by DEFAULT (TradingView stickiness), until stay mode is off', () => {
         const { port, ctrl } = setup();
-        ctrl.setStayMode(true);
+        expect(ctrl.getStayMode()).toBe(true); // the house default, not an opt-in
         ctrl.setTool('trendline');
-        port.fire({ kind: 'tool-finished', type: 'trendline' });
-        expect(ctrl.getTool()).toBe('trendline');
+        port.fire({ kind: 'tool-finished', type: 'trendline' }); // one placement…
+        expect(ctrl.getTool()).toBe('trendline'); // …and the tool is still in hand
+        port.fire({ kind: 'tool-finished', type: 'trendline' }); // and a second
         expect(port.activeTool).toBe('trendline');
-        // Turning it off restores one-shot disarm.
+        // Turning stay mode off restores one-shot disarm.
         ctrl.setStayMode(false);
         port.fire({ kind: 'tool-finished', type: 'trendline' });
         expect(ctrl.getTool()).toBeNull();
@@ -664,6 +666,7 @@ describe('DrawingController — tool/mode seams (the external-toolbar surface)',
         const tools: Array<string | null> = [];
         events.on('drawing:tool', (e) => tools.push(e.type));
 
+        ctrl.setStayMode(false); // the one-shot path (sticky is the default)
         ctrl.setTool('trendline');
         ctrl.setTool('trendline'); // re-arm same tool → port push, but no duplicate event
         port.fire({ kind: 'tool-finished', type: 'trendline' }); // one-shot → back to pointer
@@ -700,11 +703,13 @@ describe('DrawingController — tool/mode seams (the external-toolbar surface)',
         const stays: boolean[] = [];
         events.on('drawing:stay', (e) => stays.push(e.on));
 
+        ctrl.setStayMode(false); // sticky is the default, so the first move is the opt-out
+        expect(port.stayModes).toEqual([false]);
         ctrl.setStayMode(true);
         ctrl.setStayMode(true); // no-op
-        expect(port.stayModes).toEqual([true]);
+        expect(port.stayModes).toEqual([false, true]);
         expect(ctrl.getStayMode()).toBe(true);
-        expect(stays).toEqual([true]);
+        expect(stays).toEqual([false, true]);
     });
 
     it('an in-chart stay-mode click arrives as a stay-mode intent: mirror + event, echo-safe', () => {
@@ -712,10 +717,12 @@ describe('DrawingController — tool/mode seams (the external-toolbar surface)',
         const stays: boolean[] = [];
         events.on('drawing:stay', (e) => stays.push(e.on));
 
-        port.fire({ kind: 'stay-mode', on: true });
-        port.fire({ kind: 'stay-mode', on: true }); // renderer echo of an equal value → dropped
-        expect(ctrl.getStayMode()).toBe(true);
-        expect(stays).toEqual([true]);
+        port.fire({ kind: 'stay-mode', on: false }); // the toolbar turning the DEFAULT off
+        port.fire({ kind: 'stay-mode', on: false }); // renderer echo of an equal value → dropped
+        expect(ctrl.getStayMode()).toBe(false);
+        expect(stays).toEqual([false]);
+        port.fire({ kind: 'stay-mode', on: true }); // and back on
+        expect(stays).toEqual([false, true]);
         expect(port.stayModes).toEqual([]); // an intent must never bounce back as a command
     });
 
@@ -741,7 +748,7 @@ describe('DrawingController — tool/mode seams (the external-toolbar surface)',
         ctrl.setStayMode(true);
         ctrl.setMode('eraser');
         expect(ctrl.getSnapMode()).toBe('off'); // mirrors keep their defaults
-        expect(ctrl.getStayMode()).toBe(false);
+        expect(ctrl.getStayMode()).toBe(true); // …and sticky drawing IS the default
         expect(ctrl.getMode()).toBe(null);
     });
 });

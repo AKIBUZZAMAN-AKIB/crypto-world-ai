@@ -60,8 +60,11 @@ export class DrawingController {
     /** Mirror of the renderer's sticky magnet mode (the renderer default is 'off'). */
     private snapMode: SnapMode = 'off';
     private snapToIndicators = false;
-    /** When on, finishing a drawing leaves the tool armed (instead of one-shot disarm). */
-    private stayInDrawingMode = false;
+    /** When on, finishing a drawing leaves the tool armed (instead of one-shot disarm).
+     *  ON by default — TradingView's behaviour, and what a trader expects from a chart:
+     *  pick a tool once, place as many as you need, then leave the tool (Esc, the cursor,
+     *  the active tool again, or the stay toggle itself). */
+    private stayInDrawingMode = true;
     private allHidden = false;
     /** Mirror of the renderer-local mode (measure/eraser/none). */
     private mode: DrawingMode = null;
@@ -707,8 +710,9 @@ export class DrawingController {
                 }
                 break;
             case 'tool-finished':
-                // Most tools are one-shot (revert to the pointer once placed); brush-family tools
-                // always stay armed, and stay-in-drawing-mode keeps every tool armed.
+                // Sticky by default (stay-in-drawing-mode), exactly like TradingView: the tool
+                // survives the placement. With stay mode OFF most tools are one-shot again;
+                // brush-family tools stay armed either way (a stroke is a gesture, not a place).
                 if (!this.stayInDrawingMode && i.type !== 'freehand' && i.type !== 'highlighter') this.setTool(null);
                 break;
             case 'undo':

@@ -2,8 +2,9 @@
 // The mobile bar's three MIRROR stops: maximize (present only when the shell passes a
 // toggle, hideable at runtime), chart type (glyph = the active price style, tap = the
 // style sheet) and drawings (glyph = the armed tool, lit while armed).
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MobileBar, type MobileBarOptions } from '../src/widget/mobile-bar';
+import { resetFavoritesCache, toggleFavorite } from '../src/widget/favorites';
 import { getDrawingType } from '../src/core/drawings';
 import type { Vela } from '../src/Vela';
 
@@ -60,6 +61,17 @@ const STYLES = [
     { id: 'line', label: 'Line', icon: '<svg data-style="line"></svg>' },
     { id: 'renko', label: 'Renko', icon: '<svg data-style="renko"></svg>' },
 ];
+
+// Favourites are persisted (localStorage) — every test starts from a clean sheet.
+beforeEach(() => {
+    document.body.replaceChildren(); // stale bars/sheets from the previous test
+    try {
+        localStorage.clear();
+    } catch {
+        /* jsdom without storage */
+    }
+    resetFavoritesCache();
+});
 
 describe('MobileBar maximize stop', () => {
     it('is absent when the shell has nothing to isolate (single-chart mode)', () => {
@@ -121,7 +133,7 @@ describe('MobileBar chart-type stop', () => {
         expect(sheet).not.toBeNull();
         const tiles = sheet.querySelectorAll<HTMLButtonElement>('.vela-cts-tile');
         expect([...tiles].map((t) => t.dataset.id)).toEqual(['candles', 'line', 'renko']);
-        expect(tiles[0]!.dataset.on).toBe('1'); // the current style is the lit tile
+        expect(sheet.querySelector('.vela-cts-cell[data-on="1"]')?.getAttribute('data-id')).toBe('candles'); // the current style is lit
         expect(stop.getAttribute('aria-expanded')).toBe('true');
 
         tiles[2]!.click();
@@ -154,6 +166,79 @@ describe('MobileBar chart-type stop', () => {
         expect(row.textContent).toContain('2×2');
         row.click();
         expect(opened).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('Chart-type sheet favourites', () => {
+    const openSheet = () => {
+        const m = mount({ styleOptions: () => STYLES, currentStyle: () => 'candles', onStyleSelect: () => {} });
+        m.host.querySelector<HTMLButtonElement>('.vela-mb-style')!.click();
+        const sheet = document.body.querySelector<HTMLElement>('.vela-cts')!;
+        return { sheet, star: (id: string) => sheet.querySelector<HTMLButtonElement>(`.vela-cts-cell[data-id="${id}"] .vela-cts-star`)! };
+    };
+
+    it('puts a star on every tile, unpressed by default', () => {
+        const { sheet } = openSheet();
+        const stars = sheet.querySelectorAll('.vela-cts-star');
+        expect(stars.length).toBe(3);
+        expect([...stars].every((s) => s.getAttribute('aria-pressed') === 'false')).toBe(true);
+        expect(stars[0]!.getAttribute('aria-label')).toBe('Add to favourites — Candles');
+    });
+
+    it('a starred tile moves into the Favourites section above the rest, in picker order', () => {
+        const { sheet, star } = openSheet();
+        star('renko').click();
+        const favSection = sheet.querySelector<HTMLElement>('[data-sec="fav"]')!;
+        const allSection = sheet.querySelector<HTMLElement>('[data-sec="all"]')!;
+        expect(favSection.hidden).toBe(false);
+        expect([...favSection.querySelectorAll('.vela-cts-cell')].map((c) => c.getAttribute('data-id'))).toEqual(['renko']);
+        expect([...allSection.querySelectorAll('.vela-cts-cell')].map((c) => c.getAttribute('data-id'))).toEqual(['candles', 'line']);
+        expect(star('renko').getAttribute('aria-pressed')).toBe('true');
+
+        star('candles').click(); // order follows the picker, not the starring order
+        expect([...favSection.querySelectorAll('.vela-cts-cell')].map((c) => c.getAttribute('data-id'))).toEqual(['candles', 'renko']);
+    });
+
+    it('the star filter hides everything that is not starred', () => {
+        const { sheet, star } = openSheet();
+        star('line').click();
+        const only = sheet.querySelector<HTMLButtonElement>('.vela-cts-only')!;
+        only.click();
+        expect(only.getAttribute('aria-pressed')).toBe('true');
+        const visible = [...sheet.querySelectorAll<HTMLElement>('.vela-cts-cell')].filter((c) => !c.hidden);
+        expect(visible.map((c) => c.getAttribute('data-id'))).toEqual(['line']);
+        expect(sheet.querySelector<HTMLElement>('[data-sec="all"]')!.hidden).toBe(true);
+
+        only.click(); // back to everything
+        expect([...sheet.querySelectorAll<HTMLElement>('.vela-cts-cell')].filter((c) => !c.hidden).length).toBe(3);
+    });
+
+    it('an empty favourites filter says how to fill it instead of showing a blank sheet', () => {
+        const { sheet } = openSheet();
+        const empty = sheet.querySelector<HTMLElement>('.vela-cts-empty')!;
+        expect(empty.hidden).toBe(true);
+        sheet.querySelector<HTMLButtonElement>('.vela-cts-only')!.click();
+        expect(empty.hidden).toBe(false);
+        expect(empty.textContent).toContain('tap a star');
+    });
+
+    it('survives a reopen: the star is storage, not sheet state', () => {
+        const first = openSheet();
+        first.star('renko').click();
+        first.sheet.querySelector<HTMLButtonElement>('.vela-cts-tile[data-id="candles"]')!.click();
+        expect(document.body.querySelector('.vela-cts')).toBeNull(); // the pick closed it
+        const second = openSheet();
+        expect(second.star('renko').getAttribute('aria-pressed')).toBe('true');
+        expect(second.sheet.querySelector<HTMLElement>('[data-sec="fav"]')!.hidden).toBe(false);
+    });
+
+    it('drops a star for a style the host no longer registers', () => {
+        toggleFavorite('chartTypes', 'renko');
+        const m = mount({ styleOptions: () => STYLES.slice(0, 2), currentStyle: () => 'candles', onStyleSelect: () => {} });
+        m.host.querySelector<HTMLButtonElement>('.vela-mb-style')!.click();
+        const sheet = document.body.querySelector<HTMLElement>('.vela-cts')!;
+        expect(sheet.querySelectorAll('.vela-cts-cell').length).toBe(2);
+        expect(sheet.querySelector<HTMLElement>('[data-sec="fav"]')!.hidden).toBe(true);
     });
 });
 

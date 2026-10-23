@@ -114,7 +114,8 @@ export class DrawingToolbar {
     private eraserBtn: HTMLButtonElement | null = null;
     private eraserActive = false;
     private stayBtn: HTMLButtonElement | null = null;
-    private stayActive = false;
+    /** Mirrors the core's default (sticky drawing) so the button starts lit. */
+    private stayActive = true;
     private syncBtn: HTMLButtonElement | null = null;
     private syncActive = false;
     private collapseBtn: HTMLButtonElement | null = null;
