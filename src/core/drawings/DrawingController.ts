@@ -61,6 +61,7 @@ export class DrawingController {
     private snapMode: SnapMode = 'off';
     /** When on, finishing a drawing leaves the tool armed (instead of one-shot disarm). */
     private stayInDrawingMode = false;
+    private allHidden = false;
     /** Mirror of the renderer-local mode (measure/eraser/none). */
     private mode: DrawingMode = null;
     /** FAVORITE tool types (insertion-ordered) — user prefs, not document data. */
@@ -139,6 +140,21 @@ export class DrawingController {
         this.stayInDrawingMode = on;
         this.port.setStayMode?.(on);
         this.events.emit('drawing:stay', { on });
+    }
+
+    /** Whether every drawing is hidden right now (the Hide button's state). */
+    getAllHidden(): boolean {
+        return this.allHidden;
+    }
+
+    setAllHidden(hidden: boolean): void {
+        if (!this.port || hidden === this.allHidden) return;
+        this.allHidden = hidden;
+        // A hidden drawing must not keep handles: the selection would be a live control
+        // over pixels nobody can see (and a Delete key would act on them).
+        if (hidden) this.setSelection([]);
+        this.port.setAllHidden?.(hidden);
+        this.events.emit('drawing:hidden-all', { hidden });
     }
 
     getMode(): DrawingMode {
@@ -456,6 +472,11 @@ export class DrawingController {
         return this.insertClones(this.clipboard);
     }
 
+    /** The ids currently selected on the chart (empty when nothing is). */
+    getSelection(): string[] {
+        return [...this.selectedIds];
+    }
+
     all(): SerializedDrawing[] {
         return this.store.serialize().drawings;
     }
@@ -648,6 +669,14 @@ export class DrawingController {
                 if (i.mode !== this.snapMode) {
                     this.snapMode = i.mode;
                     this.events.emit('drawing:snap', { mode: i.mode });
+                }
+                break;
+            case 'hidden-all':
+                // Already applied renderer-side; mirror it and announce (a no-op echo of
+                // the core's own push is filtered by the equal-value check).
+                if (i.hidden !== this.allHidden) {
+                    this.allHidden = i.hidden;
+                    this.events.emit('drawing:hidden-all', { hidden: i.hidden });
                 }
                 break;
             case 'stay-mode':

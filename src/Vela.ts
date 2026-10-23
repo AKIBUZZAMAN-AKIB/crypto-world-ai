@@ -13,6 +13,7 @@ import type { ScriptRun, ScriptRunResult } from './core/script-run';
 import { EngineOrchestrator, type ResolvedConfig } from './core/engine/EngineOrchestrator';
 import type { SceneInspection } from './core/engine/inspect';
 import { resolveTheme } from './core/theme';
+import { normalizeCursorStyle, type CursorStyle } from './core/cursor';
 import { BEARISH, BULLISH } from './core/palette';
 import { RendererControl } from './core/RendererControl';
 import { rendererDefaults } from './core/renderer-defaults';
@@ -462,6 +463,22 @@ export class Vela {
     setTheme(theme: ThemeName | VelaTheme): this {
         this.orchestrator.setTheme(resolveTheme(theme));
         return this;
+    }
+
+    /**
+     * Pick the cursor type over the plot — `'cross'` (default), `'dot'`, `'arrow'`,
+     * `'demo'` (hold to paint fading ink), `'magic'` (a spark trail), `'eraser'`
+     * (click/drag to delete a drawing) or `'none'`. A view preference: it is not part
+     * of `getConfig()`, so it never rides a saved layout or an exported template.
+     */
+    setCursorStyle(style: CursorStyle): this {
+        this.rendererControl.set('cursorStyle', style);
+        return this;
+    }
+
+    /** The cursor type currently shown (normalized; `'cross'` when unset). */
+    get cursorStyle(): CursorStyle {
+        return normalizeCursorStyle(this.rendererControl.get('cursorStyle'));
     }
 
     destroy(): void {

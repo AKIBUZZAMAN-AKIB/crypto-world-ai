@@ -7,11 +7,12 @@ import type { DrawingToolDefaults, DrawingToolTemplate } from './defaults';
 
 /**
  * The renderer-local drawing MODES beyond an armed tool: the transient measure ruler,
- * the eraser, or none. Mutually exclusive with each other and with any armed tool —
+ * the eraser, the drag-a-region zoom, or none. Mutually exclusive with each other and with
+ * any armed tool —
  * the renderer owns that exclusion; the core mirrors the outcome (see the `mode`
  * intent) so external UIs (a shared workspace toolbar) can reflect and drive it.
  */
-export type DrawingMode = 'measure' | 'eraser' | null;
+export type DrawingMode = 'measure' | 'eraser' | 'zoom' | null;
 
 /**
  * Renderer→core INTENT. The renderer proposes a change from a user gesture; the
@@ -48,6 +49,8 @@ export type DrawingIntent =
     /** Stay-in-drawing-mode toggled in-chart — when on, finishing a drawing leaves the
      *  tool armed instead of reverting to the pointer. */
     | { kind: 'stay-mode'; on: boolean }
+    /** The in-chart toolbar's Hide button — a transient view flag (never persisted). */
+    | { kind: 'hidden-all'; hidden: boolean }
     | { kind: 'mode'; mode: DrawingMode }
     | { kind: 'undo' }
     | { kind: 'redo' }
@@ -97,6 +100,11 @@ export interface IDrawingsRendererPort {
     /** Set stay-in-drawing-mode (tools remain armed after each placement). Optional —
      *  the in-chart toolbar reflects the pushed value. */
     setStayMode?(on: boolean): void;
+    /** Draw nothing at all until told otherwise — the "Hide all drawings" button. A VIEW
+     *  flag, not model state: the drawings keep their own `visible`, nothing is saved, and
+     *  hit-testing goes quiet with the paint so a hidden chart cannot be edited blindly.
+     *  Optional. */
+    setAllHidden?(hidden: boolean): void;
     /** Enter/exit a renderer-local mode (measure ruler / eraser; `null` exits). The
      *  renderer keeps owning the mutual exclusion (with armed tools too) and reports
      *  every actual change back through the `mode` intent. Optional. */

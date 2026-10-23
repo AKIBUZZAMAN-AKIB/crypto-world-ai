@@ -148,6 +148,7 @@ registerIcon('close', S('<path d="m3.8 3.8 8.4 8.4M12.2 3.8l-8.4 8.4"/>'));
 // A pushpin — outline while something floats (press to pin it), filled once pinned.
 registerIcon('pin', S('<path d="M5.6 2.5h4.8M6.4 2.5v3.6L4.4 8.4v.9h7.2v-.9L9.6 6.1V2.5M8 9.3v4.2"/>'));
 registerIcon('pin-filled', S('<path d="M5.6 2.5h4.8M6.4 2.5v3.6L4.4 8.4v.9h7.2v-.9L9.6 6.1V2.5M8 9.3v4.2"/><path d="M6.4 2.5h3.2v3.6l2 2.3v.9H4.4v-.9l2-2.3z" fill="currentColor" stroke="none"/>'));
+registerIcon('zoom-in', S('<circle cx="6.6" cy="6.6" r="4.3"/><path d="m9.8 9.8 3.9 3.9"/><path d="M4.4 6.6h4.4M6.6 4.4v4.4"/>'));
 registerIcon('eye', S('<path d="M1.5 8s2.5-5.4 6.5-5.4S14.5 8 14.5 8 12 13.4 8 13.4 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="1.8"/>'));
 registerIcon('eye-off', S('<path d="M1.5 8s2.5-5.4 6.5-5.4S14.5 8 14.5 8 12 13.4 8 13.4 1.5 8 1.5 8z" opacity="0.45"/><path d="m3 13 10-10"/>'));
 registerIcon('lock', S('<rect x="3.2" y="7" width="9.6" height="6.6" rx="1.2"/><path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7"/>'));
@@ -184,6 +185,9 @@ registerIcon('restore', S('<path d="M6.2 2.5v3.7H2.5M9.8 13.5V9.8h3.7M13.5 6.2H9
 registerIcon('star', S('<path d="M8 2.2l1.75 3.55 3.9.55-2.8 2.75.65 3.9L8 11.1l-3.5 1.85.65-3.9-2.8-2.75 3.9-.55z"/>'));
 registerIcon('star-filled', S('<path d="M8 2.2l1.75 3.55 3.9.55-2.8 2.75.65 3.9L8 11.1l-3.5 1.85.65-3.9-2.8-2.75 3.9-.55z"/>', 'fill="currentColor"'));
 registerIcon('grip', S('<circle cx="6" cy="3.5" r="1"/><circle cx="10" cy="3.5" r="1"/><circle cx="6" cy="8" r="1"/><circle cx="10" cy="8" r="1"/><circle cx="6" cy="12.5" r="1"/><circle cx="10" cy="12.5" r="1"/>', 'fill="currentColor" stroke="none"'));
+// A saved LOOK (a drawing template): a swatch card with a folded corner — the same
+// picture the reference puts beside its Templates menu.
+registerIcon('templates', S('<path d="M3 3.2h6.2L13 7v5.8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.2a1 1 0 0 1 1-1Z"/><path d="M9.2 3.2V7H13"/><path d="M4.6 10.4h4.4"/>'));
 registerIcon('kebab', S('<circle cx="8" cy="3.2" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="8" cy="12.8" r="1.2"/>', 'fill="currentColor" stroke="none"'));
 registerIcon('burger', S('<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>'));
 // The ⓘ hint glyph: an "i" drawn as geometry (dot + stem) so it centers exactly in its

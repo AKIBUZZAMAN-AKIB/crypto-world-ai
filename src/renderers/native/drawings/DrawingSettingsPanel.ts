@@ -17,6 +17,8 @@ import {
     getDrawingType,
     magnifierTimeframesBelow,
     matchFibPreset,
+    templateColor,
+    templateMatches,
     timeframeBandOf,
 } from '../../../core/drawings';
 import { applyChromeTokens } from '../../shared/theme-tokens';
@@ -804,8 +806,11 @@ export class DrawingSettingsPanel {
         const all = (): DrawingToolTemplate[] => [...builtinToolTemplates(b.live().type), ...(b.actions.templates?.() ?? [])];
         const refresh = (): void => {
             const match = all().filter((t) => matchesTemplate(b.live(), t.settings)).pop();
-            label.textContent = match?.name ?? 'Style';
-            btn.title = match ? `Style: ${match.name}` : 'Styles';
+            // The control is TradingView's "Template" dropdown: the saved look this drawing
+            // wears, or the generic label. "Style" read like a CSS class; "Templates" says
+            // what the menu actually holds (and what "Save as template…" creates).
+            label.textContent = match?.name ?? 'Templates';
+            btn.title = match ? `Template: ${match.name}` : 'Drawing templates';
         };
         btn.addEventListener('pointerdown', (e) => e.stopPropagation());
         btn.addEventListener('click', (e) => {
@@ -893,7 +898,7 @@ export class DrawingSettingsPanel {
                 for (const tpl of builtins) el.appendChild(item(tpl, false));
             }
             if (saved.length) {
-                el.appendChild(menuHeading('Saved'));
+                el.appendChild(menuHeading('Templates'));
                 for (const tpl of saved) el.appendChild(item(tpl, true));
             }
             if (builtins.length || saved.length) el.appendChild(separator());
@@ -923,16 +928,16 @@ export class DrawingSettingsPanel {
         start.type = 'button';
         start.className = 'vela-dsp-mi';
         start.setAttribute('role', 'menuitem');
-        start.innerHTML = '<span class="vela-dsp-mi-t">Save as style…</span>';
+        start.innerHTML = '<span class="vela-dsp-mi-t">Save as template…</span>';
         start.addEventListener('click', (e) => {
             e.stopPropagation();
             const form = document.createElement('div');
             form.className = 'vela-dsp-mname';
             const input = document.createElement('input');
             input.type = 'text';
-            input.placeholder = 'Style name';
+            input.placeholder = 'Template name';
             input.maxLength = 60;
-            input.setAttribute('aria-label', 'Style name');
+            input.setAttribute('aria-label', 'Template name');
             const save = button('Save', true, () => commit());
             save.style.height = '28px';
             const commit = (): void => {
@@ -1180,19 +1185,4 @@ function modeOf(showOn: readonly string[] | undefined): ShowMode {
     return 'custom';
 }
 
-/** Whether a drawing already wears a style: every setting the style names matches. */
-function matchesTemplate(d: Drawing, s: DrawingToolDefaults): boolean {
-    const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-    const style = d.style as unknown as Record<string, unknown>;
-    for (const [k, v] of Object.entries(s.style ?? {})) if (!same(style[k], v)) return false;
-    const text = (d.text ?? {}) as Record<string, unknown>;
-    for (const [k, v] of Object.entries(s.text ?? {})) if (!same(text[k], v)) return false;
-    const props = d.serialize().props ?? {};
-    for (const [k, v] of Object.entries(s.props ?? {})) if (!same(props[k], v)) return false;
-    return Object.keys(s.style ?? {}).length + Object.keys(s.text ?? {}).length + Object.keys(s.props ?? {}).length > 0;
-}
-
-/** The color a style is best recognized by, for its menu swatch. */
-function templateColor(s: DrawingToolDefaults): string | undefined {
-    return s.style?.lineColor ?? s.style?.fillColor ?? s.text?.color;
-}
+const matchesTemplate = templateMatches;

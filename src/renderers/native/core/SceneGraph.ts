@@ -9,6 +9,19 @@ import { type CandlePaintOverride, type ChartStyle, type CrosshairOverride, defa
 import { defaultTradeMarkersState, type TradeMarkersState } from '../../shared/trade-markers';
 import { defaultMarksState, type MarksDisplayState } from '../../shared/marks-state';
 import type { MarkGroup, TimelineMark } from '../../../core/marks/types';
+import type { CursorStyle } from '../../../core/cursor';
+
+/** One sample of a pointer trail (demonstration ink / magic sparks) — plot pixels + the
+ *  performance clock it was laid down at. The crosshair layer fades it by age. */
+export interface CursorInkPoint {
+    x: number;
+    y: number;
+    /** performance.now() when the sample was taken. */
+    t: number;
+    /** Sparks only: a small launch velocity so the trail fans out as it dies. */
+    vx?: number;
+    vy?: number;
+}
 
 /** A user-defined shaded time band spanning the full plot height (all panes) — the
  *  generic primitive behind session highlighting (weekends, pre/regular/post). Unlike
@@ -142,6 +155,12 @@ export class SceneGraph {
     /** VPVR-layer config pushed by the VPVR native indicator (null ⇒ layer off). Ephemeral. */
     vpvrLayer: VpvrLayerData | null = null;
     crosshair: { x: number; y: number } | null = null;
+    /** Which pointer the chart shows (the `cursorStyle` feature). Ephemeral. */
+    cursorStyle: CursorStyle = 'cross';
+    /** Demonstration ink — the fading stroke a hold lays down. Ephemeral. */
+    cursorInk: CursorInkPoint[] = [];
+    /** Magic sparks — the fading trail that follows the pointer. Ephemeral. */
+    cursorSparks: CursorInkPoint[] = [];
     /** Runtime override of the crosshair's lines and style (the `crosshairOverride` feature). Ephemeral. */
     crosshairOverride: CrosshairOverride | null = null;
     /** How the base price series is drawn on the price pane (candles by default). */

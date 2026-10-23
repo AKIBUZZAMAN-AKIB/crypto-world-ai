@@ -13,6 +13,7 @@ import { SyncMatrix } from './sync-matrix';
 import { layoutGridCanvas, paintLayoutGrid } from './layout-picker';
 import { IMPLICIT_GROUP } from '../state/document';
 import { groupMarkColor } from '../workspace/sync-marks';
+import { CURSOR_SPECS, cursorSpec, type CursorStyle } from '../core/cursor';
 
 const STYLE_ID = 'vela-widget-more-drawer';
 /** "just now" / "3h ago" / "2d ago" — a saved row's second line. */
@@ -515,6 +516,49 @@ const CSS = `
 /* The open layout's strip: name + state on the left, Save on the right. */
 /* "Show all N layouts": a quiet row, not a button-shaped box. */
 /* The library's own top gap: it opens the sheet, so it needs air above the actions. */
+/* ── the Cursors stop ─────────────────────────────────────────────────────────
+   56 px rows: a pointer choice needs two lines (name + what it does) and a finger.
+   The glyph sits in its own slot so all seven icons line up like a type specimen. */
+.vela-md-cursors { padding-top: 4px; }
+.vela-md-cursorrow {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 56px;
+    padding: 6px 8px;
+    border-radius: 10px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-cursorrow:active { background: var(--vela-hover); }
+.vela-md-cursorrow[data-active] { background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 12%, transparent); }
+.vela-md-cursorrow:focus-visible { outline: 2px solid var(--vela-accent, var(--vela-selected-bg)); outline-offset: -2px; }
+.vela-md-cursorglyph { flex: none; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; color: var(--vela-fg-muted); }
+.vela-md-cursorglyph svg { width: 24px; height: 24px; }
+.vela-md-cursorrow[data-active] .vela-md-cursorglyph { color: var(--vela-accent, var(--vela-selected-bg)); }
+.vela-md-cursortext { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vela-md-cursorlabel { font-size: 14px; color: var(--vela-fg-bright); }
+.vela-md-cursorsub { font-size: 11.5px; color: var(--vela-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The choice dot: an outline that fills when this pointer is the one in use. */
+.vela-md-cursorcheck {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1.5px solid var(--vela-border-strong);
+    position: relative;
+}
+.vela-md-cursorrow[data-active] .vela-md-cursorcheck { border-color: var(--vela-accent, var(--vela-selected-bg)); }
+.vela-md-cursorrow[data-active] .vela-md-cursorcheck::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: var(--vela-accent, var(--vela-selected-bg));
+}
 .vela-md-lib { padding-top: 2px; padding-bottom: 0; }
 /* The library and the settings rows are two lists in one scroll: give the second
    one a heading, but not a second page's worth of air between them. */
@@ -678,6 +722,13 @@ const CSS = `
 .vela-md-ltext { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .vela-md-ltext b { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; color: var(--vela-fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vela-md-ltext small { font-size: 11px; color: var(--vela-fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vela-md-lswatch {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-fg) 18%, transparent);
+}
 .vela-md-lthumb { flex: none; width: 44px; height: 28px; border-radius: 4px; object-fit: cover; border: 1px solid var(--vela-border); background: var(--vela-hover); }
 /* The drift dot: small, filled, and never the only signal (the state is in words too). */
 .vela-md-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--vela-accent, var(--vela-selected-bg)); }
@@ -811,6 +862,20 @@ export interface MoreDrawerOptions {
     onResetView?: () => void;
     /** The display time zone, read live at open — the row's value. */
     timezone?: () => string;
+    /** Saved DRAWING templates (`{ tool, toolLabel, name, color, settings }`), read live —
+     *  the third stop of the library. Omitted ⇒ the stop is hidden. */
+    drawingTemplates?: () => Array<{ tool: string; toolLabel: string; name: string; color?: string; settings: unknown }>;
+    /** Use a drawing template: the NEXT drawing of that tool starts from it. */
+    onApplyDrawingTemplate?: (tool: string, name: string) => void;
+    /** Delete one saved drawing template. */
+    onDeleteDrawingTemplate?: (tool: string, name: string) => void;
+    /** Export one saved drawing template as JSON. */
+    onExportDrawingTemplate?: (tool: string, name: string) => string | null;
+    /** The pointer style over the plot (Cross / Dot / Arrow / Demonstration / Magic /
+     *  Eraser / None), read live — the Cursors row's value. Omitted ⇒ no row. */
+    cursorStyle?: () => CursorStyle;
+    /** Set the pointer style on every chart (the Cursors stop's radio rows). */
+    onCursorStyle?: (style: CursorStyle) => void;
     /** Opens the timezone overflow sheet (the same one a hold on the time axis opens).
      *  Omitted ⇒ no Time zone row. */
     onTimeZone?: () => void;
@@ -914,7 +979,7 @@ export interface MoreDrawerOptions {
     onOpenChange?: (open: boolean) => void;
 }
 
-type MoreView = 'main' | 'style' | 'layout' | 'alerts';
+type MoreView = 'main' | 'style' | 'layout' | 'alerts' | 'cursor';
 
 export class MoreDrawer {
     private readonly drawer: Drawer;
@@ -923,7 +988,7 @@ export class MoreDrawer {
     /** "Show all N layouts" — the sheet shows the newest few until asked for more. */
     private layoutsExpanded = false;
     /** Which half of the library is showing (layouts sit first: they are the workspace). */
-    private libTab: 'layouts' | 'templates' = 'layouts';
+    private libTab: 'layouts' | 'templates' | 'drawings' = 'layouts';
     /** The row whose `⋯` menu is open, keyed `L:<name>` / `T:<name>`. */
     private openRow: string | null = null;
     /** The name field a "+ save" row unfolded, if any. */
@@ -983,7 +1048,7 @@ export class MoreDrawer {
             const back = doc.createElement('button');
             back.className = 'vela-md-back';
             back.appendChild(iconEl('chevron-left', doc));
-            const backLabel = this.view === 'style' ? 'Chart type' : 'Alerts';
+            const backLabel = this.view === 'style' ? 'Chart type' : this.view === 'cursor' ? 'Cursor' : 'Alerts';
             back.appendChild(doc.createTextNode(backLabel));
             back.addEventListener('click', () => this.show('main'));
             this.drawer.body.appendChild(back);
@@ -992,6 +1057,7 @@ export class MoreDrawer {
         if (this.view === 'main') this.renderMain(doc);
         else if (this.view === 'style') this.renderStyle(doc);
         else if (this.view === 'layout') this.renderLayout(doc, this.focus, this.focusCell);
+        else if (this.view === 'cursor') this.renderCursor(doc);
         else this.renderAlerts(doc);
         this.focus = undefined;
         this.focusCell = undefined;
@@ -1065,6 +1131,12 @@ export class MoreDrawer {
         }
         const current = this.opts.priceStyles().find((s) => s.id === this.opts.priceStyle());
         list.appendChild(this.row(doc, 'Chart type', { icon: 'style-line', value: current?.label, chevron: true, onClick: () => this.show('style') }));
+        if (this.opts.cursorStyle) {
+            // The pointer is the same kind of choice as the chart type — how you READ the
+            // chart — so it sits beside it, with the live label as its value.
+            const style = cursorSpec(this.opts.cursorStyle());
+            list.appendChild(this.row(doc, 'Cursor', { icon: style.icon, value: style.label, chevron: true, onClick: () => this.show('cursor') }));
+        }
         if (this.opts.layout) {
             const shape = this.opts.layout.shape();
             const value = shape ? `${shape.cols} × ${shape.rows}` : this.opts.layout.presets().find((p) => p.checked)?.label;
@@ -1163,6 +1235,47 @@ export class MoreDrawer {
                     },
                 }),
             );
+        }
+        this.drawer.body.appendChild(list);
+    }
+
+    /** The Cursors stop: seven radio rows, each saying what the pointer does. */
+    private renderCursor(doc: Document): void {
+        const list = doc.createElement('div');
+        list.className = 'vela-md-list vela-md-cursors';
+        const current = this.opts.cursorStyle?.() ?? 'cross';
+        const hint = doc.createElement('div');
+        hint.className = 'vela-md-hint';
+        hint.textContent = 'One pointer for every chart. It is a view setting — it never enters a saved layout.';
+        list.appendChild(hint);
+        for (const spec of CURSOR_SPECS) {
+            const row = doc.createElement('button');
+            row.type = 'button';
+            row.className = 'vela-md-row vela-md-cursorrow';
+            row.dataset.cursor = spec.id;
+            row.toggleAttribute('data-active', spec.id === current);
+            row.setAttribute('role', 'radio');
+            row.setAttribute('aria-checked', String(spec.id === current));
+            const glyph = iconEl(spec.icon, doc);
+            glyph.classList.add('vela-md-cursorglyph');
+            const text = doc.createElement('span');
+            text.className = 'vela-md-cursortext';
+            const label = doc.createElement('span');
+            label.className = 'vela-md-cursorlabel';
+            label.textContent = spec.label;
+            const sub = doc.createElement('span');
+            sub.className = 'vela-md-cursorsub';
+            sub.textContent = spec.hint;
+            text.append(label, sub);
+            const check = doc.createElement('span');
+            check.className = 'vela-md-cursorcheck';
+            check.setAttribute('aria-hidden', 'true');
+            row.append(glyph, text, check);
+            row.addEventListener('click', () => {
+                this.opts.onCursorStyle?.(spec.id);
+                this.render();
+            });
+            list.appendChild(row);
         }
         this.drawer.body.appendChild(list);
     }
@@ -1660,23 +1773,29 @@ export class MoreDrawer {
     private renderLibrary(doc: Document, list: HTMLElement, layout: NonNullable<MoreDrawerOptions['layout']>): void {
         const hasLayouts = !!layout.savedLayouts;
         const hasTemplates = !!(layout.onSaveTemplate && layout.templates);
-        if (!hasLayouts && !hasTemplates) return;
-        if (!hasTemplates) this.libTab = 'layouts';
-        if (!hasLayouts) this.libTab = 'templates';
+        const hasDrawings = !!this.opts.drawingTemplates;
+        if (!hasLayouts && !hasTemplates && !hasDrawings) return;
+        if (this.libTab === 'layouts' && !hasLayouts) this.libTab = hasTemplates ? 'templates' : 'drawings';
+        if (this.libTab === 'templates' && !hasTemplates) this.libTab = hasLayouts ? 'layouts' : 'drawings';
+        if (this.libTab === 'drawings' && !hasDrawings) this.libTab = hasLayouts ? 'layouts' : 'templates';
+        const stopCount = Number(hasLayouts) + Number(hasTemplates) + Number(hasDrawings);
 
         const head = doc.createElement('div');
         head.className = 'vela-md-libhead';
         // With both panes the toggle IS the heading — printing "LAYOUTS" beside a
         // control that already says Layouts is the kind of noise this screen is losing.
-        if (!(hasLayouts && hasTemplates)) {
-            head.appendChild(this.sectionLabel(doc, hasLayouts ? 'Layouts' : 'Templates'));
+        if (stopCount === 1) {
+            head.appendChild(this.sectionLabel(doc, hasLayouts ? 'Layouts' : hasTemplates ? 'Templates' : 'Drawings'));
         }
-        if (hasLayouts && hasTemplates) {
+        if (stopCount > 1) {
             const seg = doc.createElement('div');
             seg.className = 'vela-md-seg';
             seg.setAttribute('role', 'tablist');
-            seg.setAttribute('aria-label', 'Layouts or templates');
-            const stops: Array<['layouts' | 'templates', string]> = [['layouts', 'Layouts'], ['templates', 'Templates']];
+            seg.setAttribute('aria-label', 'Layouts, templates or drawings');
+            const stops: Array<['layouts' | 'templates' | 'drawings', string]> = [];
+            if (hasLayouts) stops.push(['layouts', 'Layouts']);
+            if (hasTemplates) stops.push(['templates', 'Templates']);
+            if (hasDrawings) stops.push(['drawings', 'Drawings']);
             for (const [key, label] of stops) {
                 const b = doc.createElement('button');
                 b.type = 'button';
@@ -1702,7 +1821,10 @@ export class MoreDrawer {
                 b.addEventListener('keydown', (e) => {
                     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
                     e.preventDefault();
-                    this.libTab = key === 'layouts' ? 'templates' : 'layouts';
+                    const order = stops.map(([k]) => k);
+                    const at = order.indexOf(key);
+                    const step = e.key === 'ArrowRight' ? 1 : -1;
+                    this.libTab = order[(at + step + order.length) % order.length] ?? order[0]!;
                     this.openRow = null;
                     this.saveField = null;
                     this.pendingFocus = '.vela-md-segbtn[data-active]';
@@ -1722,7 +1844,8 @@ export class MoreDrawer {
         pane.id = 'vela-md-libpane';
         pane.setAttribute('aria-labelledby', `vela-md-libtab-${this.libTab}`);
         if (this.libTab === 'layouts') this.renderLayoutsPane(doc, pane, layout);
-        else this.renderTemplatesPane(doc, pane, layout);
+        else if (this.libTab === 'templates') this.renderTemplatesPane(doc, pane, layout);
+        else this.renderDrawingsPane(doc, pane);
         // Focus lands after the pane is in the document (see render()): focusing a
         // detached input is a no-op and leaves the phone keyboard closed.
         if (pane.querySelector('.vela-md-linput, .vela-md-saveas input')) {
@@ -2145,6 +2268,77 @@ export class MoreDrawer {
             }
         }
         if (layout.onImportTemplate) pane.appendChild(this.fileButton(doc, 'template', layout.onImportTemplate));
+    }
+
+    /**
+     * Drawing templates — the SAVED LOOKS of the drawing tools, grouped by tool. The
+     * reference keeps these on the floating drawing toolbar (Vela has them there too, and
+     * in a drawing's settings panel); this pane is the library view: you can see every
+     * saved look in one place, use one for the NEXT drawing of its tool, export or delete.
+     */
+    private renderDrawingsPane(doc: Document, pane: HTMLElement): void {
+        const all = this.opts.drawingTemplates?.() ?? [];
+        const hint = doc.createElement('div');
+        hint.className = 'vela-md-hint';
+        hint.textContent = all.length
+            ? 'Tap a template to use it for the next drawing of that tool. Save a look from any drawing’s Templates button.'
+            : 'No drawing templates yet. Select a drawing → Templates → Save as template, and it lands here.';
+        pane.appendChild(hint);
+        let lastTool = '';
+        for (const t of all) {
+            const key = `D:${t.tool}:${t.name}`;
+            if (t.tool !== lastTool) {
+                lastTool = t.tool;
+                pane.appendChild(this.sectionLabel(doc, t.toolLabel));
+            }
+            const row = doc.createElement('div');
+            row.className = 'vela-md-lrow';
+            row.dataset.drawingTemplate = t.name;
+            row.dataset.tool = t.tool;
+            const main = doc.createElement('button');
+            main.type = 'button';
+            main.className = 'vela-md-lmain';
+            main.setAttribute('aria-label', `Use template ${t.name} for the next ${t.toolLabel}`);
+            const swatch = doc.createElement('span');
+            swatch.className = 'vela-md-lswatch';
+            swatch.style.background = t.color ?? 'transparent';
+            main.appendChild(swatch);
+            const text = doc.createElement('span');
+            text.className = 'vela-md-ltext';
+            const name = doc.createElement('b');
+            name.textContent = t.name;
+            const meta = doc.createElement('small');
+            meta.className = 'vela-md-lmeta';
+            meta.textContent = `${t.toolLabel} · tap to use`;
+            text.append(name, meta);
+            main.appendChild(text);
+            main.addEventListener('click', () => {
+                this.opts.onApplyDrawingTemplate?.(t.tool, t.name);
+                this.drawer.hide();
+            });
+            row.appendChild(main);
+            row.appendChild(
+                this.kebab(doc, `Actions for ${t.name}`, this.openRow === key, () => {
+                    this.openRow = this.openRow === key ? null : key;
+                    this.saveField = null;
+                    this.render();
+                }),
+            );
+            pane.appendChild(row);
+            if (this.openRow === key) {
+                pane.appendChild(
+                    this.actionsStrip(doc, [
+                        { label: 'Use for next drawing', run: () => { this.openRow = null; this.opts.onApplyDrawingTemplate?.(t.tool, t.name); this.drawer.hide(); } },
+                        ...(this.opts.onExportDrawingTemplate
+                            ? [{ label: 'Export', run: () => { const json = this.opts.onExportDrawingTemplate?.(t.tool, t.name); if (json) downloadText(doc, `${t.name}.vela-drawing.json`, json); } }]
+                            : []),
+                        ...(this.opts.onDeleteDrawingTemplate
+                            ? [{ label: 'Delete', danger: true, run: () => { this.openRow = null; this.opts.onDeleteDrawingTemplate?.(t.tool, t.name); this.render(); } }]
+                            : []),
+                    ]),
+                );
+            }
+        }
     }
 
     /** A quiet full-width “+ something” row — the entry point to a save form. */

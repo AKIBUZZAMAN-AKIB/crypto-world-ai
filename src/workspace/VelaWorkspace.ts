@@ -56,7 +56,7 @@ import { resolveIndicators, type IndicatorManifest, type ResolvedIndicator } fro
 import { DrawingToolbar } from '../renderers/native/drawings/DrawingToolbar';
 import { applyAttributionMarkTheme, createAttributionMark, createCustomMark } from '../renderers/native/chrome/AttributionMark';
 import { rendererDefaults } from '../core/renderer-defaults';
-import { buildToolbar, type DrawingTypeKey, type SerializedDrawing, type SnapMode, type ToolbarDefinition } from '../core/drawings';
+import { buildToolbar, getDrawingType, templateColor, type DrawingTypeKey, type SerializedDrawing, type SnapMode, type ToolbarDefinition } from '../core/drawings';
 import { timeframeToMs } from '../data/timeframe';
 import { timeframeLabel } from '../widget/timeframe';
 import { registerBuiltinChartTypes } from '../chart-types/builtins';
@@ -82,6 +82,7 @@ import {
     type SyncOptions,
     type SyncSetting,
 } from './sync';
+import { normalizeCursorStyle, type CursorStyle } from '../core/cursor';
 import { encodeState, decodeState, decodeStateDetailed, sanitizeState, type CellState, type ChartTemplate, type DrawingToolsState, type SavedLayoutMeta, type WorkspaceState, type WorkspaceStorage } from './persist';
 import { encodeShareUrl, decodeShareHash } from '../state/share';
 import { localStorageAdapter, type StorageFailure } from '../widget/persist';
@@ -567,6 +568,9 @@ export class VelaWorkspace {
      *  `indicators` option so nothing ever will. Gates the cells' ledger fallback. */
     private manifestSettled = false;
     private timezone: string;
+    /** The pointer every chart shows (Cross / Dot / Arrow / Demonstration / Magic / Eraser /
+     *  None) — a view preference that travels with the document, like the timezone. */
+    private cursorStyle: CursorStyle = 'cross';
     private openDialogs = 0;
     /** The layout sheet is open (it is a popover, not a dialog, so it does not count in
      *  `openDialogs` — but it covers the grid a coach mark points at). */
@@ -668,6 +672,7 @@ export class VelaWorkspace {
             }
         }
         this.timezone = boot?.timezone ?? opts.timezone ?? 'Etc/UTC';
+        this.cursorStyle = normalizeCursorStyle(boot?.cursor ?? opts.cursor);
         if (boot?.favorites) this.favs = [...boot.favorites];
         if (boot?.timeframeFavorites) this.tfFavs = [...boot.timeframeFavorites];
         if (boot?.drawingTools) this.adoptDrawingTools(boot.drawingTools);
@@ -987,6 +992,45 @@ export class VelaWorkspace {
                       // dropdown's switches) — the bar only hosts its toggle.
                       onDrawingsSync: (on) => {
                           this.sync.set('drawings', on);
+                          this.refocusActive();
+                      },
+                      // The pointer stop: the bar's cursor cell grows a chevron and the
+                      // seven-row menu, and its icon wears the chosen style.
+                      cursorStyle: () => this.cursorStyle,
+                      onCursorStyle: (style) => {
+                          this.setCursorStyle(style);
+                          this.refocusActive();
+                      },
+                      // Lock / Hide / Remove (the reference's chart-management trio). The
+                      // state is read from the ACTIVE cell, the same way every other
+                      // drawing command on this bar is routed.
+                      onZoom: () => {
+                          const d = this.active.chart.drawings;
+                          d.setMode(d.getMode() === 'zoom' ? null : 'zoom');
+                          this.refocusActive();
+                      },
+                      drawingsState: () => this.drawingToolbarState(),
+                      onLockAll: (lock) => {
+                          const d = this.active.chart.drawings;
+                          const docs = d.all();
+                          if (docs.length === 0) return;
+                          d.updateMany(docs.map((doc) => ({ id: doc.id, patch: { locked: lock } })));
+                          this.drawToolbar?.refreshChartTools();
+                          this.markStateDirty();
+                          this.refocusActive();
+                      },
+                      onHideAll: (hidden) => {
+                          this.active.chart.drawings.setHiddenAll(hidden);
+                          this.drawToolbar?.refreshChartTools();
+                          this.refocusActive();
+                      },
+                      onRemoveAll: () => {
+                          const d = this.active.chart.drawings;
+                          const ids = d.all().map((doc) => doc.id);
+                          if (ids.length === 0) return;
+                          d.removeMany(ids);
+                          this.drawToolbar?.refreshChartTools();
+                          this.markStateDirty();
                           this.refocusActive();
                       },
                   },
@@ -1316,6 +1360,7 @@ export class VelaWorkspace {
         }
         for (const [id, cs] of byId) charts.push({ id, ...cs }); // pooled strays keep restoring
         const state: WorkspaceState = { version: 1, layout: this.def.id, timezone: this.timezone, sync: { ...this.syncOpts }, charts };
+        if (this.cursorStyle !== 'cross') state.cursor = this.cursorStyle;
         if (this.activeId) state.activeCellId = this.activeId;
         if (this.favs.length > 0) state.favorites = [...this.favs];
         if (this.tfFavs.length > 0) state.timeframeFavorites = [...this.tfFavs];
@@ -1514,6 +1559,7 @@ export class VelaWorkspace {
             // cell mirror adopts it — the document's shell-level field must have the
             // last word when the two disagree (a host editing just `timezone`).
             if (st.timezone) this.setTimezone(st.timezone);
+            if (st.cursor) this.setCursorStyle(st.cursor);
             this.pool.clear();
             for (const { id, ...cs } of st.charts.slice(liveCount)) this.pool.set(id, cs);
             this.order = st.charts.map((c) => c.id);
@@ -1536,6 +1582,7 @@ export class VelaWorkspace {
             this.timezone = st.timezone;
             this.bottombar?.setTimezone(st.timezone);
         }
+        if (st.cursor) this.cursorStyle = normalizeCursorStyle(st.cursor);
         // Full rebuild from the document — every current slot is replaced by the restored one.
         for (const [id, cell] of [...this.cellsById]) {
             cell.destroy();
@@ -1591,6 +1638,31 @@ export class VelaWorkspace {
         this.timezone = zone;
         this.projectTimezone();
         for (const cell of this.cellsById.values()) cell.applyTimezone();
+        this.markStateDirty();
+    }
+
+    /** The pointer style every chart shows (the More sheet's Cursors stop). */
+    getCursorStyle(): CursorStyle {
+        return this.cursorStyle;
+    }
+
+    /**
+     * Set the pointer on EVERY chart and remember it in the document. The cursor is a
+     * view preference — it never enters `getConfig()`, so a saved layout or an exported
+     * template carries the chart, not the pointer that was over it.
+     */
+    setCursorStyle(style: CursorStyle): void {
+        const next = normalizeCursorStyle(style);
+        if (next === this.cursorStyle) return;
+        const wasErasing = this.cursorStyle === 'eraser';
+        this.cursorStyle = next;
+        this.drawToolbar?.setCursorStyle(next);
+        for (const cell of this.cellsById.values()) cell.chart.setCursorStyle(next);
+        // The eraser cursor IS the eraser: picking it arms the delete mode on the active
+        // chart, and leaving it disarms — one choice, not two that can disagree.
+        const active = this.activeId ? this.cellsById.get(this.activeId) : undefined;
+        if (next === 'eraser') active?.chart.drawings.setMode('eraser');
+        else if (wasErasing) active?.chart.drawings.setMode(null);
         this.markStateDirty();
     }
 
@@ -1894,8 +1966,20 @@ export class VelaWorkspace {
             const mode = d.getMode();
             this.drawToolbar.setMeasureActive(mode === 'measure');
             this.drawToolbar.setEraserActive(mode === 'eraser');
+            this.drawToolbar.setZoomActive(mode === 'zoom');
             this.drawToolbar.setFavorites(d.favorites());
+            this.drawToolbar.refreshChartTools();
         }
+    }
+
+    /** The drawing counts the shared bar's Lock / Hide / Remove row paints from. */
+    private drawingToolbarState(): { total: number; locked: number; hidden: boolean } {
+        // Read the ACTIVE CELL through its id, never `this.active`: the toolbar paints
+        // while it is being built (before the first cell takes focus) and `active` throws then.
+        const d = (this.activeId ? this.cellsById.get(this.activeId) : undefined)?.chart.drawings;
+        if (!d) return { total: 0, locked: 0, hidden: false };
+        const docs = d.all();
+        return { total: docs.length, locked: docs.filter((doc) => doc.locked).length, hidden: d.isHiddenAll() };
     }
 
     /** Put keyboard focus back on the active cell's chart surface (after a toolbar press
@@ -2288,6 +2372,7 @@ export class VelaWorkspace {
             cell.setSyncMarksHandler(this.monoLayout ? null : () => this.openSyncSurface(cell.id));
             // The shared star set is a workspace pref — every newborn cell inherits it
             // silently (equal-set idempotence keeps the favorites event from echoing).
+            if (this.cursorStyle !== 'cross') cell.chart.setCursorStyle(this.cursorStyle);
             if (this.favs.length > 0) cell.chart.drawings.setFavorites(this.favs as never[]);
             // Same for the tools' remembered settings: a new chart's first trend line looks
             // like the last one drawn anywhere in the workspace.
@@ -2428,7 +2513,17 @@ export class VelaWorkspace {
         });
         chart.on('drawing:removed', ({ id }) => {
             this.propagateDrawingRemoval(cell.id, id);
+            if (cell.id === this.activeId) this.drawToolbar?.refreshChartTools();
             this.markStateDirty();
+        });
+        chart.on('drawing:created', () => {
+            if (cell.id === this.activeId) this.drawToolbar?.refreshChartTools();
+        });
+        chart.on('drawing:edited', () => {
+            if (cell.id === this.activeId) this.drawToolbar?.refreshChartTools();
+        });
+        chart.on('drawing:hidden-all', () => {
+            if (cell.id === this.activeId) this.drawToolbar?.refreshChartTools();
         });
         // Tool/magnet/mode reflection (trigger ②): the ACTIVE cell's drawing state drives
         // the shared bar and the global mirrors — whatever the source (bar press, keymap,
@@ -2456,6 +2551,7 @@ export class VelaWorkspace {
             if (cell.id !== this.activeId) return;
             this.drawToolbar?.setMeasureActive(mode === 'measure');
             this.drawToolbar?.setEraserActive(mode === 'eraser');
+            this.drawToolbar?.setZoomActive(mode === 'zoom');
         });
         // Viewport sync: every applied pan/zoom/fit propagates to the same-group cells.
         chart.on('viewport:changed', (range) => this.propagateViewport(cell.id, range));
@@ -3209,6 +3305,78 @@ export class VelaWorkspace {
      * `includeMarket` also stores the symbol/timeframe, so applying the template
      * switches the chart's market; leave it off for a market-agnostic setup.
      */
+    /** Every saved drawing template as a flat list (tool key + label, name, swatch color). */
+    drawingTemplateList(): Array<{ tool: string; toolLabel: string; name: string; color?: string; settings: unknown }> {
+        const out: Array<{ tool: string; toolLabel: string; name: string; color?: string; settings: unknown }> = [];
+        const map = this.active?.chart.drawings.toolTemplates() ?? {};
+        for (const [tool, list] of Object.entries(map)) {
+            const label = getDrawingType(tool)?.label ?? tool;
+            for (const t of list ?? []) {
+                const color = templateColor(t.settings);
+                out.push({ tool, toolLabel: label, name: t.name, ...(color ? { color } : {}), settings: t.settings });
+            }
+        }
+        return out.sort((a, b) => a.toolLabel.localeCompare(b.toolLabel) || a.name.localeCompare(b.name));
+    }
+
+    /**
+     * Use a saved drawing template: it lands on every SELECTED drawing of that tool when
+     * there is one (the reference's rule — pick an object, pick a template, it wears it),
+     * and otherwise becomes the look the next drawing of the tool starts from.
+     */
+    useDrawingTemplate(tool: string, name: string): void {
+        const chart = this.active?.chart;
+        if (!chart) return;
+        const d = chart.drawings;
+        const list = d.toolTemplates()[tool as keyof ReturnType<typeof d.toolTemplates>] as Array<{ name: string; settings: unknown }> | undefined;
+        const tpl = list?.find((t) => t.name === name);
+        if (!tpl) return;
+        const settings = tpl.settings as { style?: Record<string, unknown>; text?: Record<string, unknown>; props?: Record<string, unknown> };
+        const selected = d.selection()
+            .map((id) => d.all().find((doc) => doc.id === id))
+            .filter((doc): doc is NonNullable<typeof doc> => !!doc && doc.type === tool);
+        if (selected.length > 0) {
+            // Styles MERGE (update() replaces a style wholesale), so a template that names
+            // only a line colour keeps the drawing's width and dash instead of resetting them.
+            d.updateMany(
+                selected.map((doc) => ({
+                    id: doc.id,
+                    patch: {
+                        ...(settings.style ? { style: { ...doc.style, ...settings.style } } : {}),
+                        ...(settings.text ? { text: { ...(doc.text ?? {}), ...settings.text } } : {}),
+                        ...(settings.props ? { props: { ...doc.props, ...settings.props } } : {}),
+                    } as Partial<SerializedDrawing>,
+                })),
+            );
+            return;
+        }
+        const next = { ...d.toolDefaults(), [tool]: settings };
+        d.setToolDefaults(next as Record<string, unknown>);
+        this.toolDefs = { ...d.toolDefaults() };
+        this.pushToolDefaults(this.active ?? null); // the shared map other cells inherit from
+        this.markStateDirty();
+    }
+
+    /** Delete one saved drawing template (per tool, by name). */
+    deleteDrawingTemplate(tool: string, name: string): void {
+        const chart = this.active?.chart;
+        if (!chart) return;
+        const map = { ...chart.drawings.toolTemplates() } as Record<string, Array<{ name: string }>>;
+        map[tool] = (map[tool] ?? []).filter((t) => t.name !== name);
+        if (map[tool]!.length === 0) delete map[tool];
+        chart.drawings.setToolTemplates(map);
+        this.toolTemplates = { ...chart.drawings.toolTemplates() };
+        this.pushToolDefaults(this.active ?? null);
+        this.markStateDirty();
+    }
+
+    /** One drawing template as pretty JSON (null when it no longer exists). */
+    exportDrawingTemplate(tool: string, name: string): string | null {
+        const found = this.drawingTemplateList().find((t) => t.tool === tool && t.name === name);
+        if (!found) return null;
+        return JSON.stringify({ app: 'vela', kind: 'drawing-template', version: 1, tool, name, settings: found.settings }, null, 2);
+    }
+
     saveTemplate(name: string, opts: { includeMarket?: boolean } = {}): boolean {
         const key = name.trim().slice(0, 40);
         if (!key || !this.activeId) return false;
@@ -4210,6 +4378,12 @@ export class VelaWorkspace {
             // user can find without knowing the gesture.
             timezone: () => this.timezone,
             onTimeZone: () => this.openTimezoneDrawer(),
+            // The drawing toolbar's Cursors stop, on the phone: seven pointers, one row
+            // each. TV keeps this on the left toolbar, which the phone hides.
+            // The pointer is a CHART capability, not a topbar button: gating it on the
+            // `drawings` topbar id hid it on phones, where that button lives in the
+            // drawings pill instead. `drawingsEnabled` is the real switch.
+            ...(this.drawingsEnabled ? { cursorStyle: () => this.cursorStyle, onCursorStyle: (style: CursorStyle) => this.setCursorStyle(style) } : {}),
             // The replay slot's mobile counterpart (the desktop topbar is hidden here).
             ...(has('replay') && this.replayBar ? { onReplay: () => this.requestReplayMenuFromDrawer() } : {}),
             // Actions placed on the bottom bar (left-aligned by default) have their stop
@@ -4283,6 +4457,13 @@ export class VelaWorkspace {
                 // The phone's door to the same link the desktop card copies.
                 onShareLink: () => this.copyShareLink(),
             },
+            // Drawing templates — the third stop of the library. Saved looks live per tool
+            // in the drawings store; the sheet just reads them and hands one back as that
+            // tool's defaults (so the NEXT drawing starts from it, TradingView's rule).
+            drawingTemplates: () => this.drawingTemplateList(),
+            onApplyDrawingTemplate: (tool, name) => this.useDrawingTemplate(tool, name),
+            onDeleteDrawingTemplate: (tool, name) => this.deleteDrawingTemplate(tool, name),
+            onExportDrawingTemplate: (tool, name) => this.exportDrawingTemplate(tool, name),
             onOpenChange: (open) => {
                 this.trackDialog(open);
                 // While the sheet is up its table numbers the charts, so "column 3" and

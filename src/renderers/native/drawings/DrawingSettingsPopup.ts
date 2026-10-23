@@ -15,6 +15,8 @@ import {
     magnifierTimeframeLabel,
     magnifierTimeframesBelow,
     effectiveFillColor,
+    templateColor,
+    templateMatches,
 } from '../../../core/drawings';
 import { icon, svg24, svg24Solid } from '../../../core/icons';
 import { applyChromeTokens } from '../../shared/theme-tokens';
@@ -52,6 +54,9 @@ export interface SettingsActions {
     applyToolSettings?(settings: DrawingToolDefaults): void;
     /** Show a style on the drawing without committing it; `null` puts the drawing back. */
     preview?(settings: DrawingToolDefaults | null): void;
+    /** Rebuild the floating bar from the live drawings (after a template lands, so its
+     *  swatches show the new look instead of the one it replaced). */
+    refreshBar?(): void;
 }
 
 /** The value of a control whose drawings disagree — the bar shows it as "mixed" and the first
@@ -92,7 +97,7 @@ export interface PopupAnchor {
 const BTN = 30; // icon-button side (px)
 const ICON = 21; // icon glyph side (px)
 const STYLE_ID = 'vela-drawing-popup-styles';
-const STYLE_REV = '4';
+const STYLE_REV = '7';
 
 /** Inject the scoped styles that inline cssText can't reach (`:focus`, scrollbar
  *  pseudo-elements). Idempotent — one shared sheet for all popups. */
@@ -114,7 +119,14 @@ function ensureStyles(): void {
 .vela-dpop-item[data-active='1']{background:var(--vela-active);}
 /* A finger needs a wider grab zone than a cursor — grow the move handle on touch-first
    devices (the glyph stays centered; only the hit target widens). */
-@media (pointer: coarse){.vela-dpop-grip{width:${BTN + 14}px !important;}}`;
+@media (pointer: coarse){.vela-dpop-grip{width:${BTN + 14}px !important;}}
+/* Narrow host (a phone cell beside another chart): tighten the buttons so the whole bar
+   stays two rows. The value text on the width/style triggers is the first thing to go —
+   the glyph + menu still say everything, and a three-row bar eats a quarter of a chart. */
+.vela-dpop[data-compact] .vela-dpop-btn{width:26px !important;min-width:0 !important;height:26px !important;padding:0 2px !important;}
+.vela-dpop[data-compact] .vela-dpop-btn .vela-dpop-val{display:none;}
+.vela-dpop[data-compact] .vela-dpop-grip{width:26px !important;height:26px !important;}
+@media (pointer: coarse){.vela-dpop[data-compact] .vela-dpop-grip{width:26px !important;}}`;
     if (!existing) document.head.appendChild(s);
 }
 
@@ -237,7 +249,9 @@ export class DrawingSettingsPopup {
         });
 
         const bar = document.createElement('div');
-        bar.style.cssText = 'display:flex;align-items:center;gap:2px;padding:4px;';
+        // Wrap instead of clip: on a phone-sized cell the bar's controls do not fit on one
+        // line, and a toolbar cut off at the cell edge is worse than a second row.
+        bar.style.cssText = 'display:flex;align-items:center;flex-wrap:wrap;gap:2px;padding:4px;max-width:100%;box-sizing:border-box;';
 
         // Leading move handle — drag the whole toolbar anywhere on the chart.
         bar.appendChild(this.dragHandle());
@@ -389,6 +403,11 @@ export class DrawingSettingsPopup {
         // (z-order + reset) sits just right of delete. The settings panel edits one drawing (its
         // points, levels, sizing) — it stays off a multi-selection.
         bar.appendChild(this.divider());
+        // Templates sit on the BAR, where the reference puts them: a saved look is one tap
+        // away from any selected drawing (and from a same-type multi-selection).
+        if (actions.saveTemplate || (actions.templates?.().length ?? 0) > 0 || actions.applyToolSettings) {
+            bar.appendChild(this.templatesButton(actions));
+        }
         if (!multi) bar.appendChild(this.iconBtn('Settings', GEAR_ICON, () => this.openPanel()));
         bar.appendChild(this.toggle('Lock', LOCK_ICON, common((d) => d.locked), (v) => actions.setLocked(v), UNLOCK_ICON));
         const del = this.iconBtn('Delete', TRASH_ICON, () => actions.remove());
@@ -517,10 +536,18 @@ export class DrawingSettingsPopup {
     }
 
     // ── positioning ──
+    /** A narrow cell (roughly a phone beside another chart) gets the tightened bar. */
+    private markCompact(hostWidth: number): void {
+        const el = this.el;
+        if (!el) return;
+        el.toggleAttribute('data-compact', hostWidth < 240);
+    }
+
     private position(anchor: PopupAnchor | null): void {
         const el = this.el;
         if (!el) return;
         const host = this.host.getBoundingClientRect();
+        this.markCompact(host.width);
         const w = el.offsetWidth;
         const h = el.offsetHeight;
         const gap = 10;
@@ -541,6 +568,7 @@ export class DrawingSettingsPopup {
         const el = this.el;
         if (!el) return;
         const host = this.host.getBoundingClientRect();
+        this.markCompact(host.width);
         const w = el.offsetWidth;
         const h = el.offsetHeight;
         const left = parseFloat(el.style.left) || 0;
@@ -554,6 +582,10 @@ export class DrawingSettingsPopup {
         const b = document.createElement('button');
         b.type = 'button';
         b.dataset.tip = tip; // the custom tip strip reads this (no native `title` — that tooltip is noisy)
+        // The tip is the only NAME these icon-only buttons had: a screen reader announced
+        // "button, button, button" down the whole bar. `aria-label` is the same string, so
+        // the visible and spoken names cannot drift apart.
+        b.setAttribute('aria-label', tip);
         b.className = 'vela-dpop-btn';
         b.style.cssText = `width:${BTN}px;height:${BTN}px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:inherit;border:none;border-radius:5px;padding:0;`;
         return b;
@@ -572,6 +604,8 @@ export class DrawingSettingsPopup {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'vela-dpop-grip';
+        b.setAttribute('aria-label', 'Move toolbar');
+        b.tabIndex = -1; // a drag handle is not a keyboard stop; the bar ships its own keys
         // touch-action:none — the handle owns its touches: without it the browser claims
         // the move for scrolling and CANCELS the pointer stream, which is why the bar
         // could barely be dragged on a phone.
@@ -620,6 +654,150 @@ export class DrawingSettingsPopup {
     }
 
     /** The trailing kebab overflow — duplicate, z-order actions, reset settings. */
+    /**
+     * The floating bar's `Templates` control (the reference's drawing-template door): a list
+     * of the tool's saved looks — tap one to apply it to the selection — plus "Save as
+     * template…" (an inline name field, no dialog) and a per-row remove.
+     */
+    private templatesButton(actions: SettingsActions): HTMLButtonElement {
+        const b = this.base('Templates');
+        b.innerHTML = sized(TEMPLATE_ICON);
+        b.dataset.templates = '1';
+        b.addEventListener('pointerdown', (e) => e.stopPropagation());
+        b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (this.menuOwner === b) {
+                this.closeMenu();
+                return;
+            }
+            this.openTemplatesMenu(b, actions);
+        });
+        return b;
+    }
+
+    private openTemplatesMenu(anchor: HTMLElement, actions: SettingsActions): void {
+        this.menuPop = this.hostFloat(anchor, {
+            align: 'end',
+            zIndex: 26,
+            padding: '4px',
+            fill: (menu, pop) => {
+                const saved = actions.templates?.() ?? [];
+                const heading = (text: string): HTMLElement => {
+                    const h = document.createElement('div');
+                    h.style.cssText = 'padding:6px 9px 3px;font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;opacity:0.55;';
+                    h.textContent = text;
+                    return h;
+                };
+                const row = (label: string, opts: { onClick: () => void; swatch?: string; remove?: () => void; active?: boolean }): HTMLElement => {
+                    const item = document.createElement('div');
+                    item.className = 'vela-dpop-item';
+                    item.setAttribute('role', 'menuitem');
+                    item.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:172px;padding:0 4px 0 9px;border-radius:5px;cursor:pointer;height:32px;';
+                    if (opts.active) item.dataset.active = '1';
+                    if (opts.swatch) {
+                        const dot = document.createElement('span');
+                        dot.style.cssText = `flex:none;width:10px;height:10px;border-radius:3px;background:${opts.swatch};box-shadow:inset 0 0 0 1px rgba(128,128,128,0.35);`;
+                        item.appendChild(dot);
+                    }
+                    const label_ = document.createElement('span');
+                    label_.textContent = label;
+                    label_.style.cssText = 'flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                    item.appendChild(label_);
+                    if (opts.remove) {
+                        const x = document.createElement('button');
+                        x.type = 'button';
+                        x.setAttribute('aria-label', `Delete template ${label}`);
+                        x.title = `Delete ${label}`;
+                        x.innerHTML = sized(CROSS_ICON, 14);
+                        x.style.cssText = 'all:unset;flex:none;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:5px;opacity:0.55;cursor:pointer;';
+                        x.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+                        x.addEventListener('click', (ev) => {
+                            ev.stopPropagation();
+                            opts.remove?.();
+                            pop.hide();
+                            this.openTemplatesMenu(anchor, actions); // re-open: the list just changed
+                        });
+                        item.appendChild(x);
+                    }
+                    item.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        pop.hide();
+                        opts.onClick();
+                    });
+                    return item;
+                };
+                const swatchOf = (settings: DrawingToolDefaults): string | undefined => templateColor(settings);
+                menu.appendChild(heading('Templates'));
+                if (saved.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.style.cssText = 'padding:2px 9px 8px;font-size:12px;opacity:0.6;max-width:200px;white-space:normal;';
+                    empty.textContent = 'No saved templates for this tool yet.';
+                    menu.appendChild(empty);
+                }
+                const live = actions.resolve();
+                for (const tpl of saved) {
+                    const active = live ? templateMatches(live, tpl.settings) : false;
+                    menu.appendChild(
+                        row(tpl.name, {
+                            ...(swatchOf(tpl.settings) ? { swatch: swatchOf(tpl.settings)! } : {}),
+                            ...(active ? { active: true } : {}),
+                            onClick: () => {
+                                actions.applyToolSettings?.(tpl.settings);
+                                actions.refreshBar?.();
+                            },
+                            remove: () => actions.removeTemplate?.(tpl.name),
+                        }),
+                    );
+                }
+                const sep = document.createElement('div');
+                sep.style.cssText = 'height:1px;margin:4px 6px;background:var(--vela-border);';
+                menu.appendChild(sep);
+                // Save as template…: the field unfolds IN the menu, so naming never costs a dialog.
+                const save = document.createElement('div');
+                save.className = 'vela-dpop-item';
+                save.setAttribute('role', 'menuitem');
+                save.style.cssText = 'display:flex;align-items:center;gap:8px;padding:0 9px;height:32px;border-radius:5px;cursor:pointer;';
+                save.innerHTML = `<span style="display:flex;flex:none;width:18px;justify-content:center;">${sized(PLUS_ICON, 15)}</span><span style="flex:1;">Save as template…</span>`;
+                save.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    const form = document.createElement('div');
+                    form.style.cssText = 'display:flex;gap:4px;padding:4px 6px 6px;';
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.placeholder = 'Template name';
+                    input.maxLength = 60;
+                    input.setAttribute('aria-label', 'Template name');
+                    input.style.cssText = 'flex:1 1 auto;min-width:0;height:30px;padding:0 8px;border:1px solid var(--vela-border);border-radius:6px;background:transparent;color:inherit;font:inherit;';
+                    const commit = (): void => {
+                        const name = input.value.trim();
+                        if (!name) return;
+                        actions.saveTemplate?.(name);
+                        pop.hide();
+                        this.openTemplatesMenu(anchor, actions);
+                    };
+                    const ok = document.createElement('button');
+                    ok.type = 'button';
+                    ok.textContent = 'Save';
+                    ok.style.cssText = 'flex:none;height:30px;padding:0 10px;border:none;border-radius:6px;background:var(--vela-accent);color:#fff;font:inherit;font-weight:600;cursor:pointer;';
+                    ok.addEventListener('click', (cev) => {
+                        cev.stopPropagation();
+                        commit();
+                    });
+                    input.addEventListener('keydown', (kev) => {
+                        kev.stopPropagation();
+                        if (kev.key === 'Enter') commit();
+                        if (kev.key === 'Escape') pop.hide();
+                    });
+                    form.append(input, ok);
+                    save.replaceWith(form);
+                    input.focus();
+                });
+                menu.appendChild(save);
+            },
+        });
+        this.menuOwner = anchor;
+    }
+
     private kebabButton(actions: SettingsActions): HTMLButtonElement {
         const b = this.base('More');
         b.innerHTML = sized(KEBAB_ICON);
@@ -877,6 +1055,7 @@ export class DrawingSettingsPopup {
             if (opts.label && opts.labelInTrigger && v !== MIXED) {
                 const tx = document.createElement('span');
                 tx.textContent = opts.label(v);
+                tx.className = 'vela-dpop-val';
                 tx.style.cssText = 'font-size:11px;opacity:0.85;font-variant-numeric:tabular-nums;';
                 b.appendChild(tx);
             }
@@ -963,6 +1142,7 @@ export class DrawingSettingsPopup {
         const b = document.createElement('button');
         b.type = 'button';
         b.dataset.tip = tip;
+        b.setAttribute('aria-label', `${tip}, color`); // swatches were nameless to a screen reader too
         b.className = 'vela-dpop-btn';
         b.style.cssText = `position:relative;width:${BTN}px;height:${BTN}px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;border-radius:5px;border:none;color:inherit;padding:0;`;
         const ic = document.createElement('span');
@@ -1016,6 +1196,7 @@ export class DrawingSettingsPopup {
                         const sw = document.createElement('button');
                         sw.type = 'button';
                         sw.dataset.tip = c;
+                        sw.setAttribute('aria-label', `Color ${c}`);
                         sw.style.cssText = `width:18px;height:18px;border-radius:4px;border:1px solid var(--vela-border-strong);cursor:pointer;background:${c};padding:0;`;
                         sw.addEventListener('click', (e) => {
                             e.stopPropagation();
@@ -1063,6 +1244,9 @@ const KEBAB_ICON = icon('kebab');
 const CLONE_ICON = icon('clone');
 const RESET_ICON = icon('reset');
 const GEAR_ICON = icon('gear');
+const TEMPLATE_ICON = icon('templates');
+const CROSS_ICON = icon('close');
+const PLUS_ICON = icon('plus');
 const CHEVRON_ICON = icon('chevron-down');
 const R2_ICON = icon('r-squared');
 const BANDS_ICON = icon('bands');

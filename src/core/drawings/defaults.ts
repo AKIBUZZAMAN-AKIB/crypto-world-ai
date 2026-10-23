@@ -36,6 +36,26 @@ export function applyToolDefaults(d: Drawing, defaults: DrawingToolDefaults | un
     if (defaults.props) d.applyProps(clonePlain(defaults.props));
 }
 
+/**
+ * Whether a drawing already wears a set of settings: every value the settings NAME matches
+ * the drawing's own (a template names only what it changes, so extra fields are fine).
+ */
+export function templateMatches(d: Drawing, s: DrawingToolDefaults): boolean {
+    const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+    const style = d.style as unknown as Record<string, unknown>;
+    for (const [k, v] of Object.entries(s.style ?? {})) if (!same(style[k], v)) return false;
+    const text = (d.text ?? {}) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(s.text ?? {})) if (!same(text[k], v)) return false;
+    const props = d.serialize().props ?? {};
+    for (const [k, v] of Object.entries(s.props ?? {})) if (!same(props[k], v)) return false;
+    return Object.keys(s.style ?? {}).length + Object.keys(s.text ?? {}).length + Object.keys(s.props ?? {}).length > 0;
+}
+
+/** The color a set of settings is best recognized by — the swatch in its menu/list. */
+export function templateColor(s: DrawingToolDefaults): string | undefined {
+    return s.style?.lineColor ?? s.style?.fillColor ?? s.text?.color;
+}
+
 /** Whether two remembered settings are the same (cheap: both are plain JSON). */
 export function sameToolDefaults(a: DrawingToolDefaults | undefined, b: DrawingToolDefaults | undefined): boolean {
     return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);

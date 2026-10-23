@@ -69,6 +69,18 @@ export class DrawingsControl {
         return this.ctrl.getMode();
     }
 
+    /** Hide every drawing (a VIEW flag, TradingView's Hide button): nothing is deleted,
+     *  nothing is persisted, and a second call with `false` brings them all back. */
+    setHiddenAll(hidden = true): this {
+        if (this.ok('setHiddenAll')) this.ctrl.setAllHidden(hidden);
+        return this;
+    }
+
+    /** Whether all drawings are hidden right now. */
+    isHiddenAll(): boolean {
+        return this.ctrl.getAllHidden();
+    }
+
     /** Show or hide the on-chart drawing toolbar. */
     showToolbar(visible = true): this {
         if (this.ok('showToolbar')) this.ctrl.showToolbar(visible);
@@ -135,6 +147,11 @@ export class DrawingsControl {
     show(id: string, v = true): this {
         this.ctrl.setVisible(id, v);
         return this;
+    }
+
+    /** The ids selected on the chart right now (empty when nothing is). */
+    selection(): string[] {
+        return this.ctrl.getSelection();
     }
 
     /** Select drawings on the chart (highlight + open their toolbar) — for a host-side tree/list.

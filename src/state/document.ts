@@ -10,6 +10,9 @@
 // the storage seam. Nothing here touches the URL — hosts wanting shareable links
 // compose them from `getState()` themselves.
 
+import type { CursorStyle } from '../core/cursor';
+import { CURSOR_STYLES } from '../core/cursor';
+
 /**
  * The linkable dimensions. `time` aligns a clicked point in time across same-group
  * cells without touching their span (TradingView's "Time" sync): the follower keeps
@@ -181,6 +184,9 @@ export interface WorkspaceState {
     sync?: SyncOptions;
     /** The workspace DEFAULT display timezone (cells without their own follow it). */
     timezone?: string;
+    /** The pointer style shown on every chart (the drawing toolbar's Cursors stop). A view
+     *  preference like the timezone — it rides the document so a reload keeps it. */
+    cursor?: CursorStyle;
     /**
      * Drawings remembered per SYMBOL — the "global" drawing scope: a chart switching to
      * a symbol whose drawings are stored here gets them back, and the drawings it leaves
@@ -334,6 +340,9 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
     }
     if (typeof d.activeCellId === 'string') out.activeCellId = d.activeCellId;
     if (typeof d.timezone === 'string' && d.timezone) out.timezone = d.timezone;
+    // Only a KNOWN cursor id is stored; anything else leaves the field absent (the
+    // renderer then shows its own default rather than a value it cannot paint).
+    if (typeof d.cursor === 'string' && (CURSOR_STYLES as readonly string[]).includes(d.cursor)) out.cursor = d.cursor as CursorStyle;
     if (Array.isArray(d.favorites)) {
         const favs = d.favorites.filter((f): f is string => typeof f === 'string');
         if (favs.length > 0) out.favorites = favs;

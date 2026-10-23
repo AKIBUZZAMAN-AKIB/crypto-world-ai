@@ -107,6 +107,9 @@ export interface VelaEventMap extends Record<string, unknown> {
   /** The renderer-local mode changed: measure ruler, eraser, or none — including the
    *  mutual-exclusion exits (arming a tool leaves measure/eraser). */
   "drawing:mode": { mode: DrawingMode };
+  /** "Hide all drawings" flipped — a TRANSIENT view state (the reference platform's
+   *  Hide button): no drawing is touched and nothing is persisted. */
+  "drawing:hidden-all": { hidden: boolean };
   /** A user drawing was removed. */
   "drawing:removed": { id: string };
   /** The user requested a drawing's settings popup. */

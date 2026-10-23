@@ -77,6 +77,7 @@ import { MARK_PULSE_MS } from './chrome/marks/paint';
 import type { MarkClickEvent, MarkGroup, TimelineMark } from '../../core/marks/types';
 import { rescaleAround, shiftScale } from './core/manualScale';
 import { resizeSplit, type PaneSplit } from './core/paneResize';
+import { normalizeCursorStyle, type CursorStyle } from '../../core/cursor';
 import { type ChartConfig, CHART_CONFIG_VERSION, factoryResetConfig, mergeConfig, BASELINE_TOP_LINE, BASELINE_BOTTOM_LINE, BASELINE_FILL_ALPHA, BASELINE_FILL_ALPHA_FAR, withAlpha, priceStyleIds, basePaintingOf, candleOverrideFor, effectiveCandlePaint, sanitizeCrosshairOverride } from './core/chartConfig';
 import { BackdropRenderer } from './backdrop/BackdropRenderer';
 import { VolumeRenderer, VOLUME_PANE_FILL_FRAC } from './volume/VolumeRenderer';
@@ -316,6 +317,13 @@ export class NativeRenderer implements IChartRenderer {
     private candleBodyAlpha = 1; // candle body-fill opacity (constant; style layers may modulate later)
     private candleStructureAlpha = 1; // candle wick+border opacity (fades only partway, keeping a skeleton)
     private lastPointer: { x: number; y: number } | null = null; // last plot-relative pointer (re-tests the hovered row after a pan/zoom)
+    // ── pointer ink (the Demonstration / Magic cursor types) ──
+    /** The next ink sample is due (the pointer moved far enough since the last one). */
+    private inkLast: { x: number; y: number } | null = null;
+    /** A hold is laying ink down (Demonstration paints only while pressed, like the reference). */
+    private inkPressing = false;
+    /** The fade loop's frame handle — running only while there is ink left to fade. */
+    private inkRaf = 0;
 
     // ── volume layers (bottom-anchored columns + visible-range profile; driven by their native indicators) ──
     private volumeActive = false; // a volume native indicator is mounted
@@ -446,7 +454,7 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     readonly name = 'native';
-    readonly features: readonly string[] = ['logScale', 'currentPriceLine', 'priceLabel', 'countdown', 'upColor', 'downColor', 'glow', 'animZoom', 'animPan', 'animScroll', 'animAutoscale', 'animLiveBar', 'intro', 'zoomAnchor', 'axisDrag', 'paneResize', 'candleZOrder', 'candleVisible', 'seriesOrder', 'highlights', 'sessionZones', 'gridlines', 'axisLabels', 'scaleMode', 'invertScale', 'paneScales', 'autoScale', 'timezone', 'keyboard', 'historyChords', 'priceStyle', 'priceBaseline', 'baselinePrice', 'settings', 'attribution', 'dialogHost', 'tradeMarkers', 'marks', 'indicatorTitles', 'indicatorValues', 'crosshairOverride', 'drawingsInteractive', 'priceAxisTicks'];
+    readonly features: readonly string[] = ['logScale', 'currentPriceLine', 'priceLabel', 'countdown', 'upColor', 'downColor', 'glow', 'animZoom', 'animPan', 'animScroll', 'animAutoscale', 'animLiveBar', 'intro', 'zoomAnchor', 'axisDrag', 'paneResize', 'candleZOrder', 'candleVisible', 'seriesOrder', 'highlights', 'sessionZones', 'gridlines', 'axisLabels', 'scaleMode', 'invertScale', 'paneScales', 'autoScale', 'timezone', 'keyboard', 'historyChords', 'priceStyle', 'priceBaseline', 'baselinePrice', 'settings', 'attribution', 'dialogHost', 'tradeMarkers', 'marks', 'indicatorTitles', 'indicatorValues', 'crosshairOverride', 'cursorStyle', 'drawingsInteractive', 'priceAxisTicks'];
 
     /** Apply a render feature live — mutate the field + invalidate, no engine re-run. */
     applyFeature(key: string, value: unknown): void {
@@ -592,6 +600,12 @@ export class NativeRenderer implements IChartRenderer {
                 // and a reload can never leave it stuck. `null` restores the configured crosshair.
                 this.scene.crosshairOverride = sanitizeCrosshairOverride(value);
                 break;
+            case 'cursorStyle':
+                // Which pointer the chart shows (Cross / Dot / Arrow / Demonstration / Magic /
+                // Eraser / None). Runtime-only, like `crosshairOverride`: a cursor is a view
+                // preference, not part of a chart's cosmetics, so it never rides getConfig().
+                this.setCursorStyle(normalizeCursorStyle(value));
+                return; // owns its own repaint + CSS
             case 'drawingsInteractive':
                 // Runtime-only (never in getConfig), like `crosshairOverride`: a pick takes the
                 // plot's presses for itself, and a reload can never leave the drawings inert.
@@ -698,6 +712,7 @@ export class NativeRenderer implements IChartRenderer {
             case 'tradeMarkers': return { ...this.scene.tradeMarkers, colors: { ...this.scene.tradeMarkers.colors } };
             case 'marks': return { visible: this.scene.marks.visible, groups: { ...this.scene.marks.groups } };
             case 'crosshairOverride': return this.scene.crosshairOverride ? { ...this.scene.crosshairOverride } : null;
+            case 'cursorStyle': return this.scene.cursorStyle;
             case 'drawingsInteractive': return this.drawingsInteractive;
             case 'priceAxisTicks': return this.priceAxisTicks.hook;
             case 'keyboard': return this.keyboardEnabled;
@@ -1468,6 +1483,7 @@ export class NativeRenderer implements IChartRenderer {
         Object.assign(this.wrapper.style, { position: 'relative', width: '100%', height: '100%', overflow: 'hidden', cursor: 'crosshair', userSelect: 'none', webkitUserSelect: 'none' });
         // Every DOM overlay below is a descendant, so the chrome tokens land once here.
         applyChromeTokens(this.wrapper, this.chromeTheme());
+        this.applyCursorCss(); // honor a cursorStyle set before mount
 
         // L-2 backdrop: session highlights + gridlines, the very BOTTOM of the pile — even
         // an SDK layer canvas slotted below the data canvas stays above the grid.
@@ -1608,6 +1624,11 @@ export class NativeRenderer implements IChartRenderer {
         this.plot.appendChild(this.scrollButton);
         this.plot.addEventListener('pointermove', this.onScrollProximityMove);
         this.plot.addEventListener('pointerleave', this.onScrollProximityLeave);
+        // Demonstration ink is laid down by a HOLD (press, drag, release) — the reference's
+        // gesture, minus the Alt key a phone does not have.
+        this.plot.addEventListener('pointerdown', this.onInkDown);
+        this.plot.addEventListener('pointerup', this.onInkUp);
+        this.plot.addEventListener('pointercancel', this.onInkUp);
 
         // Pine label tooltips: hover a label that carries one and a themed tip opens.
         // The hit-rects are collected by the slice prepainter (drawings paint there now).
@@ -1660,6 +1681,18 @@ export class NativeRenderer implements IChartRenderer {
             snap: (pt, paneId, mode, cursorPx) => this.snapToCandle(pt, paneId, mode, cursorPx),
             setSnapMode: (mode) => this.setSnapMode(mode),
             setToolbarGutter: (px) => this.setToolbarGutter(px),
+            // The zoom tool: the dragged region becomes the visible time range (with a
+            // hair of padding, so the region's own edges are not clipped to the frame).
+            zoomToRegion: (x0, x1) => {
+                const coords = this.coords;
+                if (coords.width <= 0) return;
+                const lo = coords.xToLogical(Math.max(0, x0));
+                const hi = coords.xToLogical(Math.min(coords.width, x1));
+                const from = coords.logicalToTime(lo);
+                const to = coords.logicalToTime(hi);
+                const pad = Math.max(this.coords.barInterval, (to - from) * 0.04);
+                this.setVisibleRange({ from: from - pad, to: to + pad });
+            },
         });
         this.userDrawings.historyChords = this.historyChordsEnabled; // may be set before init()
         // Honor a layout mode pushed before mount (the shell may set it ahead of the chart build).
@@ -1904,6 +1937,8 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     destroy(): void {
+        if (this.inkRaf !== 0) cancelAnimationFrame(this.inkRaf);
+        this.inkRaf = 0;
         this.stopMotionWatch?.();
         this.stopMotionWatch = null;
         if (this.introRaf != null) cancelAnimationFrame(this.introRaf);
@@ -2772,6 +2807,7 @@ export class NativeRenderer implements IChartRenderer {
         const inData = x >= 0 && y >= 0 && x <= this.coords.width && y <= this.coords.height;
         this.scene.crosshair = inData ? { x, y } : null;
         this.lastPointer = inData ? { x, y } : null;
+        if (inData) this.layInk(x, y);
         // The separator spans data + gutter, so its hover highlight tracks the full width (not just
         // the data area) — the divider stays a visible, grabbable handle over the scale too.
         this.hoverSeparatorY = x >= 0 && y >= 0 && y <= this.coords.height ? this.separatorHoverY(y) : null;
@@ -3354,6 +3390,83 @@ export class NativeRenderer implements IChartRenderer {
         // Legend values follow the same tiers (hover moves the read bar, data changes the
         // value); the push diffs per row, so an unchanged frame touches no DOM.
         this.updateLegendValues();
+    }
+
+    // ── cursor type + pointer ink ──
+
+    /** Which pointer the chart shows. Repaints the crosshair tier and re-states the CSS
+     *  cursor; switching away from an ink cursor drops the trail it left behind. */
+    setCursorStyle(style: CursorStyle): void {
+        const next = normalizeCursorStyle(style);
+        if (next === this.scene.cursorStyle) return;
+        this.scene.cursorStyle = next;
+        this.scene.cursorInk = [];
+        this.scene.cursorSparks = [];
+        this.inkLast = null;
+        this.applyCursorCss();
+        this.scheduler.invalidate(InvalidateLevel.Cursor);
+    }
+
+    /** The OS pointer per cursor type: Cross keeps the system crosshair (a hairline the GPU
+     *  can draw for free); Dot and Eraser draw their own anchor, so the OS pointer is hidden;
+     *  Arrow and None use the ordinary arrow. */
+    private applyCursorCss(): void {
+        const style = this.scene.cursorStyle;
+        const css = style === 'cross' ? 'crosshair' : style === 'dot' || style === 'eraser' ? 'none' : 'default';
+        if (this.wrapper && this.wrapper.style.cursor !== css) this.wrapper.style.cursor = css;
+    }
+
+    private readonly onInkDown = (): void => {
+        this.inkPressing = true;
+    };
+
+    private readonly onInkUp = (): void => {
+        this.inkPressing = false;
+    };
+
+    /** Note the pointer for the ink cursors: Demonstration samples a wide canvas stroke while
+     *  the pointer is held, Magic scatters sparks on every move. Samples are throttled to ~4 px
+     *  so a fast swipe cannot queue hundreds of them. */
+    private layInk(x: number, y: number): void {
+        const style = this.scene.cursorStyle;
+        if (style !== 'demo' && style !== 'magic') return;
+        const last = this.inkLast;
+        if (last && Math.hypot(x - last.x, y - last.y) < 4) return;
+        this.inkLast = { x, y };
+        const now = performance.now();
+        if (style === 'demo') {
+            if (!this.inkPressing) return;
+            const ink = this.scene.cursorInk;
+            ink.push({ x, y, t: now });
+            if (ink.length > 240) ink.splice(0, ink.length - 240);
+        } else {
+            const sparks = this.scene.cursorSparks;
+            sparks.push({ x, y, t: now, vx: (Math.random() - 0.5) * 2.4, vy: (Math.random() - 0.5) * 2.4 });
+            if (sparks.length > 80) sparks.splice(0, sparks.length - 80);
+            // Magic drops a faint ink line under its sparks, so a swipe reads as a stroke.
+            const ink = this.scene.cursorInk;
+            ink.push({ x, y, t: now });
+            if (ink.length > 160) ink.splice(0, ink.length - 160);
+        }
+        this.startInkLoop();
+    }
+
+    /** Re-run the crosshair tier every frame while ink is still fading, then stop — a chart at
+     *  rest must not hold a rAF loop open. */
+    private startInkLoop(): void {
+        if (this.inkRaf !== 0 || typeof requestAnimationFrame !== 'function') return;
+        const step = (): void => {
+            const now = performance.now();
+            this.scene.cursorInk = this.scene.cursorInk.filter((p) => now - p.t < 2600);
+            this.scene.cursorSparks = this.scene.cursorSparks.filter((p) => now - p.t < 900);
+            this.scheduler.invalidate(InvalidateLevel.Cursor);
+            if (this.scene.cursorInk.length > 0 || this.scene.cursorSparks.length > 0) {
+                this.inkRaf = requestAnimationFrame(step);
+            } else {
+                this.inkRaf = 0;
+            }
+        };
+        this.inkRaf = requestAnimationFrame(step);
     }
 
     /** Repaint the L2 crosshair canvas and keep the `.vela-shade-right` element on the veil it painted. */

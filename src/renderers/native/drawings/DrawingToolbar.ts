@@ -2,6 +2,7 @@ import type { VelaTheme } from '../../../core/options';
 import type { DrawingTypeKey, SnapMode } from '../../../core/drawings';
 import type { ToolbarDefinition, ToolGroup, ToolSection } from '../../../core/drawings';
 import { icon } from '../../../core/icons';
+import { CURSOR_SPECS, cursorSpec, type CursorStyle } from '../../../core/cursor';
 import { applyChromeTokens } from '../../shared/theme-tokens';
 import { attachChromeTooltip } from '../../shared/chrome-tooltip';
 import { announceSurface } from '../../../ui/surface-events';
@@ -33,6 +34,24 @@ export interface DrawingToolbarOptions {
      *  linked — edits and removals follow (a multi-chart host's concern — a
      *  single-chart bar omits the callback and never shows it). */
     onDrawingsSync?: (on: boolean) => void;
+    /** The pointer style this bar shows as chosen. Omitted ⇒ the cursor cell stays a plain
+     *  "back to select" button and no flyout is offered (single-chart embeds). */
+    cursorStyle?: () => CursorStyle;
+    /** Pick a pointer style. With it, the cursor cell grows a chevron and a seven-row
+     *  flyout — the same list the More sheet shows, in the place a mouse user looks. */
+    onCursorStyle?: (style: CursorStyle) => void;
+    /** The "Zoom in" tool: drag a region and the chart fits it. Omitted ⇒ no button. */
+    onZoom?: () => void;
+    /** The chart-management row (the reference platform's Lock / Hide / Remove buttons):
+     *  read live — how many drawings there are, how many are locked, and whether the
+     *  transient Hide flag is on. Omitted ⇒ the three buttons are not rendered. */
+    drawingsState?: () => { total: number; locked: number; hidden: boolean };
+    /** Lock every drawing (or unlock every drawing) in one undoable step. */
+    onLockAll?: (lock: boolean) => void;
+    /** Hide/show every drawing — a VIEW flag, nothing is saved and nothing is deleted. */
+    onHideAll?: (hidden: boolean) => void;
+    /** Remove every drawing (one undoable step). */
+    onRemoveAll?: () => void;
 }
 
 /**
@@ -59,7 +78,20 @@ export class DrawingToolbar {
     /** Star elements of the currently open flyout, by tool type (live-updated, never stale). */
     private readonly starEls = new Map<DrawingTypeKey, HTMLElement>();
     private flyout: HTMLDivElement | null = null;
-    private flyoutOwnerId: string | null = null; // group id (or MAGNET_ID) whose flyout is open
+    private flyoutOwnerId: string | null = null; // group id (or MAGNET_ID / CURSOR_ID) whose flyout is open
+    private cursorCell: HTMLDivElement | null = null;
+    private cursorIcon: HTMLButtonElement | null = null;
+    private readonly cursorStyleFn: (() => CursorStyle) | null;
+    private readonly onCursorStyleFn: ((style: CursorStyle) => void) | null;
+    private readonly onZoomFn: (() => void) | null;
+    private readonly drawingsStateFn: (() => { total: number; locked: number; hidden: boolean }) | null;
+    private readonly onLockAllFn: ((lock: boolean) => void) | null;
+    private readonly onHideAllFn: ((hidden: boolean) => void) | null;
+    private readonly onRemoveAllFn: (() => void) | null;
+    private zoomBtn: HTMLButtonElement | null = null;
+    private lockAllBtn: HTMLButtonElement | null = null;
+    private hideAllBtn: HTMLButtonElement | null = null;
+    private removeAllBtn: HTMLButtonElement | null = null;
     private flyoutCell: HTMLElement | null = null; // the cell the open flyout is anchored to
     /** Closed flyouts still playing their exit animation, by owner id — reopening the same
      *  owner takes its element back instead of stacking a second one on it. */
@@ -73,6 +105,7 @@ export class DrawingToolbar {
     private lastMagnetOn: SnapMode = 'weak'; // strength restored when the magnet icon toggles back on
     private measureBtn: HTMLButtonElement | null = null;
     private measureActive = false;
+    private zoomActive = false;
     private eraserBtn: HTMLButtonElement | null = null;
     private eraserActive = false;
     private stayBtn: HTMLButtonElement | null = null;
@@ -109,6 +142,13 @@ export class DrawingToolbar {
         this.dock = options.dock ?? 'absolute';
         this.onCollapse = options.onCollapse ?? (() => {});
         this.onDrawingsSync = options.onDrawingsSync ?? null;
+        this.cursorStyleFn = options.cursorStyle ?? null;
+        this.onCursorStyleFn = options.onCursorStyle ?? null;
+        this.onZoomFn = options.onZoom ?? null;
+        this.drawingsStateFn = options.drawingsState ?? null;
+        this.onLockAllFn = options.onLockAll ?? null;
+        this.onHideAllFn = options.onHideAll ?? null;
+        this.onRemoveAllFn = options.onRemoveAll ?? null;
         ensureStyles();
         this.root = document.createElement('div');
         this.root.className = 'vela-dtb';
@@ -213,8 +253,21 @@ export class DrawingToolbar {
         this.root.replaceChildren();
         this.groupCells.clear();
         this.groupIcons.clear();
-        this.cursorBtn = this.makeButton(CURSOR_ICON, 'Cursor', () => this.onCursorClick());
-        this.root.appendChild(this.cursorBtn);
+        if (this.onCursorStyleFn && this.cursorStyleFn) {
+            const { cell, icon: cIcon } = this.makeCell('Cursor', {
+                iconSvg: CURSOR_ICON,
+                multi: true,
+                onIcon: () => this.onCursorClick(),
+                onArrow: () => this.onCursorArrowClick(),
+            });
+            this.cursorCell = cell;
+            this.cursorIcon = cIcon;
+            this.root.appendChild(cell);
+            this.paintCursor();
+        } else {
+            this.cursorBtn = this.makeButton(CURSOR_ICON, 'Cursor', () => this.onCursorClick());
+            this.root.appendChild(this.cursorBtn);
+        }
         if (this.def.groups.length > 0) this.root.appendChild(this.divider());
         for (const g of this.def.groups) {
             const cell = this.makeGroupCell(g);
@@ -225,11 +278,28 @@ export class DrawingToolbar {
         this.root.appendChild(this.divider());
         this.measureBtn = this.makeButton(RULER_ICON, 'Measure', () => this.onMeasure());
         this.root.appendChild(this.measureBtn);
+        if (this.onZoomFn) {
+            this.zoomBtn = this.makeButton(ZOOM_ICON, 'Zoom in (drag a region)', () => this.onZoomFn?.());
+            this.root.appendChild(this.zoomBtn);
+        }
         this.eraserBtn = this.makeButton(ERASER_ICON, 'Eraser (click/drag to delete)', () => this.onEraser());
         this.root.appendChild(this.eraserBtn);
         this.root.appendChild(this.makeMagnetCell());
         this.stayBtn = this.makeButton(STAY_ICON, 'Stay in drawing mode', () => this.toggleStay());
         this.root.appendChild(this.stayBtn);
+        // Chart management: lock / hide / remove every drawing — the reference platform's
+        // trio under Stay. All three are no-ops on an empty chart (the buttons grey out),
+        // so the row never invites a click that does nothing.
+        if (this.drawingsStateFn) {
+            this.lockAllBtn = this.makeButton(LOCK_ICON, 'Lock all drawings', () => this.toggleLockAll());
+            this.root.appendChild(this.lockAllBtn);
+            this.hideAllBtn = this.makeButton(EYE_ICON, 'Hide all drawings', () => this.toggleHideAll());
+            this.root.appendChild(this.hideAllBtn);
+            this.removeAllBtn = this.makeButton(TRASH_ICON, 'Remove all drawings', () => this.onRemoveAllFn?.());
+            this.removeAllBtn.style.color = 'var(--vela-danger)';
+            this.root.appendChild(this.removeAllBtn);
+            this.paintChartTools();
+        }
         // Drawings-sync toggle — only a multi-chart host provides the callback.
         if (this.onDrawingsSync) {
             this.syncBtn = this.makeButton(SYNC_ICON, 'Sync drawings on all charts', () => this.toggleDrawingsSync());
@@ -243,6 +313,7 @@ export class DrawingToolbar {
         this.paintEraser();
         this.paintMagnet();
         this.paintStay();
+        this.paintChartTools();
         this.paintDrawingsSync();
         this.paintCollapse();
         this.highlight();
@@ -356,6 +427,112 @@ export class DrawingToolbar {
         this.applyMagnet(this.magnetMode === 'off' ? this.lastMagnetOn : 'off');
     }
 
+    /** Lock every drawing, or unlock every drawing when any is already locked (the
+     *  reference's one-button toggle: a chart is either "frozen" or editable). */
+    private toggleLockAll(): void {
+        const st = this.drawingsStateFn?.();
+        if (!st || st.total === 0) return;
+        this.onLockAllFn?.(st.locked < st.total);
+    }
+
+    private toggleHideAll(): void {
+        const st = this.drawingsStateFn?.();
+        if (!st || st.total === 0) return;
+        this.onHideAllFn?.(!st.hidden);
+    }
+
+    /** Reflect the drawing row's state: counts in the tips, an active tint for locked /
+     *  hidden, a slashed eye while hidden, and a disabled look on an empty chart. */
+    private paintChartTools(): void {
+        const st = this.drawingsStateFn?.();
+        if (!st) return;
+        const empty = st.total === 0;
+        const paint = (b: HTMLButtonElement | null, on: boolean, tip: string): void => {
+            if (!b) return;
+            b.dataset.active = on ? '1' : '';
+            b.disabled = empty;
+            b.style.opacity = empty ? '0.4' : '';
+            b.style.pointerEvents = empty ? 'none' : '';
+            b.setAttribute('aria-label', tip);
+            b.setAttribute('aria-pressed', String(on));
+            this.tipText.set(b.parentElement ?? b, tip);
+        };
+        const allLocked = st.total > 0 && st.locked === st.total;
+        paint(this.lockAllBtn, allLocked, allLocked ? 'Unlock all drawings' : st.locked > 0 ? `Lock all drawings (${st.locked} of ${st.total} locked)` : 'Lock all drawings');
+        paint(this.hideAllBtn, st.hidden, st.hidden ? `Show all drawings (${st.total} hidden)` : `Hide all drawings (${st.total})`);
+        if (this.hideAllBtn) this.hideAllBtn.innerHTML = hitHtml(st.hidden ? EYE_OFF_ICON : EYE_ICON);
+        paint(this.removeAllBtn, false, st.total === 1 ? 'Remove the drawing (undoable)' : `Remove all ${st.total} drawings (undoable)`);
+    }
+
+    /** Repaint the chart-management row after the host's drawing set changed. */
+    refreshChartTools(): void {
+        this.paintChartTools();
+    }
+
+    private onCursorArrowClick(): void {
+        const wasOpen = this.flyoutOwnerId === CURSOR_ID;
+        this.closeFlyout();
+        if (!wasOpen) this.openCursorFlyout();
+    }
+
+    /** The seven pointer styles, each row saying what the pointer will do. */
+    private openCursorFlyout(): void {
+        const cell = this.cursorCell;
+        if (!cell) return;
+        const fly = this.beginFlyout(CURSOR_ID, cell);
+        // Slightly wider than a tool list: every row carries a second line, and a hint that
+        // wraps at 180 px makes the menu taller than the chart.
+        fly.style.minWidth = '248px';
+        fly.appendChild(this.flyoutHeader('Cursor'));
+        const current = this.cursorStyleFn?.() ?? 'cross';
+        for (const spec of CURSOR_SPECS) {
+            const item = this.makeFlyoutItem({
+                icon: icon(spec.icon),
+                label: spec.label,
+                selected: spec.id === current,
+                onSelect: () => {
+                    this.onCursorStyleFn?.(spec.id);
+                    this.paintCursor();
+                    this.closeFlyout();
+                },
+            });
+            // The second line is what separates this from seven mystery labels; it only
+            // exists in this flyout, so it is appended BELOW the shared row markup.
+            const hint = document.createElement('span');
+            hint.className = 'vela-dtb-cursortip';
+            hint.textContent = spec.hint;
+            hint.style.cssText =
+                `display:block;padding:0 10px 6px 40px;margin-top:-5px;font:var(--vela-font-size-md) ${this.theme.fontFamily};` +
+                `color:var(--vela-fg-muted);white-space:normal;line-height:1.35;box-sizing:border-box;width:100%;`;
+            item.style.alignItems = 'flex-start';
+            item.style.paddingTop = '6px';
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'display:flex;flex-direction:column;';
+            wrap.append(item, hint);
+            fly.appendChild(wrap);
+        }
+        announceSurface(fly, true, 'menu', cell);
+    }
+
+    /** Repaint the cursor cell: the icon mirrors the chosen style, so the bar itself
+     *  answers "which pointer am I using?" without opening anything. */
+    private paintCursor(): void {
+        const style = this.cursorStyleFn?.() ?? 'cross';
+        const spec = cursorSpec(style);
+        if (this.cursorIcon) {
+            this.cursorIcon.innerHTML = hitHtml(icon(spec.icon));
+            this.cursorIcon.setAttribute('aria-label', `Cursor: ${spec.label}`);
+        }
+        if (this.cursorCell) this.tipText.set(this.cursorCell, `Cursor: ${spec.label}`);
+        this.cursorBtn?.setAttribute('data-style', style);
+    }
+
+    /** Reflect a pointer style set elsewhere (the More sheet) without notifying back. */
+    setCursorStyle(style: CursorStyle): void {
+        void style;
+        this.paintCursor();
+    }
+
     private onMagnetArrowClick(): void {
         const wasOpen = this.flyoutOwnerId === MAGNET_ID;
         this.closeFlyout();
@@ -377,6 +554,12 @@ export class DrawingToolbar {
         if (mode !== 'off') this.lastMagnetOn = mode;
         this.paintMagnet();
         this.highlight();
+    }
+
+    /** Highlight the Zoom button while a zoom region is being dragged. */
+    setZoomActive(active: boolean): void {
+        this.zoomActive = active;
+        if (this.zoomBtn) this.zoomBtn.dataset.active = active ? '1' : '';
     }
 
     /** Highlight the Measure ruler button while the transient ruler is armed. */
@@ -718,6 +901,7 @@ export class DrawingToolbar {
     }
 }
 
+const CURSOR_ID = 'cursor';
 const MAGNET_ID = '__magnet__';
 
 const STYLE_ID = 'vela-drawing-toolbar-styles';
@@ -780,6 +964,11 @@ function ensureStyles(): void {
 }
 
 const CURSOR_ICON = icon('cursor');
+const ZOOM_ICON = icon('zoom-in');
+const EYE_ICON = icon('eye');
+const EYE_OFF_ICON = icon('eye-off');
+const LOCK_ICON = icon('lock');
+const TRASH_ICON = icon('trash');
 const RULER_ICON = icon('ruler');
 /** Double chevrons for the bottom collapse/expand toggle. */
 const COLLAPSE_ICON = icon('chevrons-left');

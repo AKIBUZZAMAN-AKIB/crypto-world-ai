@@ -11,6 +11,8 @@ export { Drawing, setByPath } from './Drawing';
 export {
     captureToolDefaults,
     applyToolDefaults,
+    templateMatches,
+    templateColor,
     sanitizeToolDefaults,
     builtinToolTemplates,
     type DrawingToolDefaults,

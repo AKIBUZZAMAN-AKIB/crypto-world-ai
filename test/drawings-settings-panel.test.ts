@@ -256,11 +256,11 @@ describe('the drawing settings panel', () => {
         s.popup.destroy();
     });
 
-    it('the current look saved as a style is offered in the style menu', async () => {
+    it('the current look saved as a template is offered in the template menu', async () => {
         const s = setup(make('trendline', { style: { lineColor: '#ff8800', lineWidth: 2, lineStyle: 'solid' } }));
         await s.openPanel();
         s.$<HTMLButtonElement>('.vela-dsp-style')!.click();
-        s.$$<HTMLButtonElement>('.vela-dsp-mi').find((m) => m.textContent === 'Save as style…')!.click();
+        s.$$<HTMLButtonElement>('.vela-dsp-mi').find((m) => m.textContent === 'Save as template…')!.click();
         const name = s.$<HTMLInputElement>('.vela-dsp-mname input')!;
         name.value = 'Weekly';
         name.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));

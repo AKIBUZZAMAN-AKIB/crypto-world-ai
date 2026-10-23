@@ -11,6 +11,8 @@ import type { VelaStorage } from './persist';
 import type { TopbarComposition } from './topbar-composition';
 
 /** What a shell (widget or workspace) accepts BEYOND the chart options themselves. */
+import type { CursorStyle } from '../core/cursor';
+
 export interface VelaShellOptions {
     /** Provider factories, keyed by provider name. The shell owns the call cycle: the
      *  widget re-instantiates on each chart rebuild; the workspace instantiates once
@@ -32,6 +34,9 @@ export interface VelaShellOptions {
     /** Display timezone — one choice for the whole shell: an IANA zone (default
      *  'Etc/UTC'), or `'exchange'` to render every chart in its own market's zone. */
     timezone?: string;
+    /** The pointer shown on every chart: `'cross'` (default), `'dot'`, `'arrow'`,
+     *  `'demo'`, `'magic'`, `'eraser'` or `'none'` — the drawing toolbar's Cursors stop. */
+    cursor?: CursorStyle;
     /** Chrome toggles (all default true). */
     statusline?: boolean;
     watermark?: boolean;

@@ -74,6 +74,10 @@ export interface UserDrawingDeps {
     setSnapMode(mode: SnapMode): void;
     /** Reserve `px` of left gutter for the docked toolbar (0 releases it) — the plot insets to its right. */
     setToolbarGutter(px: number): void;
+    /** Fit the view to a dragged region — the "Zoom in" tool's whole job. Receives the
+     *  region in MEDIA pixels (already ordered), which the renderer turns into a visible
+     *  time range with a little breathing room on each side. */
+    zoomToRegion(x0: number, x1: number, y0: number, y1: number): void;
 }
 
 /** No interaction targets on the interleave layers — handles always paint in front. */
@@ -136,7 +140,10 @@ export class UserDrawingController implements IDrawingsRendererPort {
      *  bubble to its keymap instead — see the renderer's `historyChords` feature. */
     historyChords = true;
     private measureMode = false; // the ruler is armed (placing a measurement)
+    private zoomMode = false; // drag a region and the chart fits it
+    private zoomRegion: { x0: number; y0: number; x1: number; y1: number } | null = null;
     private eraserMode = false; // click/drag over a drawing deletes it
+    private allHidden = false; // the Hide button: paint and hit-test nothing (never persisted)
     private erasing = false; // a button is held during eraser mode (so a drag erases multiple)
     // The inline on-chart text editor: its element, the id of the drawing it edits, the text it
     // opened with (so Escape can put it back), and the text the core currently holds (so an edit is
@@ -179,6 +186,28 @@ export class UserDrawingController implements IDrawingsRendererPort {
                 onCollapse: (collapsed) => {
                     this.toolbarCollapsed = collapsed;
                     this.syncToolbarGutter();
+                },
+                // The chart-management trio, wired to THIS renderer's own model (a
+                // single-chart embed has no workspace to route through).
+                drawingsState: () => ({
+                    total: this.drawings.length,
+                    locked: this.drawings.filter((d) => d.locked).length,
+                    hidden: this.allHidden,
+                }),
+                onLockAll: (lock) => {
+                    const docs = this.drawings.map((d) => ({ ...d.serialize(), locked: lock }));
+                    this.emit({ kind: 'edit-many', docs });
+                },
+                onHideAll: (hidden) => {
+                    this.setAllHidden(hidden);
+                    this.emit({ kind: 'hidden-all', hidden });
+                },
+                onZoom: () => this.withModeIntent(() => this.toggleZoom()),
+                onRemoveAll: () => {
+                    const ids = this.drawings.map((d) => d.id);
+                    if (ids.length === 0) return;
+                    this.popup.close();
+                    this.emit({ kind: 'delete', ids });
                 },
             },
         );
@@ -258,6 +287,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
         this.render();
         this.deps.requestScaleUpdate();
         this.popup.syncPanel();
+        this.toolbar.refreshChartTools(); // lock/hide/remove counts follow every sync
     }
 
     /** The pane's series stack in z terms — how the core places a new drawing (just under
@@ -335,6 +365,17 @@ export class UserDrawingController implements IDrawingsRendererPort {
         this.toolbar.setStayMode(on);
     }
 
+    /** Core push: "Hide all drawings" — a view flag. Painting AND hit-testing both read
+     *  `onScreen()`, so one field silences both; nothing in the model changes. */
+    setAllHidden(hidden: boolean): void {
+        if (hidden === this.allHidden) return;
+        this.allHidden = hidden;
+        if (hidden) this.hoveredId = null;
+        this.popup.close();
+        this.toolbar.refreshChartTools();
+        this.render();
+    }
+
     /** Core push: enter/exit measure or eraser (`null` = none). Reuses the toolbar
      *  toggles so the mutual exclusion (and the button highlights) stay in one place;
      *  any ACTUAL change is reported back through the mode intent. */
@@ -344,16 +385,19 @@ export class UserDrawingController implements IDrawingsRendererPort {
                 if (!this.measureMode) this.toggleMeasure();
             } else if (mode === 'eraser') {
                 if (!this.eraserMode) this.toggleEraser();
+            } else if (mode === 'zoom') {
+                if (!this.zoomMode) this.toggleZoom();
             } else {
                 if (this.measureMode) this.exitMeasure();
                 if (this.eraserMode) this.exitEraser();
+                if (this.zoomMode) this.exitZoom();
             }
         });
     }
 
     /** The current renderer-local mode (measure/eraser/none). */
     private modeOf(): DrawingMode {
-        return this.measureMode ? 'measure' : this.eraserMode ? 'eraser' : null;
+        return this.measureMode ? 'measure' : this.eraserMode ? 'eraser' : this.zoomMode ? 'zoom' : null;
     }
 
     /** Run a state transition and report the mode ONCE if it actually changed — the
@@ -394,7 +438,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
     // ── pointer/keyboard entry points (driven by InputController/KeyboardController) ──
     /** Should the drawing layer win this press (vs pan)? */
     claim(x: number, y: number): boolean {
-        if (this.measureMode || this.eraserMode) return true; // these modes capture their clicks (no pan)
+        if (this.measureMode || this.eraserMode || this.zoomMode) return true; // these modes capture their clicks (no pan)
         if (this.magnifierChipAt(x, y)) return true; // the chip is a dropdown trigger, never a pan start
         return this.interaction.claim(x, y);
     }
@@ -475,6 +519,11 @@ export class UserDrawingController implements IDrawingsRendererPort {
     }
 
     pointerDown(x: number, y: number, snap: SnapMode = 'off', shift = false, mod = false): void {
+        if (this.zoomMode) {
+            this.zoomRegion = { x0: x, y0: y, x1: x, y1: y };
+            this.render();
+            return;
+        }
         if (this.eraserMode) {
             this.erasing = true; // hold to drag-erase across multiple drawings
             this.deleteAt(x, y);
@@ -501,6 +550,12 @@ export class UserDrawingController implements IDrawingsRendererPort {
     }
 
     pointerMove(x: number, y: number, snap: SnapMode = 'off', shift = false, mod = false): void {
+        if (this.zoomMode) {
+            if (!this.zoomRegion) return;
+            this.zoomRegion = { ...this.zoomRegion, x1: x, y1: y };
+            this.render();
+            return;
+        }
         if (this.eraserMode) {
             if (this.erasing) this.deleteAt(x, y); // erase only while the button is held (not on hover)
             return;
@@ -537,6 +592,24 @@ export class UserDrawingController implements IDrawingsRendererPort {
     }
 
     pointerUp(x: number, y: number, snap: SnapMode = 'off'): void {
+        if (this.zoomMode) {
+            const r = this.zoomRegion;
+            this.zoomRegion = null;
+            if (r) {
+                const x0 = Math.min(r.x0, x);
+                const x1 = Math.max(r.x0, x);
+                const y0 = Math.min(r.y0, y);
+                const y1 = Math.max(r.y0, y);
+                // A stray click is not a zoom: require a region worth fitting (the reference
+                // ignores a click too), then leave the mode as a one-shot.
+                if (x1 - x0 >= 8 && y1 - y0 >= 8) {
+                    this.deps.zoomToRegion(x0, x1, y0, y1);
+                    this.withModeIntent(() => this.exitZoom());
+                }
+            }
+            this.render();
+            return;
+        }
         if (this.eraserMode) {
             this.erasing = false;
             return;
@@ -556,6 +629,30 @@ export class UserDrawingController implements IDrawingsRendererPort {
             if (this.selectedIds.size >= 2) this.openSettingsForSelection(this.selectionIds());
             else this.openSettingsById(dragged, x, y);
         }
+    }
+
+    /** Toggle the drag-a-region zoom. One-shot: a completed region leaves the mode, so a
+     *  trader can zoom twice in a row without the chart staying in a drag state. */
+    private toggleZoom(): void {
+        if (this.zoomMode) {
+            this.exitZoom();
+            return;
+        }
+        if (this.eraserMode) this.exitEraser();
+        if (this.measureMode) this.exitMeasure(false);
+        this.zoomRegion = null;
+        this.zoomMode = true;
+        this.emit({ kind: 'arm', type: null }); // clear any armed drawing tool (core-authoritative)
+        this.clearSelection();
+        this.toolbar.setZoomActive(true);
+        this.render();
+    }
+
+    private exitZoom(): void {
+        this.zoomRegion = null;
+        this.zoomMode = false;
+        this.toolbar.setZoomActive(false);
+        this.render();
     }
 
     /** Toggle the transient ruler. Arming it clears any drawing tool + selection. */
@@ -921,7 +1018,26 @@ export class UserDrawingController implements IDrawingsRendererPort {
     /** The drawings shown on the chart's current timeframe. One limited to other timeframes
      *  ("show on") is neither painted nor clickable here, but stays in the model: the object
      *  tree still lists it, and its own visibility flag is untouched. */
+    /** The zoom tool's rubber band: a dashed accent rectangle over the plot. */
+    private paintZoomRegion(ctx: CanvasRenderingContext2D): void {
+        const r = this.zoomRegion;
+        if (!r) return;
+        const x = Math.min(r.x0, r.x1);
+        const y = Math.min(r.y0, r.y1);
+        const w = Math.abs(r.x1 - r.x0);
+        const h = Math.abs(r.y1 - r.y0);
+        ctx.save();
+        ctx.fillStyle = 'rgba(56,192,253,0.14)';
+        ctx.fillRect(x, y, w, h);
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(56,192,253,0.95)';
+        ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+        ctx.restore();
+    }
+
     private onScreen(): Drawing[] {
+        if (this.allHidden) return [];
         const barMs = this.deps.chartBarMs();
         return this.drawings.filter((d) => shownOnTimeframe(d.showOn, barMs));
     }
@@ -1059,6 +1175,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
         if (this.measure.isActive()) this.measure.paint(ctx, proj, this.deps.theme());
         const marquee = this.interaction.marqueeRect();
         if (marquee) this.painter.paintMarquee(ctx, marquee);
+        this.paintZoomRegion(ctx); // the zoom tool's rubber band, over everything
     }
 
     destroy(): void {
@@ -1148,6 +1265,29 @@ export class UserDrawingController implements IDrawingsRendererPort {
                 this.emitEdits(ds);
                 this.openSettingsForSelection(ids); // rebuild so the controls reflect the restored defaults
             },
+            // A multi-selection can carry a template too — as long as every member IS that
+            // tool (a trendline look on a rectangle would overwrite the wrong fields).
+            refreshBar: () => this.openSettingsForSelection(ids),
+            templates: () => {
+                const first = live()[0];
+                return first && live().every((d) => d.type === first.type) ? (this.toolTemplates[first.type] ?? []) : [];
+            },
+            saveTemplate: (name) => {
+                const first = live()[0];
+                if (first) this.emit({ kind: 'template-save', type: first.type, name, settings: captureToolDefaults(first) });
+            },
+            removeTemplate: (name) => {
+                const first = live()[0];
+                if (first) this.emit({ kind: 'template-remove', type: first.type, name });
+            },
+            applyToolSettings: (settings) => {
+                const first = live()[0];
+                if (!first) return;
+                const ds = live().filter((d) => d.type === first.type);
+                for (const d of ds) applyToolDefaults(d, settings);
+                this.render();
+                this.emitEdits(ds);
+            },
             remove: () => {
                 // Locked members are protected: they stay behind (still selected) while the rest go.
                 const ids = live().filter((d) => !d.locked).map((d) => d.id);
@@ -1215,6 +1355,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
                 this.emit({ kind: 'edit', doc: { ...doc, text } });
             },
             templates: () => this.toolTemplates[drawing.type] ?? [],
+            refreshBar: () => this.openSettingsById(id, 0, 0),
             saveTemplate: (name) => {
                 const d = live();
                 if (d) this.emit({ kind: 'template-save', type: d.type, name, settings: captureToolDefaults(d) });
@@ -1223,9 +1364,14 @@ export class UserDrawingController implements IDrawingsRendererPort {
             applyToolSettings: (settings) => {
                 const d = live();
                 if (!d) return;
-                applyToolDefaults(d, settings);
+                // A template is the tool's look, so it lands on every selected drawing of
+                // that same tool (the reference's "apply to several same-type tools") —
+                // a selection of mixed tools only receives it where the schema allows.
+                const same = this.selectedIds.size > 1 ? this.selectionIds().map((id) => this.drawings.find((x) => x.id === id)).filter((x): x is Drawing => x != null && x.type === d.type) : [d];
+                const targets = same.length > 0 ? same : [d];
+                for (const t of targets) applyToolDefaults(t, settings);
                 this.render();
-                this.emit({ kind: 'edit', doc: d.serialize() });
+                this.emitEdits(targets);
             },
             // A hovered style paints on the drawing without an edit; leaving puts the look back.
             preview: (settings) => {

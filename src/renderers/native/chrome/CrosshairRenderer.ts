@@ -5,6 +5,12 @@ import type { SceneGraph, PaneNode } from '../core/SceneGraph';
 import { formatAxisValue, formatTimeStamp } from './ticks';
 import { readableText } from '../backend/gl/color';
 import { percentScaleFor } from './ChromeRenderer';
+import { cursorSpec } from '../../../core/cursor';
+import { ACCENT_BRIGHT, BEARISH, HIGHLIGHT } from '../../../core/palette';
+
+/** How long demonstration ink lives, and how long a magic spark lives (ms). */
+const INK_TTL = 2600;
+const SPARK_TTL = 900;
 
 /**
  * Renderer-owned crosshair layer (chrome). Lives on its OWN transparent canvas
@@ -50,13 +56,26 @@ export class CrosshairRenderer {
         // shows even while a resize drag has the crosshair sitting right on the boundary.
         if (separatorHoverY !== null) this.drawSeparatorHover(ctx, canvas.width / dpr, theme, separatorHoverY);
 
+        // Pointer trails (demonstration ink / magic sparks) sit UNDER the local crosshair,
+        // like the synced ghost, and paint even when the pointer has left the plot — that
+        // is the whole point of ink that outlives the gesture.
+        this.drawInk(ctx, scene);
+
         // External (synced) ghost — drawn dimmer and FIRST, so a real local pointer
         // paints over it, and drawn regardless of the local-crosshair presence guard.
         if (external) this.drawExternal(ctx, external, scene, coords, theme);
 
+        const style = cursorSpec(scene.cursorStyle);
         const ch = scene.crosshair;
         const dataW = coords.width;
         const dataH = coords.height;
+        if (!style.lines) {
+            // Arrow / None / Demonstration / Magic / Eraser: no crosshair lines and no axis
+            // chips (the reference's rule — only Cross and Dot support the crosshair). The
+            // eraser still shows its ring, and an open menu on it must show a target.
+            if (style.id === 'eraser' && ch && ch.x >= 0 && ch.y >= 0 && ch.x <= dataW && ch.y <= dataH) this.drawEraserRing(ctx, ch.x, ch.y, theme);
+            return;
+        }
         if (!ch || ch.x < 0 || ch.x > dataW || ch.y < 0 || ch.y > dataH) return;
 
         const cs = scene.style.crosshair;
@@ -91,6 +110,7 @@ export class CrosshairRenderer {
         ctx.setLineDash([]);
         ctx.lineWidth = 1;
         ctx.globalAlpha = 1;
+        if (style.id === 'dot') this.drawDot(ctx, x, Math.round(ch.y) + 0.5, ov?.color ?? cs.color ?? theme.textColor);
 
         // price chip on the right axis for the pane under the cursor. Linear scan
         // over the pane map (no sort/alloc) — panes don't overlap in Y, and this
@@ -110,6 +130,85 @@ export class CrosshairRenderer {
         }
         // time chip on the bottom axis
         if (vertical) this.chip(ctx, x, dataH + 1, formatTimeStamp(coords.logicalToTime(logical), scene.timezone, coords.barInterval), chipBg, 'center', true, theme.background);
+    }
+
+    /** The dot cursor's anchor: a filled disc with a thin ring in the chart surface color, so
+     *  it stays legible over a candle body and over empty background alike. */
+    private drawDot(ctx: CanvasRenderingContext2D, x: number, y: number, color: string): void {
+        ctx.beginPath();
+        ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.95;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.lineWidth = 1.25;
+        ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+        ctx.stroke();
+    }
+
+    /** The eraser's target: a ring the size of its hit radius, red-ish so it never reads as
+     *  part of the chart. Two strokes (a dark halo then the accent) keep it visible on both
+     *  themes without a theme lookup in the hot path. */
+    private drawEraserRing(ctx: CanvasRenderingContext2D, x: number, y: number, theme: VelaTheme): void {
+        ctx.beginPath();
+        ctx.arc(x, y, 11, 0, Math.PI * 2);
+        ctx.lineWidth = 3.5;
+        ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+        ctx.stroke();
+        ctx.lineWidth = 1.6;
+        ctx.strokeStyle = BEARISH; // the danger red the rest of the chrome uses
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x, y, 1.6, 0, Math.PI * 2);
+        ctx.fillStyle = theme.textColor;
+        ctx.globalAlpha = 0.8;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+    }
+
+    /** Demonstration ink (a soft wide stroke) and magic sparks (small four-point stars),
+     *  faded by age: the newest sample is opaque, the oldest is gone. */
+    private drawInk(ctx: CanvasRenderingContext2D, scene: SceneGraph): void {
+        const now = performance.now();
+        const ink = scene.cursorInk;
+        if (ink.length > 0) {
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            for (let i = 1; i < ink.length; i++) {
+                const a = ink[i - 1]!;
+                const b = ink[i]!;
+                const age = now - b.t;
+                if (age > INK_TTL) continue;
+                const k = 1 - age / INK_TTL;
+                ctx.beginPath();
+                ctx.moveTo(a.x, a.y);
+                ctx.lineTo(b.x, b.y);
+                ctx.lineWidth = 10 + 6 * k;
+                ctx.strokeStyle = `rgba(56, 192, 253, ${0.42 * k})`;
+                ctx.stroke();
+            }
+            ctx.lineCap = 'butt';
+        }
+        for (const p of scene.cursorSparks) {
+            const age = now - p.t;
+            if (age > SPARK_TTL) continue;
+            const k = 1 - age / SPARK_TTL;
+            const x = p.x + (p.vx ?? 0) * age * 0.02;
+            const y = p.y + (p.vy ?? 0) * age * 0.02 - age * 0.012; // sparks drift up
+            const r = 1.2 + 2.6 * k;
+            ctx.globalAlpha = 0.85 * k;
+            // Hot spark at birth, cooling to the brand blue as it dies.
+            ctx.fillStyle = k > 0.55 ? HIGHLIGHT : ACCENT_BRIGHT;
+            ctx.beginPath();
+            // a four-point star: two crossed teardrops
+            ctx.moveTo(x, y - r * 2.2);
+            ctx.quadraticCurveTo(x + r * 0.45, y - r * 0.45, x + r * 1.8, y);
+            ctx.quadraticCurveTo(x + r * 0.45, y + r * 0.45, x, y + r * 2.2);
+            ctx.quadraticCurveTo(x - r * 0.45, y + r * 0.45, x - r * 1.8, y);
+            ctx.quadraticCurveTo(x - r * 0.45, y - r * 0.45, x, y - r * 2.2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
     }
 
     destroy(): void {
