@@ -346,15 +346,11 @@ export function layoutGlyph(def: LayoutDefinition): string {
             }
         }
     }
-    // MINIMAL: the frame is a hairline at reduced ink and the SEAMS carry the full
-    // weight — the glyph then reads as "this is how the page is cut" rather than as a
-    // picture of a grid. Stroke 1.05 on a 16px box keeps it crisp at 1x and 2x; the
-    // round caps are what stop a seam meeting the frame from looking notched.
+    // MINIMAL: the frame keeps the kit's icon language (16px box, 1.2 stroke, no fill)
+    // but drops to 45% ink, so the SEAMS carry the weight — the glyph then reads as "this
+    // is how the page is cut" rather than as a picture of a grid.
     const frame = `<rect x="${GLYPH_MIN}" y="${GLYPH_MIN}" width="${GLYPH_SPAN}" height="${GLYPH_SPAN}" rx="2" opacity="0.45"/>`;
-    return svg16(
-        seams.length > 0 ? `${frame}<path d="${seams.join('')}"/>` : frame,
-        'stroke-width="1.05"',
-    );
+    return svg16(seams.length > 0 ? `${frame}<path d="${seams.join('')}"/>` : frame);
 }
 
 /** Inline styles for the grid container + each cell — PURE (the workspace applies them). */

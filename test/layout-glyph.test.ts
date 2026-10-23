@@ -26,7 +26,9 @@ describe('layoutGlyph', () => {
         expect(svg).toContain('stroke-width="1.2"');
         expect(svg).toContain('stroke-linejoin="round"');
         expect(svg).toContain('fill="none"');
-        expect(svg).toContain('<rect x="1.5" y="1.5" width="13" height="13" rx="1.5"/>');
+        // The frame is a hairline at reduced ink so the SEAMS carry the glyph (round 23's
+        // minimal pass); the box, stroke and joins above are unchanged by design.
+        expect(svg).toContain('<rect x="1.5" y="1.5" width="13" height="13" rx="2" opacity="0.45"/>');
     });
 
     it('draws each built-in layout', () => {
