@@ -178,6 +178,14 @@ export function priceStyleIcon(id: string): string | undefined {
     return undefined;
 }
 
+/** Raw `<svg>` markup for a price style — the mobile bar's chart-type stop and its
+ *  sheet draw the glyph directly, so they need markup rather than an icon id. Registers
+ *  a plugin type's `icon` on first use, exactly like {@link priceStyleIcon}. */
+export function priceStyleMarkup(id: string): string | undefined {
+    const iconId = priceStyleIcon(id);
+    return iconId ? (iconMarkup(iconId) ?? undefined) : undefined;
+}
+
 export interface TopbarOptions {
     symbol: string;
     onSymbolClick?: () => void;

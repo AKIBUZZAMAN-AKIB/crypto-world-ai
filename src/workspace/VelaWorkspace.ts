@@ -24,7 +24,7 @@ import { DatePicker, isoDate } from '../ui/components/date-picker';
 import { ReplayToolbar, REPLAY_CALENDAR_CLASS, REPLAY_DEFAULT_SPEED } from '../widget/replay-toolbar';
 import type { Vela } from '../Vela';
 import { joinWorkspaceLink } from './link';
-import { Topbar, priceStyleLabel, priceStyleIcon } from '../widget/topbar';
+import { Topbar, priceStyleLabel, priceStyleIcon, priceStyleMarkup } from '../widget/topbar';
 import { Bottombar, RANGE_PRESETS } from '../widget/bottombar';
 import { SecondClock } from '../core/util/wall-clock';
 import { ObjectTree } from '../widget/object-tree';
@@ -1093,11 +1093,18 @@ export class VelaWorkspace {
                       // Multi-chart only: the stop that isolates the ACTIVE chart (the
                       // per-cell hover cluster has no cursor to reveal it on mobile).
                       ...(this.monoLayout ? {} : { onMaximizeClick: () => this.toggleMobileMaximize() }),
-                      // The layout stop: open the sheet straight on its Layout block.
+                      // The CHART-TYPE stop: glyph = the active cell's price style, tap =
+                      // the style sheet. It took the slot the layout count used to hold
+                      // (a number you read once vs. a shape you read constantly); layout
+                      // moved into the sheet's one quiet row, still one tap away.
+                      styleOptions: () => priceStyleIds().map((id) => ({ id, label: priceStyleLabel(id), icon: priceStyleMarkup(id) })),
+                      currentStyle: () => this.active.priceStyle,
+                      onStyleSelect: (id) => this.active.setPriceStyle(id),
                       ...(this.monoLayout
                           ? {}
                           : {
                                 layoutLabel: () => `${this.def.cols.length}×${this.def.rows.length}`,
+                                layoutGlyph: () => layoutGlyph(this.def),
                                 onLayoutClick: () => this.openMoreDrawer('layout'),
                             }),
                       onMoreClick: () => this.openMoreDrawer(),
@@ -1993,8 +2000,10 @@ export class VelaWorkspace {
         this.mobileBar?.renderActions();
         this.mobileBar?.setSymbol(cell.symbol);
         this.mobileBar?.setTimeframe(cell.timeframe);
+        this.mobileBar?.setPriceStyle(cell.priceStyle);
         this.mobileBar?.setLayoutLabel(`${this.def.cols.length}×${this.def.rows.length}`);
         this.syncMobileMaximize(); // the new active cell may hold a maximized pane
+        this.mobileBar?.onChart(cell.chart); // its drawings stop mirrors the ACTIVE cell's tool
         this.drawingPill?.onChart(cell.chart); // the pill mirrors the ACTIVE cell's tool state
         const pushHistory = (): void => this.topbar.setHistoryState(cell.history.canUndo, cell.history.canRedo);
         this.historyUnsub?.();
@@ -4342,6 +4351,7 @@ export class VelaWorkspace {
         const cell = this.cellsById.get(id);
         if (!cell) return;
         this.topbar.setPriceStyle(cell.priceStyle);
+        this.mobileBar?.setPriceStyle(cell.priceStyle);
     }
 
     /** Trigger ② — a cell's indicator ledger changed: count + picker only if active. */
