@@ -329,6 +329,25 @@ export class DrawingPill {
         this.sheet = null;
     }
 
+    // ── the session verbs the ⋯ menu exposes ────────────────────────────────────
+    // Public because they are the strip's whole API to the drawing session: a host that
+    // wants its own affordance (or a test) reaches the same three switches, and the menu
+    // never becomes the only door to them.
+    toggleStayMode(): void {
+        const d = this.chart?.drawings;
+        if (d) d.setStayMode(!d.getStayMode());
+    }
+
+    toggleHiddenAll(): void {
+        const d = this.chart?.drawings;
+        if (d) d.setHiddenAll(!d.isHiddenAll());
+    }
+
+    /** Open/close the saved-looks sheet for the armed tool. */
+    toggleTemplates(): void {
+        this.toggleSheet();
+    }
+
     // ── the ⋯ overflow ──────────────────────────────────────────────────────────
     /** Stay-in-drawing-mode, saved templates and hide-all — the three switches that
      *  govern the whole drawing session. They sit in a menu because the strip only has
@@ -353,9 +372,9 @@ export class DrawingPill {
             ],
             onSelect: (id) => {
                 this.closeMore();
-                if (id === 'stay') d.setStayMode(!d.getStayMode());
-                else if (id === 'templates') this.toggleSheet();
-                else if (id === 'hide') d.setHiddenAll(!d.isHiddenAll());
+                if (id === 'stay') this.toggleStayMode();
+                else if (id === 'templates') this.toggleTemplates();
+                else if (id === 'hide') this.toggleHiddenAll();
             },
             onOpenChange: (open) => {
                 this.moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');

@@ -97,6 +97,10 @@ function fakeChart(over: { templates?: DrawingToolTemplate[]; defaults?: Drawing
             emit('drawing:hidden-all');
         },
         isHiddenAll: () => hidden,
+        canUndo: () => true,
+        canRedo: () => false,
+        undo: () => {},
+        redo: () => {},
         toolDefaults: () => defaults,
         setToolDefaults: (map: Record<string, DrawingToolDefaults>) => {
             defaults = map;
@@ -120,7 +124,22 @@ function fakeChart(over: { templates?: DrawingToolTemplate[]; defaults?: Drawing
     return { chart, drawings };
 }
 
-describe('the phone’s drawing pill carries the templates', () => {
+/**
+ * Round 25 moved templates and hide-all off the strip's face and into its ⋯ menu: the
+ * face only has room for the verbs you press WHILE drawing (tool, undo, redo, magnet,
+ * eraser, more, exit). These helpers drive the menu the way a thumb does.
+ */
+function openMore(host: HTMLElement): void {
+    host.querySelector<HTMLButtonElement>('.vela-drawpill button[aria-label="More drawing tools"]')!.click();
+}
+
+function menuItem(label: string): HTMLElement {
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) => (el.textContent ?? '').includes(label));
+    if (!item) throw new Error(`menu item "${label}" not found`);
+    return item;
+}
+
+describe('the phone’s drawing strip carries the templates', () => {
     it('lists the armed tool’s saved looks with the live one checked, and applies one', () => {
         const host = document.createElement('div');
         document.body.appendChild(host);
@@ -128,10 +147,19 @@ describe('the phone’s drawing pill carries the templates', () => {
         const pill = new DrawingPill(host);
         pill.onChart(chart);
 
-        const btn = host.querySelector<HTMLButtonElement>('.vela-drawpill button[aria-label="Drawing templates"]')!;
-        expect(btn).toBeTruthy();
-        btn.click();
-        expect(btn.getAttribute('aria-expanded')).toBe('true');
+        const more = host.querySelector<HTMLButtonElement>('.vela-drawpill button[aria-label="More drawing tools"]')!;
+        expect(more).toBeTruthy();
+        // The ⋯ menu is the door now: it lists the three session verbs…
+        openMore(host);
+        expect([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((i) => i.textContent)).toEqual([
+            'Stay in drawing mode',
+            'Templates…',
+            'Hide all drawings',
+        ]);
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+        // …and the verb behind it opens the sheet (the menu's own selection is driven by the
+        // menu machine, which jsdom cannot press; the behaviour under test is the sheet).
+        pill.toggleTemplates();
         const rows = [...host.querySelectorAll<HTMLElement>('.vela-dptpl-row')];
         expect(rows.map((r) => r.querySelector('.vela-dptpl-name')?.textContent)).toEqual(['Default', 'Ichimoku pink']);
         expect(rows[1]!.getAttribute('aria-checked')).toBe('true');
@@ -143,7 +171,7 @@ describe('the phone’s drawing pill carries the templates', () => {
         expect(host.querySelector('.vela-dptpl')).toBeNull();
         // "Default" hands back the tool's built-in look, so the pink template no longer wins.
         expect(drawings.toolDefaults().trendline).not.toEqual(PINK);
-        expect(btn.getAttribute('aria-expanded')).toBe('false');
+        expect(host.querySelector('.vela-dptpl')).toBeNull();
         pill.destroy();
     });
 
@@ -153,7 +181,7 @@ describe('the phone’s drawing pill carries the templates', () => {
         const { chart } = fakeChart();
         const pill = new DrawingPill(host);
         pill.onChart(chart);
-        host.querySelector<HTMLButtonElement>('.vela-drawpill button[aria-label="Drawing templates"]')!.click();
+        pill.toggleTemplates();
         expect(host.querySelectorAll('.vela-dptpl-row')).toHaveLength(1);
         expect(host.querySelector('.vela-dptpl-empty')?.textContent).toContain('Templates button');
         pill.destroy();
@@ -165,12 +193,11 @@ describe('the phone’s drawing pill carries the templates', () => {
         const { chart } = fakeChart();
         const pill = new DrawingPill(host);
         pill.onChart(chart);
-        const btn = host.querySelector<HTMLButtonElement>('.vela-drawpill button[aria-label="Drawing templates"]')!;
-        btn.click();
+        pill.toggleTemplates();
         await new Promise((r) => setTimeout(r, 0)); // the outside/Escape listeners attach on a tick
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
         expect(host.querySelector('.vela-dptpl')).toBeNull();
-        btn.click();
+        pill.toggleTemplates();
         chart.drawings.setTool('rectangle' as never);
         expect(host.querySelector('.vela-dptpl')).toBeNull();
         pill.destroy();
@@ -184,13 +211,17 @@ describe('the phone’s Hide button', () => {
         const { chart } = fakeChart();
         const pill = new DrawingPill(host);
         pill.onChart(chart);
-        const eye = host.querySelector<HTMLButtonElement>('.vela-drawpill button[aria-label="Hide all drawings"]')!;
-        expect(eye).toBeTruthy();
-        eye.click();
+        // The ⋯ menu lists the toggle…
+        openMore(host);
+        expect(menuItem('Hide all drawings')).toBeTruthy();
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+        // …and the verb toggles every drawing.
+        pill.toggleHiddenAll();
         expect(chart.drawings.isHiddenAll()).toBe(true);
-        const after = host.querySelector<HTMLButtonElement>('.vela-drawpill button[aria-label="Show all drawings"]')!;
-        expect(after.dataset.on).toBe('1');
-        after.click();
+        // the ⋯ stop carries the session state: a hidden chart is a mutated session
+        const more = host.querySelector<HTMLButtonElement>('.vela-drawpill button[aria-label="More drawing tools"]')!;
+        expect(more.dataset.on).toBe('1');
+        pill.toggleHiddenAll();
         expect(chart.drawings.isHiddenAll()).toBe(false);
         pill.destroy();
     });

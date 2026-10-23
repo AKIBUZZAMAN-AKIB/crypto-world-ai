@@ -446,12 +446,18 @@ describe('ChartCell symbol metadata — the session verdict does not wait for th
 describe('ChartCell indicator picker library', () => {
     // Vela is now the name of whole charting products built on this library, so the
     // library's own indicators can't be filed under "Vela" in their picker.
-    it('files the built-in indicators under "Built-in", never under the product name', async () => {
+    // Round 25 also stopped filing them under ONE bucket: each native declares its own
+    // family (the catalog file it is defined in), which is what the picker's tabs read.
+    it('files the built-in indicators by family, never under the product name', async () => {
         const cell = makeCell();
         await settle();
         const natives = cell.libraryRows().filter((r) => r.native);
         expect(natives.length).toBeGreaterThan(0);
-        expect(new Set(natives.map((r) => r.category))).toEqual(new Set(['Built-in']));
+        const categories = new Set(natives.map((r) => r.category));
+        expect(categories.has('Vela')).toBe(false);
+        expect(categories.has('Built-in')).toBe(false);
+        // The families the classic catalog is defined in.
+        expect(categories).toEqual(new Set(['Moving averages', 'Bands & channels', 'Overlays', 'Trend', 'Oscillators', 'Volatility', 'Volume']));
         cell.destroy();
     });
 });
