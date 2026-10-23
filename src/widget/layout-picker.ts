@@ -77,7 +77,7 @@ const CSS = `
        the layout the narrow breakpoint already used; making it the default is what
        turns one 685x825 card into a 2-column 530x560 one. */
     display: grid;
-    grid-template-columns: 124px minmax(0, 1fr);
+    grid-template-columns: 132px minmax(0, 1fr);
     align-items: start;
     column-gap: 12px;
     row-gap: 8px;
@@ -213,9 +213,9 @@ const CSS = `
     display: flex;
     align-items: center;
     gap: 5px;
-    margin: 6px 0 2px;
-    font-size: 9px;
-    letter-spacing: 0.6px;
+    margin: 4px 0 2px;
+    font-size: 8.5px;
+    letter-spacing: 0.5px;
     text-transform: uppercase;
     color: var(--vela-fg-muted);
     opacity: 0.9;
@@ -226,18 +226,19 @@ const CSS = `
     height: 1px;
     background: var(--vela-border-faint);
 }
-.vela-lp-presetrow { display: grid; grid-template-columns: repeat(4, 26px); gap: 3px; }
+.vela-lp-presetrow { display: grid; grid-template-columns: repeat(5, 24px); gap: 2px; justify-content: start; }
 .vela-lp-preset[data-icon='1'] {
     /* Minimal by construction: no pill, no border — the GLYPH is the button. The hover
        wash is the only chrome, and the selected layout keeps a single hairline ring so
        "which one am I in" survives the removal of the boxes. */
     display: inline-flex; align-items: center; justify-content: center;
-    width: 26px; height: 26px; padding: 0;
-    color: color-mix(in srgb, var(--vela-fg) 66%, transparent);
+    width: 24px; height: 24px; padding: 0;
+    color: color-mix(in srgb, var(--vela-fg) 62%, transparent);
     background: transparent; border: 1px solid transparent;
+    transition: color 120ms var(--vela-ease), background 120ms var(--vela-ease);
 }
 .vela-lp-preset[data-icon='1'][data-checked='1'] { border-color: var(--vela-border-strong); color: var(--vela-fg-bright); background: var(--vela-hover); }
-.vela-lp-preset[data-icon='1'] svg { width: 16px; height: 16px; }
+.vela-lp-preset[data-icon='1'] svg { width: 14px; height: 14px; }
 .vela-lp-preset[data-icon='1']:hover { background: var(--vela-hover-strong); color: var(--vela-fg-bright); border-color: transparent; }
 
 
@@ -245,7 +246,7 @@ const CSS = `
 
 .vela-lp-scope[data-global='1'] { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); }
 /* Footer: saved layouts + tab link. */
-.vela-lp-foot { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--vela-border-faint); display: flex; flex-direction: column; gap: 4px; }
+.vela-lp-foot { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--vela-border-faint); display: flex; flex-direction: column; gap: 3px; }
 .vela-lp-save { display: flex; gap: 6px; }
 .vela-lp-save input {
     flex: 1 1 auto;

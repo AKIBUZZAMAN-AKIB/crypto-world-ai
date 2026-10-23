@@ -193,6 +193,30 @@ export function registerBuiltinLayouts(): void {
     registerLayout({ id: '10', label: '10 grid', cols: [1, 1, 1, 1, 1], rows: [1, 1], cells: slots(10) });
     registerLayout({ id: '12', label: '12 grid', cols: [1, 1, 1, 1, 1, 1], rows: [1, 1], cells: slots(12) });
     registerLayout({ id: '12-3x4', label: '12 grid (3 across)', cols: [1, 1, 1], rows: [1, 1, 1, 1], cells: slots(12) });
+
+    // ── round 23: the "one chart leads" family at EVERY size ─────────────────────
+    // The gallery had 4s/5s/7s but no main-based shape for 2, 6, 8 or 9 charts, which is
+    // exactly the range a working desk uses (one driver + a strip of context charts).
+    // Every one of these carries explicit `areas` — that is not cosmetic: `layoutShape`
+    // treats an area-free layout as canvas-expressible, and the picker would then hide
+    // the tile and hand the user the UNWEIGHTED grid instead.
+    registerLayout({ id: '2s', label: 'Main left + 1', cols: [2, 1], rows: [1], areas: ['a b'], cells: areaSlots(['a', 'b']) });
+    registerLayout({ id: '2s-r', label: 'Main right + 1', cols: [1, 2], rows: [1], areas: ['a b'], cells: areaSlots(['a', 'b']) });
+    registerLayout({ id: '3-c', label: '3 across (centre wide)', cols: [1, 1.6, 1], rows: [1], areas: ['a b c'], cells: areaSlots(['a', 'b', 'c']) });
+    registerLayout({ id: '6-t2', label: 'Main above + 5', cols: [1, 1, 1, 1, 1], rows: [1.5, 1], areas: ['a a a a a', 'b c d e f'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f']) });
+    registerLayout({ id: '6-b2', label: '5 above + main below', cols: [1, 1, 1, 1, 1], rows: [1, 1.5], areas: ['a b c d e', 'f f f f f'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f']) });
+    registerLayout({ id: '6-l2', label: 'Main left + 5', cols: [2, 1], rows: [1, 1, 1, 1, 1], areas: ['a b', 'a c', 'a d', 'a e', 'a f'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f']) });
+    registerLayout({ id: '6-r2', label: 'Main right + 5', cols: [1, 2], rows: [1, 1, 1, 1, 1], areas: ['a b', 'c b', 'd b', 'e b', 'f b'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f']) });
+    registerLayout({ id: '8-t2', label: 'Main above + 7', cols: [1, 1, 1, 1, 1, 1, 1], rows: [1.5, 1], areas: ['a a a a a a a', 'b c d e f g h'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) });
+    registerLayout({ id: '8-main-l', label: 'Main left + 7', cols: [2, 1], rows: [1, 1, 1, 1, 1, 1, 1], areas: ['a b', 'a c', 'a d', 'a e', 'a f', 'a g', 'a h'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) });
+    registerLayout({ id: '8-main-r', label: 'Main right + 7', cols: [1, 2], rows: [1, 1, 1, 1, 1, 1, 1], areas: ['a b', 'c b', 'd b', 'e b', 'f b', 'g b', 'h b'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) });
+    registerLayout({ id: '9-main-l', label: 'Main left + 8', cols: [2, 1], rows: [1, 1, 1, 1, 1, 1, 1, 1], areas: ['a b', 'a c', 'a d', 'a e', 'a f', 'a g', 'a h', 'a i'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']) });
+    // Dense walls: portrait (2×6) and the 15-up. Both are past the 4×4 canvas, so they
+    // need a tile; neither is an alias of an existing grid.
+    registerLayout({ id: '12-2x6', label: '12 grid (2 across, tall)', cols: [1, 1], rows: [1, 1, 1, 1, 1, 1], cells: slots(12) });
+    registerLayout({ id: '15', label: '15 grid', cols: [1, 1, 1, 1, 1], rows: [1, 1, 1], cells: slots(15) });
+    // A two-band wall with the top band leading — the row-weighted counterpart of 8-2x4.
+    registerLayout({ id: '8-2x4w', label: '8 grid (top band wide)', cols: [1, 1, 1, 1], rows: [1.5, 1], areas: ['a b c d', 'e f g h'], cells: areaSlots(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) });
 }
 
 // ── dynamic layouts (the topbar's grid picker) ──────────────────────────────
