@@ -104,7 +104,7 @@ const CSS = `
     margin-top: 18px;
     border-radius: 10px;
     background: var(--vela-accent);
-    color: var(--vela-on-accent, #0b0d12);
+    color: var(--vela-fg-on-fill);
     font-size: 15px;
     font-weight: 700;
     cursor: pointer;

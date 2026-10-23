@@ -21,13 +21,14 @@ import type { OHLCV } from '../model/ohlcv';
 import type { LineLikeSeries, SeriesPoint } from '../model/series';
 import type { PriceLine } from '../model/scene';
 import { stableSeriesId } from '../model/identity';
+import { ACCENT, NEUTRAL } from '../palette';
 
 export const COMPARE_TYPE = 'compare';
 
 /** Chart series colour (the "base" line in percent mode) — read like the candles: neutral. */
-const BASE_COLOR = '#9aa4b2';
+const BASE_COLOR = NEUTRAL;
 /** The compare symbol's own line — the accent, so the eye finds the newcomer. */
-const COMPARE_COLOR = '#2962ff';
+const COMPARE_COLOR = ACCENT;
 
 export interface CompareInputs {
     symbol: string;
@@ -218,7 +219,7 @@ class CompareIndicator implements NativeIndicator {
                           id: stableSeriesId({ instanceId, kind: 'hline', title: 'zero', ordinal: 0 }),
                           paneId: '',
                           price: 0,
-                          color: '#5a6270',
+                          color: NEUTRAL,
                           lineStyle: 'dashed' as const,
                           width: 1,
                       },
