@@ -225,6 +225,7 @@ export class ChartTypeSheet {
             b.addEventListener('click', () => {
                 if (s.id !== this.opts.current()) this.opts.onSelect(s.id);
                 this.close();
+                this.focusTrigger(); // the tile is gone — focus must not fall to <body>
             });
             b.addEventListener('focus', () => {
                 this.cursor = i;
@@ -332,6 +333,14 @@ export class ChartTypeSheet {
         this.el = null;
     }
 
+    private focusTrigger(): void {
+        try {
+            this.opts.trigger.focus({ preventScroll: true });
+        } catch {
+            /* detached */
+        }
+    }
+
     private readonly onDocPointerDown = (e: PointerEvent): void => {
         const t = e.target as Node | null;
         if (this.el && t && this.el.contains(t)) return;
@@ -345,11 +354,7 @@ export class ChartTypeSheet {
             e.preventDefault();
             e.stopPropagation();
             this.close();
-            try {
-                this.opts.trigger.focus({ preventScroll: true });
-            } catch {
-                /* detached */
-            }
+            this.focusTrigger();
             return;
         }
         const move: Record<string, number> = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: COLS, ArrowUp: -COLS };

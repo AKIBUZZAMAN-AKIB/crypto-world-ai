@@ -13,8 +13,15 @@ import { DemoEngine } from "./demo-engine";
 import { playgroundStorage } from "./persistence";
 import { addSampleMarks } from "./marks";
 
+// `?layout=mobile` / `?layout=desktop` pins the shell's size class — the phone chrome
+// (bottom bar, drawings pill, More drawer) is otherwise only reachable by resizing the
+// window under the container breakpoint. Handy when reviewing the mobile bar on a desktop.
+const shell = new URLSearchParams(location.search).get("layout");
+const forcedShell = shell === "mobile" || shell === "desktop" ? { layoutMode: shell } : {};
+
 const ws = new VelaWorkspace("#workspace", {
   layout: "4",
+  ...forcedShell,
   // The unified vocabulary: top-level chart options are every cell's DEFAULT,
   // `cells` overrides per cell. A cell's NAME is its durable identity (persistence,
   // sync groups, ws.cell(name)) — DECLARATION ORDER fills the layout's slots, and

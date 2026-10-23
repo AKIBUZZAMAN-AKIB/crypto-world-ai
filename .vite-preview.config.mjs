@@ -9,8 +9,11 @@ export default defineConfig({
             name: 'preview-land-on-workspace',
             configureServer(server) {
                 server.middlewares.use((req, res, next) => {
-                    if (req.url === '/' || req.url === '/index.html') {
-                        res.writeHead(302, { Location: '/workspace.html' });
+                    // Keep the query string: `/?layout=mobile` must land on
+                    // `/workspace.html?layout=mobile`.
+                    const [path, query] = (req.url ?? '/').split('?');
+                    if (path === '/' || path === '/index.html') {
+                        res.writeHead(302, { Location: `/workspace.html${query ? `?${query}` : ''}` });
                         res.end();
                         return;
                     }
