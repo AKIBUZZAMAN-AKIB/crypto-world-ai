@@ -5381,6 +5381,8 @@ export class VelaWorkspace {
 
     /** Draw the dotted level with the cell's own hline tool (the reference's alert line). */
     private drawAlertLevel(cell: ChartCell, alert: PriceAlert): string | null {
+        // A Moving alert's value is a DISTANCE, not a price — there is no level to draw.
+        if (isMoveCondition(alert.condition)) return null;
         try {
             // A restored document already carries the line: user drawings persist with the
             // cell, so re-arming would otherwise stack a SECOND dotted line on the level.

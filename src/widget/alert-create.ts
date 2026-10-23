@@ -240,7 +240,7 @@ export class AlertCreateSheet {
 
         // ── lookback (Moving conditions only) ──
         this.barsRow = doc.createElement('div');
-        this.barsRow.className = 'vela-ac-value';
+        this.barsRow.className = 'vela-ac-value vela-ac-bars';
         const barsLabel = doc.createElement('span');
         barsLabel.className = 'vela-ac-hint';
         barsLabel.textContent = 'within';
