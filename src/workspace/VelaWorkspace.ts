@@ -1098,7 +1098,9 @@ export class VelaWorkspace {
                       // (a number you read once vs. a shape you read constantly); layout
                       // moved into the sheet's one quiet row, still one tap away.
                       styleOptions: () => priceStyleIds().map((id) => ({ id, label: priceStyleLabel(id), icon: priceStyleMarkup(id) })),
-                      currentStyle: () => this.active.priceStyle,
+                      // EAGER: the bar reads this in its constructor, before the first
+                      // `setActiveCell` has run — resolve through the map, never `active`.
+                      currentStyle: () => this.cellsById.get(this.activeId ?? '')?.priceStyle ?? 'candles',
                       onStyleSelect: (id) => this.active.setPriceStyle(id),
                       ...(this.monoLayout
                           ? {}
