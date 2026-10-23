@@ -12,6 +12,7 @@
 // read a stale glyph off the phone's most-used strip.
 import { iconEl, iconMarkup } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
+import { floatingLayerHost } from '../ui/tokens';
 import { parseSymbol } from '../data/ProviderRegistry';
 import { timeframeLabel } from './timeframe';
 import { mobilePlacement, widgetActions, type WidgetContext } from './contributions';
@@ -299,7 +300,8 @@ export class MobileBar {
         if (!this.styleEl || !this.opts.onStyleSelect) return;
         if (!this.sheet) {
             this.sheet = new ChartTypeSheet({
-                host: this.el.ownerDocument.body,
+                // Inside the kit host (the sheet inherits the theme tokens from it).
+                host: floatingLayerHost(this.el, this.el.parentElement ?? this.el.ownerDocument.body),
                 trigger: this.styleEl,
                 styles: () => this.opts.styleOptions?.() ?? [],
                 current: () => this.styleId,

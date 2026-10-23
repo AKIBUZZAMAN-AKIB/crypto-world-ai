@@ -22,12 +22,16 @@ const STYLE_ID = 'vela-widget-chart-type-sheet';
 
 const CSS = `
 .vela-cts {
-    position: fixed;
+    /* ABSOLUTE inside the kit host (the workspace root), not fixed: the sheet must
+       inherit the theme tokens the root carries — a body-mounted layer resolves every
+       --vela-* to nothing (no surface, no z-index) and the plot's own chrome paints
+       over it. Absolute also keeps an embedded widget's sheet inside the widget. */
+    position: absolute;
     left: 50%;
     bottom: calc(58px + env(safe-area-inset-bottom, 0px));
     transform: translateX(-50%);
-    z-index: var(--vela-z-popover);
-    width: min(384px, calc(100vw - 12px));
+    z-index: var(--vela-z-popover, 6000);
+    width: min(384px, calc(100% - 12px));
     max-height: min(62vh, 460px);
     display: flex;
     flex-direction: column;
