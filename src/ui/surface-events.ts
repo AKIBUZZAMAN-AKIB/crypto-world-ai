@@ -5,6 +5,8 @@
 // without watching the DOM. Close fires while the element is still attached (before a
 // fade-out or removal), so it bubbles to the host like open does.
 
+import { surfaceInert } from './surface-inert';
+
 /** Dispatched on a surface's element once it is shown. */
 export const SURFACE_OPEN_EVENT = 'vela:surface-open';
 /** Dispatched on a surface's element as it starts to close, before it hides or leaves the DOM. */
@@ -25,6 +27,9 @@ export interface SurfaceEventDetail {
 export function announceSurface(el: HTMLElement, open: boolean, kind: SurfaceKind, trigger: HTMLElement | null = null): void {
     const View = el.ownerDocument.defaultView;
     if (!View) return;
+    // Modal surfaces take the page behind them out of the tab order and the accessibility
+    // tree; the manager stacks them, so a sheet opened over a dialog re-isolates correctly.
+    surfaceInert(el, open, kind);
     el.dispatchEvent(
         new View.CustomEvent<SurfaceEventDetail>(open ? SURFACE_OPEN_EVENT : SURFACE_CLOSE_EVENT, { bubbles: true, composed: true, detail: { kind, trigger } }),
     );

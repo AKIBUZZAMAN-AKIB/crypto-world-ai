@@ -51,8 +51,21 @@ export interface NativeIndicatorContext {
     readonly session?: string;
     /** The canonical bar array (a live accessor — always current). */
     bars(): readonly OHLCV[];
+    /**
+     * The visible bar window (indices into {@link bars}), or null when the renderer has not
+     * reported a range yet. Read LIVE — a native that anchors to "the first visible bar"
+     * (Compare's percent base) needs it at start, not only after the first scroll.
+     */
+    visibleRange?: () => { from: number; to: number } | null;
     /** Market-data access (trades / capabilities) for data-driven natives. */
     readonly data: DataControl;
+    /**
+     * Fetch ANY `(symbol, timeframe)` series through the chart's feed — the same gateway
+     * the scripting engines get (`request.security`). Backs the Compare study, which needs
+     * a second symbol instead of a second value axis. Absent on a host that supplies
+     * static `data` only: nothing can serve another symbol there.
+     */
+    fetchSeries?: (symbol: string, timeframe: string, range: { from?: number; to?: number; limit?: number }) => Promise<OHLCV[]>;
     /** Push a fresh render output; the chart mounts it (first call) or patches it (subsequent). */
     emit(out: NativeIndicatorOutput): void;
     /**

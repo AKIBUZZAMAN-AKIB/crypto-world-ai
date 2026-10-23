@@ -36,6 +36,8 @@ import { IndicatorPicker, indicatorKey } from '../widget/indicator-picker';
 import { TimeframeQuick } from '../widget/timeframe-quick';
 import { ShortcutsHelp } from '../widget/shortcuts-help';
 import { AlertList } from '../widget/alert-list';
+import { AlertCreateSheet } from '../widget/alert-create';
+import { advanceAlert, alertRowLabel, describeAlert, nextAlertId, type AlertCondition, type AlertFrequency, type PriceAlert } from './price-alerts';
 import { Tip } from '../widget/tip';
 import { REDUCED_MOTION_CSS } from '../ui/motion';
 import { CommandPalette, type PaletteCommand } from '../widget/command-palette';
@@ -603,6 +605,15 @@ export class VelaWorkspace {
     private alertsMenu: Menu | null = null;
     /** The grouped alert list (the bell's real surface: per chart, per alert). */
     private alertList: AlertList | null = null;
+    /** Price alerts still watching a level, oldest first (the sheet/manager read this). */
+    private priceAlerts: PriceAlert[] = [];
+    /** The last price each cell printed, keyed by cell id — the level prefill + the tick feed. */
+    private readonly lastPrice = new Map<string, number>();
+    private readonly lastBarTime = new Map<string, number>();
+    private alertCreate: AlertCreateSheet | null = null;
+    /** The single Compare study's symbol per cell, so a second pick RE-POINTS it instead of
+     *  stacking a second pane (the reference keeps one compare per chart). */
+    private comparePending = false;
     /** ⌘K palette — built lazily on first open. */
     private palette: CommandPalette | null = null;
     /** Recently run palette commands, newest first (persisted with the document). */
@@ -761,7 +772,16 @@ export class VelaWorkspace {
             host: this.root,
             // Row icons come from each descriptor's OWNING provider (resolveSymbolIcon).
             iconFor: (d) => this.feed.symbolIconOf(d),
-            onSelect: (ticker) => this.active.setSymbol(ticker),
+            // The Compare sheet reuses this picker: a pending compare routes the pick to the
+            // second series instead of swapping the chart's own market.
+            onSelect: (ticker) => {
+                if (this.comparePending) {
+                    this.comparePending = false;
+                    this.setCompareSymbol(ticker);
+                    return;
+                }
+                this.active.setSymbol(ticker);
+            },
             // The watchlist: the trader's shortlist at the top of the picker, a star on
             // every row, and (multi-chart) one tap to put a symbol on EVERY chart.
             watchlist: () => this.watchlist,
@@ -2019,6 +2039,7 @@ export class VelaWorkspace {
         this.tfDrawer?.destroy();
         this.drawingsDrawer?.destroy();
         this.moreDrawer?.destroy();
+        this.alertCreate?.destroy();
         this.timezoneDrawer?.destroy();
         this.priceScaleDrawer?.destroy();
         this.layoutCtl.destroy();
@@ -2551,6 +2572,24 @@ export class VelaWorkspace {
         // session, so the `cell` field is what tells two identical scripts apart.
         chart.on('script:run', (run) => this.events.emit('script:run', { ...run, cell: cell.id }));
         chart.on('priceStyle:change', ({ from, to }) => this.events.emit('cell:priceStyle', { id: cell.id, from, to }));
+        // Price alerts are evaluated on the same print the chart draws — one tick per bar
+        // update, so "crossed 143.50" fires on the bar where the line visibly crossed.
+        chart.on('bar', (bar) => {
+            this.lastPrice.set(cell.id, bar.close);
+            this.lastBarTime.set(cell.id, bar.time);
+            this.evaluatePriceAlerts(cell, bar.close, bar.time);
+        });
+        // A STATIC series (host `data`, a restored snapshot) never emits `bar`, so the
+        // sheet would open with an empty level on a chart that is clearly showing a price.
+        // Seed the last print off the renderer when a load settles (live ticks overwrite).
+        chart.on('load:end', () => {
+            if (this.lastPrice.has(cell.id)) return;
+            const range = chart.getVisibleRange();
+            const last = range ? chart.renderer.barAt(range.to - 1) : null;
+            if (!last) return;
+            this.lastPrice.set(cell.id, last.close);
+            this.lastBarTime.set(cell.id, last.time);
+        });
         chart.on('alert', (alert) => {
             // Provenance the way a user reads it — symbol, timeframe, and the indicator
             // that fired — captured at fire time (the cell may switch markets later).
@@ -4577,10 +4616,20 @@ export class VelaWorkspace {
             ...(this.mobileBar ? { onChartType: () => this.mobileBar!.openSheet() } : {}),
             panels: () => (has('panels') ? [...this.dock.list()] : []),
             onTogglePanel: (id) => this.dock.toggle(id),
-            ...(has('alerts') ? { alerts: () => this.alerts.map((a) => ({ title: `${a.source} · ${a.title}`, message: a.message, time: a.time })) } : {}),
+            ...(has('alerts')
+                ? {
+                      alerts: () => this.alerts.map((a) => ({ title: `${a.source} · ${a.title}`, message: a.message, time: a.time })),
+                      // Creation is the reason the view is opened on a phone: a bell that
+                      // only lists what a script already did cannot set a price level.
+                      onCreateAlert: () => this.openAlertCreate(),
+                      priceAlerts: () => this.morePriceAlerts(),
+                  }
+                : {}),
             // The chart-body menu's "Reset chart view" row, reachable on a phone through the
             // drawer (its only other door is a right-click, which touch does not have).
             onResetView: () => this.active.resetView(),
+            // D1: the second series — same door on for the phone and the desktop sheet.
+            onCompare: () => this.openComparePicker(),
             // …and the rest of that menu as one sheet ("Chart actions…"), so the phone gets
             // the bulk clears too — the one pair of verbs it had no door to at all.
             onChartMenu: () => this.active.openChartMenu(),
@@ -5001,6 +5050,8 @@ export class VelaWorkspace {
                 this.markStateDirty();
             },
             onOpenChange: (open) => this.trackDialog(open),
+            onCreate: () => this.openAlertCreate(),
+            getArmed: () => this.armedAlertRows(),
         });
         this.alertList.open();
     }
@@ -5015,6 +5066,191 @@ export class VelaWorkspace {
     /** Every alert, newest first (the list's data source, exposed for hosts/tests). */
     alertEntries(): ReadonlyArray<{ cellId: string; source: string; title: string; message: string; time: number }> {
         return this.alerts;
+    }
+
+    /** Open the symbol search in COMPARE mode — the door to the second series. */
+    openComparePicker(): void {
+        this.comparePending = true;
+        this.symbolPicker.open('', 'Compare with');
+    }
+
+    /** Point the active chart's Compare study at `symbol` (add it once, then re-target). */
+    setCompareSymbol(symbol: string): void {
+        this.comparePending = false;
+        if (!symbol || !this.activeId) return;
+        const cell = this.cellsById.get(this.activeId);
+        const chart = cell?.chart;
+        if (!chart) return;
+        const existing = chart.indicators().find((h) => h.nativeType === 'compare');
+        if (existing) {
+            existing.setInputs({ symbol });
+        } else {
+            chart.addNativeIndicator('compare', { inputs: { symbol } });
+        }
+        this.toast(`Comparing with ${parseSymbol(symbol).ticker || symbol}`, 'info', 2200);
+    }
+
+    /** The last price the ACTIVE chart printed (the alert sheet's default level), or null
+     *  before the first bar — an empty cell would otherwise create an alert at NaN. */
+    private activePrice(): number | null {
+        const id = this.activeId;
+        if (!id) return null;
+        const price = this.lastPrice.get(id);
+        return price != null && Number.isFinite(price) ? price : null;
+    }
+
+    /** Open the create-alert sheet for the active chart (bell `+`, More drawer, ⌥A on iOS
+     *  is out of scope — the sheet is the one door on the touch layout). */
+    openAlertCreate(): void {
+        if (!this.activeId) return;
+        this.alertCreate ??= new AlertCreateSheet({
+            host: this.root,
+            symbol: () => (this.active?.symbol ?? '').toString(),
+            currentPrice: () => this.activePrice(),
+            onCreate: (req) => this.createPriceAlert(req),
+            onOpenChange: (open) => this.trackDialog(open),
+        });
+        this.alertCreate.open();
+    }
+
+    /** Arm one price alert on the active chart, draw its level line, and tell the user. */
+    private createPriceAlert(req: { condition: AlertCondition; value: number; frequency: AlertFrequency }): boolean {
+        const id = this.activeId;
+        if (!id) return false;
+        const cell = this.cellsById.get(id);
+        if (!cell) return false;
+        const symbol = String(cell.symbol ?? '');
+        const alert: PriceAlert = {
+            id: nextAlertId(this.priceAlerts),
+            cellId: id,
+            symbol,
+            condition: req.condition,
+            value: req.value,
+            frequency: req.frequency,
+            state: 'active',
+            createdAt: Date.now(),
+            anchorPrice: this.lastPrice.get(id) ?? null,
+            firedAt: 0,
+            fires: 0,
+            lineId: '',
+        };
+        // A level the price ALREADY crossed would fire on the next tick for a condition the
+        // user set on purpose — evaluate once against the current print so the state is
+        // honest from the first frame (a `gt` above the market arms, a `gt` below fires).
+        const price = this.lastPrice.get(id);
+        if (price != null) {
+            // `prev: null` = "no side yet": a crossing cannot have happened at birth, but a
+            // Greater/Less-than level the market is already past is true immediately.
+            const folded = advanceAlert(alert, { prev: null, now: price });
+            alert.state = folded.alert.state;
+            alert.fires = folded.alert.fires;
+            alert.firedAt = folded.alert.firedAt;
+        }
+        alert.lineId = this.drawAlertLevel(cell, alert) ?? '';
+        this.priceAlerts.push(alert);
+        this.toast(`${alertRowLabel(alert)} — alert created`, 'success', 2600);
+        if (alert.state === 'fired') this.recordPriceAlert(alert);
+        this.markStateDirty();
+        this.moreDrawer?.refreshAlerts?.();
+        return true;
+    }
+
+    /** Draw the dotted level with the cell's own hline tool (the reference's alert line). */
+    private drawAlertLevel(cell: ChartCell, alert: PriceAlert): string | null {
+        try {
+            const time = this.lastBarTime.get(cell.id) ?? Date.now();
+            const drawing = cell.chart.drawings.add('hline', {
+                anchors: [{ time, price: alert.value }],
+                style: { lineStyle: 'dotted', lineWidth: 1 },
+            } as never);
+            return drawing ? String(drawing.id) : null;
+        } catch {
+            // A renderer without user drawings (the LW path) still gets the alert — the
+            // line is a convenience, never a precondition.
+            return null;
+        }
+    }
+
+    /** Delete an armed alert (and the drawing it owns). */
+    removePriceAlert(alertId: string): void {
+        const idx = this.priceAlerts.findIndex((a) => a.id === alertId);
+        if (idx < 0) return;
+        const removed = this.priceAlerts.splice(idx, 1)[0];
+        if (!removed) return;
+        const alert = removed;
+        if (alert.lineId) {
+            const cell = this.cellsById.get(alert.cellId);
+            try {
+                cell?.chart.drawings.remove(alert.lineId);
+            } catch {
+                /* the cell may be gone — nothing to undraw */
+            }
+        }
+        this.markStateDirty();
+        this.moreDrawer?.refreshAlerts?.();
+        this.alertList?.refresh();
+    }
+
+    /** The Alert Manager's rows (one per armed level), newest first. */
+    private armedAlertRows(): Array<{ id: string; cellId: string; label: string; state: PriceAlert['state']; fires: number; onDelete: () => void }> {
+        return [...this.priceAlerts]
+            .reverse()
+            .map((a) => ({
+                id: a.id,
+                cellId: a.cellId,
+                label: alertRowLabel(a),
+                state: a.state,
+                fires: a.fires,
+                onDelete: () => this.removePriceAlert(a.id),
+            }));
+    }
+
+    /** The More drawer's armed list (mobile's door to the same truth). */
+    private morePriceAlerts(): Array<{ id: string; label: string; state: PriceAlert['state']; fires: number; onDelete: () => void }> {
+        return [...this.priceAlerts]
+            .reverse()
+            .map((a) => ({ id: a.id, label: alertRowLabel(a), state: a.state, fires: a.fires, onDelete: () => this.removePriceAlert(a.id) }));
+    }
+
+    /** Evaluate every armed alert that belongs to this cell against one printed price. */
+    private evaluatePriceAlerts(cell: ChartCell, price: number, time: number): void {
+        if (this.priceAlerts.length === 0) return;
+        let changed = false;
+        for (let i = 0; i < this.priceAlerts.length; i += 1) {
+            const current = this.priceAlerts[i];
+            if (!current || current.cellId !== cell.id) continue;
+            const prev = current.anchorPrice;
+            const { alert, fired } = advanceAlert(current, { prev, now: price });
+            if (alert !== current) {
+                this.priceAlerts[i] = alert;
+                changed = true;
+            }
+            if (fired) this.recordPriceAlert({ ...alert, firedAt: time, fires: alert.fires });
+        }
+        if (changed) {
+            this.markStateDirty();
+            this.alertList?.refresh();
+            this.moreDrawer?.refreshAlerts?.();
+        }
+    }
+
+    /** Push a fired price alert into the bell's log (the same rows script alerts use). */
+    private recordPriceAlert(alert: PriceAlert): void {
+        const ticker = String(parseSymbol(alert.symbol).ticker || alert.symbol);
+        const condition = describeAlert(alert);
+        const label = `${ticker} · ${condition}`;
+        this.alerts.unshift({
+            cellId: alert.cellId,
+            // The row reads "Price alert: Greater than 143.50 — triggered · AAA 1h".
+            source: `${ticker} ${timeframeLabel(this.cellsById.get(alert.cellId)?.timeframe ?? '1h')}`.trim(),
+            title: 'Price alert',
+            message: `${condition} — triggered`,
+            time: alert.firedAt || Date.now(),
+        });
+        if (this.alerts.length > this.alertCap) this.alerts.pop();
+        this.topbar.setAlertCount(this.alerts.length);
+        this.alertList?.refresh();
+        this.toastHost.show(`${label} — triggered`, 'success', 5000);
     }
 
     /** Mount registered attachments not yet mounted on this workspace (idempotent per id). */

@@ -281,6 +281,8 @@ export interface SymbolPickerOptions {
     onToggleWatch?: (symbol: string, on: boolean) => void;
     /** Put a watchlist symbol on EVERY chart (multi-chart shells only). */
     onApplyAll?: (symbol: string) => void;
+    /** Dialog title — the Compare sheet reuses this picker for a second series. */
+    title?: string;
 }
 
 /** Rows rendered per page — the list GROWS by this much every time the scroll nears the
@@ -292,6 +294,8 @@ export class SymbolPicker {
     private readonly input: HTMLInputElement;
     private readonly list: HTMLElement;
     private source: () => readonly SymbolDescriptor[] = () => [];
+    /** The header the dialog was built with — restored after a titled opening. */
+    private readonly baseTitle: string;
     private rows: SymbolDescriptor[] = [];
     private highlighted = 0;
     private seed = '';
@@ -350,7 +354,7 @@ export class SymbolPicker {
         });
 
         this.dialog = new Dialog({
-            title: 'Symbol Search',
+            title: (this.baseTitle = opts.title ?? 'Symbol Search'),
             host: opts.host,
             closeOnInteractOutside: true,
             flush: true,
@@ -411,8 +415,14 @@ export class SymbolPicker {
         this.source = source;
     }
 
-    open(initialQuery = ''): void {
+    /**
+     * Open the search. `title` overrides the header for the lifetime of one opening — the
+     * Compare flow reuses this dialog for a SECOND series, and a picker that still says
+     * "Symbol Search" would read as if picking one swapped the chart's own market.
+     */
+    open(initialQuery = '', title?: string): void {
         this.seed = initialQuery;
+        this.dialog.titleEl.textContent = title ?? this.baseTitle;
         this.dialog.show();
     }
 

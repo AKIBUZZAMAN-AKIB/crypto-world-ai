@@ -85,6 +85,30 @@ const CSS = `
 .vela-al-body { flex: 1 1 auto; min-width: 0; }
 .vela-al-title { font-weight: 600; }
 .vela-al-src { color: var(--vela-fg-muted); }
+.vela-al-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0 0 10px;
+}
+.vela-al-create {
+    all: unset;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    background: var(--vela-accent);
+    color: var(--vela-on-accent, #0b0d12);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-al-create:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: 2px; }
+.vela-al-state { flex: 0 0 auto; width: 16px; text-align: center; font-size: 11px; color: var(--vela-fg-muted); }
+.vela-al-state[data-state='active'] { color: var(--vela-accent); }
 .vela-al-empty { padding: 18px 6px; text-align: center; color: var(--vela-fg-muted); font-size: 12.5px; }
 .vela-al-foot { display: flex; justify-content: flex-end; padding-top: 6px; border-top: 1px solid var(--vela-border-soft, var(--vela-border)); }
 `;
@@ -117,6 +141,20 @@ export interface AlertListOptions {
     onClearChart: (cellId: string) => void;
     onClearAll: () => void;
     onOpenChange?: (open: boolean) => void;
+    /** The Alert Manager's "+" — open the create-alert sheet. Omitted ⇒ no create verb. */
+    onCreate?: () => void;
+    /** Price alerts still armed (the reference's "Active" tab), newest first. */
+    getArmed?: () => readonly ArmedAlertRow[];
+}
+
+/** One armed price alert, flattened for the manager's rows. */
+export interface ArmedAlertRow {
+    id: string;
+    cellId: string;
+    label: string;
+    state: 'active' | 'fired' | 'paused';
+    fires: number;
+    onDelete: () => void;
 }
 
 export class AlertList {
@@ -169,11 +207,81 @@ export class AlertList {
     private render(): void {
         const doc = this.opts.doc;
         this.body.replaceChildren();
+        const armed = this.opts.getArmed?.() ?? [];
+        if (this.opts.onCreate) {
+            const bar = doc.createElement('div');
+            bar.className = 'vela-al-actions';
+            const create = doc.createElement('button');
+            create.type = 'button';
+            create.className = 'vela-al-create';
+            create.setAttribute('aria-label', 'Create alert');
+            create.append(iconEl('bell', doc), doc.createTextNode('Create alert'));
+            create.addEventListener('click', () => {
+                this.dialog.hide();
+                this.opts.onCreate?.();
+            });
+            bar.appendChild(create);
+            this.body.appendChild(bar);
+        }
+        if (armed.length > 0) {
+            // Armed levels lead: they are the things that are still WATCHING, and a fired
+            // `once` alert leaves this list while its log row stays below.
+            const section = doc.createElement('section');
+            section.className = 'vela-al-group';
+            section.dataset.armed = '1';
+            const head = doc.createElement('div');
+            head.className = 'vela-al-head';
+            const num = doc.createElement('span');
+            num.className = 'vela-al-num';
+            num.textContent = 'ARMED';
+            const count = doc.createElement('span');
+            count.className = 'vela-al-count';
+            const live = armed.filter((a) => a.state === 'active').length;
+            count.textContent = `${live} active`;
+            head.append(num, count);
+            section.appendChild(head);
+            for (const a of armed) {
+                const row = doc.createElement('div');
+                row.className = 'vela-al-row';
+                row.dataset.alert = a.id;
+                const badge = doc.createElement('span');
+                badge.className = 'vela-al-state';
+                badge.dataset.state = a.state;
+                badge.textContent = a.state === 'active' ? '●' : a.state === 'fired' ? '✓' : '❙❙';
+                badge.title = a.state === 'active' ? 'Active' : a.state === 'fired' ? 'Fired' : 'Paused';
+                const text = doc.createElement('span');
+                text.className = 'vela-al-body';
+                const title = doc.createElement('span');
+                title.className = 'vela-al-title';
+                title.textContent = a.label;
+                text.appendChild(title);
+                if (a.fires > 1) {
+                    const fired = doc.createElement('span');
+                    fired.className = 'vela-al-src';
+                    fired.textContent = ` · fired ${a.fires}×`;
+                    text.appendChild(fired);
+                }
+                const del = doc.createElement('button');
+                del.type = 'button';
+                del.className = 'vela-al-act';
+                del.setAttribute('aria-label', `Delete alert ${a.label}`);
+                del.appendChild(iconEl('trash', doc));
+                del.addEventListener('click', () => {
+                    a.onDelete();
+                    this.render();
+                });
+                row.append(badge, text, del);
+                section.appendChild(row);
+            }
+            this.body.appendChild(section);
+        }
         const alerts = this.opts.getAlerts();
         if (alerts.length === 0) {
             const empty = doc.createElement('div');
             empty.className = 'vela-al-empty';
-            empty.textContent = 'No alerts yet. Alerts raised by any chart in the layout land here.';
+            empty.textContent = armed.length > 0
+                ? 'Nothing has fired yet.'
+                : 'No alerts yet. Alerts raised by any chart in the layout land here.';
             this.body.appendChild(empty);
             return;
         }

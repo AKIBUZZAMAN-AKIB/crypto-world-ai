@@ -134,6 +134,28 @@ const CSS = `
     -webkit-tap-highlight-color: transparent;
 }
 .vela-md-search-clear:active { background: var(--vela-hover); }
+/* Create alert reads as a verb row, not a shortcut tile: full width, icon + label left,
+   the sheet's accent colour, and a chevron where a sheet would show one. */
+.vela-md-createalert {
+    width: 100%;
+    min-height: 46px;
+    margin: 2px 0 6px;
+    padding: 0 10px;
+    gap: 10px;
+    border: 1px solid var(--vela-border);
+    border-radius: 10px;
+    background: transparent;
+    font: inherit;
+    color: var(--vela-accent);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-createalert:active { background: var(--vela-hover); }
+.vela-md-createalert .vela-md-row-label { flex: 1 1 auto; text-align: left; font-weight: 700; }
+.vela-md-createalert .vela-icon:last-child { color: var(--vela-fg-muted); }
+.vela-md-createlist { padding-bottom: 4px; }
+/* The alerts log is the last block in its sheet — keep its final row off the home bar. */
+.vela-md-list:last-child { padding-bottom: 8px; }
 /* The hidden attribute must beat the author display rules these rows carry (flex/grid), otherwise a
    filtered row keeps its box and the search looks like it did nothing. */
 .vela-md-row[hidden], .vela-md-action[hidden], .vela-md-lrow[hidden], .vela-md-lact[hidden],
@@ -914,9 +936,15 @@ export interface MoreDrawerOptions {
     onTogglePanel: (id: string) => void;
     /** Omitted ⇒ no Alerts row (composition removed `'alerts'`). */
     alerts?: () => Array<{ title: string; message: string; time: number }>;
+    /** Open the create-alert sheet. Omitted ⇒ the Alerts view is a read-only log. */
+    onCreateAlert?: () => void;
+    /** Live price alerts (armed levels), newest first — shown above the log. */
+    priceAlerts?: () => Array<{ id: string; label: string; state: 'active' | 'fired' | 'paused'; fires: number; onDelete: () => void }>;
     /** "Reset chart view" — the desktop chart-body menu's one row a phone has no other
      *  door to (right-click is the crosshair hold here). Omitted ⇒ no row. */
     onResetView?: () => void;
+    /** Open the symbol search in COMPARE mode (a second series on the chart). */
+    onCompare?: () => void;
     /** The display time zone, read live at open — the row's value. */
     timezone?: () => string;
     /** Saved DRAWING templates (`{ tool, toolLabel, name, color, settings }`), read live —
@@ -1055,6 +1083,14 @@ export class MoreDrawer {
     /** Selector for the field the sheet should focus once this render is mounted. */
     private pendingFocus: string | null = null;
     private view: MoreView = 'main';
+    /** Re-paint the Alerts view after an armed level changed (created/fired/deleted) —
+     *  a no-op unless that view is the one on screen, so a live `bar` tick that fired an
+     *  alert never rebuilds a sheet the user is reading. */
+    refreshAlerts(): void {
+        if (!this.drawer.open) return;
+        if (this.view !== 'alerts') return;
+        this.render();
+    }
     /** The main view's search query (D: 60+ rows with no way to narrow them). */
     private query = '';
     /** Scroll the layout sheet to its sync block on the next paint. */
@@ -1281,6 +1317,8 @@ export class MoreDrawer {
         if (this.opts.onRedo) action('redo', 'Redo', this.opts.canRedo(), this.opts.onRedo);
         if (this.opts.onScreenshot) action('camera', 'Screenshot', true, this.opts.onScreenshot);
         if (this.opts.onReplay) action('replay', 'Replay', true, this.opts.onReplay);
+        // Compare lives beside Replay: both put a SECOND view of the market on screen.
+        if (this.opts.onCompare) action('bands', 'Compare', true, this.opts.onCompare);
         if (actions.childElementCount > 0) this.drawer.body.appendChild(actions);
 
         const list = doc.createElement('div');
@@ -2604,14 +2642,66 @@ export class MoreDrawer {
     }
 
     private renderAlerts(doc: Document): void {
+        // Create is the reason this view is opened on a phone — it leads, the log follows.
+        if (this.opts.onCreateAlert) {
+            // A ROW, not one of the square shortcut tiles: creating an alert is the sheet's
+            // primary verb here, and a lone tile in the actions grid reads as a stretched
+            // icon button with its label wrapped under it.
+            const create = doc.createElement('button');
+            create.type = 'button';
+            create.className = 'vela-md-row vela-md-createalert';
+            create.appendChild(iconEl('plus', doc));
+            const label = doc.createElement('span');
+            label.className = 'vela-md-row-label';
+            label.textContent = 'Create alert';
+            create.append(label, iconEl('chevron-right', doc));
+            create.addEventListener('click', () => {
+                this.drawer.hide();
+                this.opts.onCreateAlert?.();
+            });
+            const wrap = doc.createElement('div');
+            wrap.className = 'vela-md-list vela-md-createlist';
+            wrap.appendChild(create);
+            this.drawer.body.appendChild(wrap);
+        }
+
+        const armed = this.opts.priceAlerts?.() ?? [];
+        if (armed.length > 0) {
+            this.drawer.body.appendChild(this.sectionLabel(doc, 'Armed'));
+            const list = doc.createElement('div');
+            list.className = 'vela-md-list';
+            for (const a of armed) {
+                const row = this.row(doc, a.label, {
+                    icon: a.state === 'active' ? 'bell' : a.state === 'fired' ? 'check' : 'pause',
+                    value: a.fires > 1 ? `×${a.fires}` : undefined,
+                    onClick: () => undefined,
+                });
+                const del = doc.createElement('button');
+                del.type = 'button';
+                del.className = 'vela-md-lkebab';
+                del.title = 'Delete alert';
+                del.setAttribute('aria-label', `Delete ${a.label}`);
+                del.appendChild(iconEl('trash', doc));
+                del.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    a.onDelete();
+                    this.render();
+                });
+                row.appendChild(del);
+                list.appendChild(row);
+            }
+            this.drawer.body.appendChild(list);
+        }
+
         const alerts = this.opts.alerts?.() ?? [];
         if (alerts.length === 0) {
             const empty = doc.createElement('div');
             empty.className = 'vela-md-empty';
-            empty.textContent = 'No alerts yet.';
+            empty.textContent = armed.length > 0 ? 'Nothing has fired yet.' : 'No alerts yet.';
             this.drawer.body.appendChild(empty);
             return;
         }
+        this.drawer.body.appendChild(this.sectionLabel(doc, 'Fired'));
         const list = doc.createElement('div');
         list.className = 'vela-md-list';
         for (const a of alerts) {

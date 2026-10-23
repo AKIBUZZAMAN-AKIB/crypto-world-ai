@@ -2411,7 +2411,15 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
                 live: this.config.live && this.replayQueue === null,
                 session: this.config.market.session,
                 bars: () => this.bars,
+                visibleRange: () => {
+                    const r = this.currentVisibleRange();
+                    return r ? { from: r.left, to: r.right } : null;
+                },
                 data: this.dataControl,
+                // A native that needs a SECOND symbol (Compare) rides the same gateway the
+                // engines use — a static-data chart has no feed to serve one, so it is
+                // simply absent there and the native reports that it cannot load.
+                fetchSeries: (sym: string, tf: string, range: { from?: number; to?: number; limit?: number }) => this.fetchSeries(sym, tf, range),
                 emit: (out) => this.applyModel(id, this.buildNativeModel(record, out)),
                 pushData: (data) => this.renderer.setNativeData?.(channel, data),
                 setStatus: (status) => {

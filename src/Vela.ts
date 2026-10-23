@@ -28,6 +28,7 @@ import { registerBuiltinChartTypes } from './chart-types/builtins';
 import { registerVolume } from './core/native-indicators/volume';
 import { registerVpvr } from './core/native-indicators/vpvr';
 import { registerClassicIndicators } from './core/native-indicators/classics';
+import { registerCompareIndicator } from './core/native-indicators/compare';
 
 const asError = (err: unknown): Error => (err instanceof Error ? err : new Error(String(err)));
 
@@ -74,6 +75,7 @@ export class Vela {
         registerVolume(); // register the built-in native indicators (idempotent)
         registerVpvr();
         registerClassicIndicators();
+        registerCompareIndicator(); // D: the second-symbol study (idempotent)
         const element = resolveElement(container);
         const theme = resolveTheme(options.theme);
         const display = {
