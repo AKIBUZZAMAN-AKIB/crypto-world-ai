@@ -1,0 +1,25 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+const ctx = await browser.newContext({ viewport: { width: 390, height: 780 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+const page = await ctx.newPage();
+await page.goto('http://127.0.0.1:5190/offline.html', { waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => window.__ws?.cells().length >= 1, null, { timeout: 60000 });
+await page.waitForTimeout(1200);
+const attrs = (sel) => page.evaluate((s) => {
+  const el = document.querySelector(s);
+  if (!el) return null;
+  return { role: el.getAttribute('role'), modal: el.getAttribute('aria-modal'), ariaHidden: el.getAttribute('aria-hidden'), labelled: el.getAttribute('aria-labelledby'), inert: el.hasAttribute('inert') };
+}, sel);
+const out = {};
+await page.locator('.vela-mb-more').tap();
+await page.waitForTimeout(500);
+out.drawer = await attrs('.vela-drawer');
+out.drawerBackdrop = await attrs('.vela-drawer-backdrop');
+out.bodyAttrs = await page.evaluate(() => ({ inert: document.querySelector('.vela-ws-root')?.hasAttribute('inert'), ariaHidden: document.querySelector('.vela-ws-root')?.getAttribute('aria-hidden') }));
+await page.keyboard.press('Escape');
+await page.waitForTimeout(400);
+await page.locator('.vela-mb-indicators').tap();
+await page.waitForTimeout(600);
+out.dialog = await attrs('.vela-dlg, [role="dialog"]');
+console.log(JSON.stringify(out, null, 1));
+await browser.close();

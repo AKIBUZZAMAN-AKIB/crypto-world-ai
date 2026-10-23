@@ -106,6 +106,12 @@ export interface NativeIndicatorDescriptor {
     readonly shortTitle?: string;
     readonly paneHint: 'price' | 'new';
     readonly overlay: boolean;
+    /**
+     * Picker group ("Oscillators", "Moving averages", …). A flat 77-row list is a wall of
+     * text; the catalog files already know their family, so the descriptor carries it and
+     * a host can show category tabs without re-deriving names from titles.
+     */
+    readonly category?: string;
     /** Whether instances react to viewport changes (drives the orchestrator's viewport poke). */
     readonly reactsToViewport?: boolean;
     /** Marks the type as beta — surfaced in the catalog so a host "add indicator" UI can badge it. */
@@ -147,6 +153,8 @@ export interface NativeIndicatorDescriptor {
 export interface NativeIndicatorInfo {
     readonly type: string;
     readonly title: string;
+    /** The descriptor's picker group (see {@link NativeIndicatorDescriptor.category}). */
+    readonly category?: string;
     /** Applies to the current symbol (a type may need data the provider lacks). */
     readonly supported: boolean;
     /** At least one instance is on the chart. For a single-instance type a second add is a no-op;

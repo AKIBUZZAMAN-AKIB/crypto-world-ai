@@ -16,6 +16,8 @@ import { parseSymbol } from '../data/ProviderRegistry';
 // The component owns its stylesheet (id-guarded, injected at construction) so EVERY
 // host that mounts a Topbar — the widget, a multi-chart workspace — gets the same look.
 const STYLE_ID = 'vela-topbar';
+/** Prefixed id for a style's PINNED row in the style menu (same style, second row). */
+const STYLE_PIN_PREFIX = 'pinned:';
 const CSS = `
 .vela-widget-topbar {
     display: flex;
@@ -200,6 +202,12 @@ export interface TopbarOptions {
      *  chips never render — the host owns (and persists) the favorite set. */
     onTimeframeFavorite?: (tf: string, on: boolean) => void;
     onPriceStyle: (style: string) => void;
+    /** Chart-type stars in the style menu. Omitted ⇒ no stars there (a bare host keeps
+     *  the plain list); provided ⇒ the menu reads/writes the SAME set as the phone's
+     *  chart-type sheet. Push later changes with {@link Topbar.setStyleFavorites}. */
+    onStyleFavorite?: (id: string, on: boolean) => void;
+    /** The starred styles, read at build time (the host keeps them — see above). */
+    styleFavorites?: readonly string[];
     /** Optional workspace LAYOUT dropdown (rendered after the style dropdown when
      *  given) — the grid-canvas picker composing uniform grids, with the workspace
      *  SYNC switches beside it. Everything is read live, so plugin-registered
@@ -312,6 +320,8 @@ export class Topbar {
     private readonly tfChipsHost: HTMLElement;
     private readonly tfCaret: HTMLButtonElement;
     private tfFavs: string[];
+    /** Starred chart types (the style menu's stars + its pinned block). */
+    private styleFavs: string[] = [];
     private readonly styleButton: HTMLElement;
     private layoutButton: HTMLElement | null = null;
     private layoutPicker: LayoutPicker | null = null;
@@ -619,9 +629,22 @@ export class Topbar {
             triggerId: 'vela-topbar-style',
             host,
             items: this.styleItems(),
-            onSelect: (id) => opts.onPriceStyle(id),
+            // A pinned row carries a prefixed id; the style id is what the shell applies.
+            onSelect: (id) => opts.onPriceStyle(id.startsWith(STYLE_PIN_PREFIX) ? id.slice(STYLE_PIN_PREFIX.length) : id),
             iconBadges: true,
+            // The same star set the phone's chart-type sheet writes: a style pinned on
+            // either surface is pinned on both.
+            ...(opts.onStyleFavorite
+                ? {
+                      onFavorite: (id: string, on: boolean) => {
+                          const style = id.startsWith(STYLE_PIN_PREFIX) ? id.slice(STYLE_PIN_PREFIX.length) : id;
+                          this.setStyleFavorites(on ? [style, ...this.styleFavs.filter((f) => f !== style)] : this.styleFavs.filter((f) => f !== style));
+                          opts.onStyleFavorite!(style, on);
+                      },
+                  }
+                : {}),
         });
+        if (opts.styleFavorites) this.styleFavs = [...opts.styleFavorites];
     }
 
     /** Open the layout popover (optionally on one chart's column) — the workspace's door
@@ -875,17 +898,38 @@ export class Topbar {
         }));
     }
 
+    /** Reflect the starred chart types (the sheet wrote them, or a document restore did). */
+    setStyleFavorites(ids: readonly string[]): void {
+        this.styleFavs = [...ids];
+        this.styleMenu?.setItems(this.styleItems());
+    }
+
     private styleItems(): MenuItemDescriptor[] {
         // Live list: built-ins ∪ plugin-registered chart types (a registered type shows
         // up here automatically — the SDK's style-picker contribution). Registered types
         // sit BELOW a separator: the built-in price styles and the plugin chart types
         // read as two distinct families.
-        return priceStyleIds().map((id, i) => ({
+        //
+        // STARRED types are also repeated in a pinned block at the very top — the phone
+        // sheet's "Favourites" section, on the desktop menu. The pinned rows carry a
+        // prefixed id so the menu's row map stays unique; selection strips the prefix.
+        const starred = this.opts.onStyleFavorite !== undefined;
+        const row = (id: string, separatorBefore: boolean): MenuItemDescriptor => ({
             id,
             label: priceStyleLabel(id),
             icon: priceStyleIcon(id),
             checked: id === this.priceStyle,
-            separatorBefore: i === BUILTIN_PRICE_STYLES.length,
-        }));
+            separatorBefore,
+            ...(starred ? { favorite: this.styleFavs.includes(id) } : {}),
+        });
+        const ids = priceStyleIds();
+        const pinned = ids.filter((id) => this.styleFavs.includes(id));
+        const out: MenuItemDescriptor[] = pinned.map((id) => ({ ...row(id, false), id: `${STYLE_PIN_PREFIX}${id}` }));
+        // The pinned block is a separate family — one divider, then the full list.
+        ids.forEach((id, i) => {
+            const item = row(id, pinned.length > 0 ? i === 0 : i === BUILTIN_PRICE_STYLES.length);
+            out.push(item);
+        });
+        return out;
     }
 }

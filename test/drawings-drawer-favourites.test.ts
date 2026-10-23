@@ -64,7 +64,10 @@ describe('drawings drawer — favourites tab', () => {
         const tabs = tabStrip();
         expect(tabs[0]!.dataset.fav).toBe('1');
         expect(tabs[0]!.getAttribute('aria-label')).toBe('Favourites');
-        expect(tabs.slice(1).map((t) => t.textContent)).toEqual(['Lines', 'Fibonacci']);
+        // Round 25 put the RECENTS door beside it (a clock glyph) — both lead tabs are
+        // glyph-only views over the same list; the groups follow.
+        expect(tabs[1]!.getAttribute('aria-label')).toBe('Recent tools');
+        expect(tabs.slice(2).map((t) => t.textContent)).toEqual(['Lines', 'Fibonacci']);
         expect(tabs[0]!.dataset.active).toBeUndefined();
     });
 

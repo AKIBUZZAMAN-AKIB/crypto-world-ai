@@ -243,6 +243,14 @@ export interface WorkspaceState {
     favorites?: string[];
     /** Favorite timeframes (the topbar's quick-switch chips) — a SHARED preference. */
     timeframeFavorites?: string[];
+    /** Favorite CHART TYPES (the bar's chart-type sheet, the desktop style menu) — the
+     *  same shared-preferences channel as the two above, so a star survives a saved
+     *  layout, an export and a share link instead of living in one browser's storage. */
+    chartTypeFavorites?: string[];
+    /** Starred INDICATORS (picker rows: a native type id, else the script's name) — the
+     *  same shared-preferences channel: a starred study survives a saved layout, an
+     *  export and a share link instead of living in one browser's storage. */
+    indicatorFavorites?: string[];
     /** The drawing tools' remembered settings, magnet and stay mode — a SHARED preference. */
     drawingTools?: DrawingToolsState;
     /** The docked side panels: which one is open, and the widths the user dragged. */
@@ -346,6 +354,14 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
     if (Array.isArray(d.favorites)) {
         const favs = d.favorites.filter((f): f is string => typeof f === 'string');
         if (favs.length > 0) out.favorites = favs;
+    }
+    if (Array.isArray(d.chartTypeFavorites)) {
+        const favs = d.chartTypeFavorites.filter((f): f is string => typeof f === 'string');
+        if (favs.length > 0) out.chartTypeFavorites = favs;
+    }
+    if (Array.isArray(d.indicatorFavorites)) {
+        const favs = d.indicatorFavorites.filter((f): f is string => typeof f === 'string');
+        if (favs.length > 0) out.indicatorFavorites = favs;
     }
     if (Array.isArray(d.timeframeFavorites)) {
         const favs = d.timeframeFavorites.filter((f): f is string => typeof f === 'string');

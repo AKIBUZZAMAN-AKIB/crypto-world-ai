@@ -20,14 +20,15 @@ import { TOPBAR_BUILTIN_IDS } from './topbar-composition';
 import { getDrawingType } from '../core/drawings';
 import type { Vela } from '../Vela';
 import { ChartTypeSheet, type ChartTypeOption } from './chart-type-sheet';
+import { recordRecent } from './favorites';
 
 const STYLE_ID = 'vela-widget-mobilebar';
 const CSS = `
 .vela-mobilebar {
     display: none;
     align-items: stretch;
-    gap: 2px;
-    padding: 4px 6px calc(4px + env(safe-area-inset-bottom, 0px));
+    gap: 1px;
+    padding: 4px 4px calc(4px + env(safe-area-inset-bottom, 0px));
     border-top: 1px solid var(--vela-border);
     color: var(--vela-fg-muted);
     flex: none;
@@ -38,7 +39,8 @@ const CSS = `
 .vela-mb-item {
     all: unset;
     flex: 1 1 0;
-    min-width: 0;
+    /* 44px is the floor for EVERY stop: a 33px icon button at 320px was a miss factory. */
+    min-width: 44px;
     min-height: 44px;
     display: inline-flex;
     align-items: center;
@@ -74,12 +76,26 @@ const CSS = `
 .vela-mb-style .vela-mb-glyph { display: inline-flex; width: 19px; height: 19px; }
 .vela-mb-style .vela-mb-glyph svg { width: 19px; height: 19px; }
 .vela-mb-style[aria-expanded='true'] { background: var(--vela-hover); }
+/* Every stop that opens a surface washes the same way while it is open — one open-state
+   language across the bar, not a special case for the chart-type stop. */
+.vela-mb-item[aria-expanded='true'] { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-mb-item[aria-pressed='true'] { background: var(--vela-hover); color: var(--vela-accent); }
 /* The drawings stop mirrors the armed tool: accent ink + a lit chip while a tool (or the
    eraser) is armed, the plain pencil when nothing is. No dot, no badge — the glyph IS the
    state, which is the whole point of the stop. */
 .vela-mb-drawings .vela-mb-glyph { display: inline-flex; width: 18px; height: 18px; }
 .vela-mb-drawings .vela-mb-glyph svg { width: 18px; height: 18px; }
 .vela-mb-drawings.vela-mb-armed { color: var(--vela-accent); background: var(--vela-hover); }
+/* Narrow phones (320–380px): seven 44px stops do not fit beside the symbol, so the
+   least-used one — maximize — steps aside (it lives in the More drawer there) and every
+   remaining stop keeps a real thumb target instead of shrinking to 33px. */
+@media (max-width: 380px) {
+    [data-layout='mobile'] .vela-mobilebar { gap: 0; padding-inline: 4px; }
+    .vela-mb-maximize { display: none !important; }
+    .vela-mb-item { min-width: 44px; }
+    .vela-mb-style { min-width: 44px; padding: 0 4px; }
+    .vela-mb-symbol { flex: 1 1 0; min-width: 0; font-size: 13px; }
+}
 .vela-mb-symbol {
     flex: 1.6 1 0;
     font-size: 14px;
@@ -125,6 +141,10 @@ export interface MobileBarOptions {
     onLayoutClick?: () => void;
     /** Glyph of the current grid, for the sheet's layout row (defaults to `layout`). */
     layoutGlyph?: () => string;
+    /** The starred chart types (a shell-owned, persisted set) — read on every open. */
+    styleFavorites?: () => readonly string[];
+    /** Star/unstar a chart type. Omitted ⇒ the sheet falls back to its local store. */
+    onStyleFavorite?: (id: string, on: boolean) => void;
     /** Omitted ⇒ no maximize stop (single-chart shells — nothing to isolate). The
      *  workspace passes a toggle that isolates the active chart over the grid;
      *  {@link setMaximizeActive} lights the stop while something is isolated. */
@@ -174,8 +194,12 @@ export class MobileBar {
 
         this.symbolEl = item('vela-mb-symbol', 'Symbol search', opts.onSymbolClick);
         this.symbolEl.textContent = parseSymbol(opts.symbol).ticker;
+        this.symbolEl.setAttribute('aria-haspopup', 'dialog');
+        this.symbolEl.setAttribute('aria-expanded', 'false');
         this.tfEl = item('vela-mb-tf', 'Timeframe', opts.onTimeframeClick);
         this.tfEl.textContent = timeframeLabel(opts.timeframe);
+        this.tfEl.setAttribute('aria-haspopup', 'dialog');
+        this.tfEl.setAttribute('aria-expanded', 'false');
 
         // ── chart type (the slot the layout count used to hold) ──
         if (opts.styleOptions) {
@@ -202,6 +226,10 @@ export class MobileBar {
 
         const onIndicators = opts.onIndicatorsClick;
         const indicators = onIndicators ? item('vela-mb-indicators', 'Indicators', onIndicators, 'indicators') : null;
+        if (indicators) {
+            indicators.setAttribute('aria-haspopup', 'dialog');
+            indicators.setAttribute('aria-expanded', 'false');
+        }
         this.actionsHost = doc.createElement('span');
         this.actionsHost.className = 'vela-mb-actions';
 
@@ -211,6 +239,8 @@ export class MobileBar {
             const b = doc.createElement('button');
             b.className = 'vela-mb-item vela-mb-drawings';
             b.setAttribute('aria-label', 'Drawings');
+            b.setAttribute('aria-haspopup', 'dialog');
+            b.setAttribute('aria-expanded', 'false');
             const glyph = doc.createElement('span');
             glyph.className = 'vela-mb-glyph';
             b.appendChild(glyph);
@@ -296,6 +326,24 @@ export class MobileBar {
 
     /** Raise the chart-type sheet (tap on the stop). Built on first use so a single-chart
      *  phone session that never changes style pays nothing for it. */
+    /**
+     * Report a stop's surface as open/closed (E: an open sheet left no signal on the stop
+     * that opened it — a screen reader heard the same six buttons either way). The shell
+     * calls this from each surface's onOpenChange; `maximize` is a toggle, so it reports
+     * aria-pressed instead of aria-expanded.
+     */
+    setExpanded(stop: 'symbol' | 'timeframe' | 'indicators' | 'drawings' | 'more' | 'maximize', open: boolean): void {
+        // The stop NAMES and their classes diverge exactly once (the timeframe stop is
+        // `.vela-mb-tf`), so the mapping lives here rather than in every caller.
+        const cls = stop === 'timeframe' ? 'vela-mb-tf' : `vela-mb-${stop}`;
+        const el = this.el.querySelector<HTMLElement>(`.${cls}`);
+        if (!el) return;
+        if (stop === 'maximize') el.setAttribute('aria-pressed', open ? 'true' : 'false');
+        else el.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) el.dataset.open = '1';
+        else delete el.dataset.open;
+    }
+
     openSheet(): void {
         if (!this.styleEl || !this.opts.onStyleSelect) return;
         if (!this.sheet) {
@@ -305,7 +353,19 @@ export class MobileBar {
                 trigger: this.styleEl,
                 styles: () => this.opts.styleOptions?.() ?? [],
                 current: () => this.styleId,
-                onSelect: (id) => this.opts.onStyleSelect?.(id),
+                onSelect: (id) => {
+                    this.opts.onStyleSelect?.(id);
+                    recordRecent('chartTypes', id);
+                },
+                ...(this.opts.styleFavorites || this.opts.onStyleFavorite
+                    ? {
+                          isFavorite: (id: string) => this.opts.styleFavorites?.().includes(id) ?? false,
+                          onToggleFavorite: (id: string, on: boolean) => {
+                              this.opts.onStyleFavorite?.(id, on);
+                              this.sheet?.refreshFavorites();
+                          },
+                      }
+                    : {}),
                 ...(this.opts.onLayoutClick
                     ? {
                           layout: {
@@ -363,6 +423,7 @@ export class MobileBar {
     setMaximizeActive(on: boolean): void {
         if (!this.maxEl) return;
         this.maxEl.classList.toggle('vela-mb-on', on);
+        this.maxEl.setAttribute('aria-pressed', on ? 'true' : 'false');
         this.maxEl.setAttribute('aria-label', on ? 'Restore layout' : 'Maximize chart');
         this.maxEl.replaceChildren(iconEl(on ? 'restore' : 'maximize', this.el.ownerDocument));
     }
@@ -372,6 +433,11 @@ export class MobileBar {
     setMaximizeVisible(visible: boolean): void {
         if (!this.maxEl) return;
         this.maxEl.hidden = !visible;
+    }
+
+    /** The shell re-wrote the starred set (a restore, or the desktop menu's star). */
+    setStyleFavorites(_ids: readonly string[]): void {
+        this.sheet?.refreshFavorites();
     }
 
     /** Kept for the shell's layout changes: the label now lives on the style sheet's

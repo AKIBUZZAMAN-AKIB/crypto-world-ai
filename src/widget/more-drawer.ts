@@ -101,6 +101,51 @@ const CSS = `
 .vela-md-row .vela-icon { flex: none; font-size: 17px; width: 17px; height: 17px; color: var(--vela-fg-muted); }
 .vela-md-row-label { flex: 1 1 auto; min-width: 0; font-size: 14px; color: var(--vela-fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vela-md-row-value { flex: none; font-size: 13px; color: var(--vela-fg-muted); }
+.vela-md-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 10px;
+    margin: 0 0 8px;
+    border: 1px solid var(--vela-border);
+    border-radius: 8px;
+    color: var(--vela-fg-muted);
+    background: var(--vela-surface-elev);
+}
+.vela-md-search:focus-within { border-color: var(--vela-border-strong); }
+.vela-md-search input {
+    all: unset;
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 14px;
+    color: var(--vela-fg-bright);
+}
+.vela-md-search-clear {
+    all: unset;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-md-search-clear:active { background: var(--vela-hover); }
+/* The hidden attribute must beat the author display rules these rows carry (flex/grid), otherwise a
+   filtered row keeps its box and the search looks like it did nothing. */
+.vela-md-row[hidden], .vela-md-action[hidden], .vela-md-lrow[hidden], .vela-md-lact[hidden],
+.vela-md-section[hidden], .vela-md-libhead[hidden], .vela-md-charthead[hidden],
+.vela-md-actions[hidden], .vela-md-lib[hidden], .vela-md-hero[hidden],
+.vela-md-list[hidden], .vela-md-nomatch[hidden] { display: none !important; }
+.vela-md-nomatch {
+    padding: 22px 4px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--vela-fg-muted);
+}
 .vela-md-back {
     all: unset;
     display: flex;
@@ -1010,6 +1055,8 @@ export class MoreDrawer {
     /** Selector for the field the sheet should focus once this render is mounted. */
     private pendingFocus: string | null = null;
     private view: MoreView = 'main';
+    /** The main view's search query (D: 60+ rows with no way to narrow them). */
+    private query = '';
     /** Scroll the layout sheet to its sync block on the next paint. */
     private focus: 'sync' | undefined;
     /** The chart whose links panel opens straight away (the status line's badge names
@@ -1035,6 +1082,7 @@ export class MoreDrawer {
         // come back with a half-typed rename or a save form unfolded on a stale row.
         this.openRow = null;
         this.saveField = null;
+        this.query = ''; // a fresh open is a fresh scan, never the last search
         this.render();
         this.drawer.show();
     }
@@ -1069,13 +1117,17 @@ export class MoreDrawer {
             this.drawer.body.appendChild(back);
         }
 
-        if (this.view === 'main') this.renderMain(doc);
+        if (this.view === 'main') {
+            this.drawer.body.appendChild(this.searchRow(doc));
+            this.renderMain(doc);
+        }
         else if (this.view === 'style') this.renderStyle(doc);
         else if (this.view === 'layout') this.renderLayout(doc, this.focus, this.focusCell);
         else if (this.view === 'cursor') this.renderCursor(doc);
         else this.renderAlerts(doc);
         this.focus = undefined;
         this.focusCell = undefined;
+        if (this.view === 'main') this.applyFilter();
         // Fields built inside a detached pane cannot take focus; the sheet asks for it
         // here, once everything is mounted (the phone keyboard follows the cursor).
         if (this.pendingFocus) {
@@ -1108,6 +1160,106 @@ export class MoreDrawer {
         if (opts.chevron) el.appendChild(iconEl('chevron-right', doc));
         el.addEventListener('click', opts.onClick);
         return el;
+    }
+
+    /**
+     * The sheet's search field. It filters the rows already on screen IN PLACE (so the
+     * caret never jumps), and it deliberately does not touch the sub-views: those open one
+     * tap deeper and carry their own structure. Sections whose every row is filtered out
+     * collapse, so a stray heading never sits above empty space.
+     */
+    private searchRow(doc: Document): HTMLElement {
+        const wrap = doc.createElement('div');
+        wrap.className = 'vela-md-search';
+        wrap.appendChild(iconEl('search', doc));
+        const input = doc.createElement('input');
+        input.type = 'text';
+        input.value = this.query;
+        input.placeholder = 'Search settings…';
+        input.setAttribute('aria-label', 'Search settings');
+        input.spellcheck = false;
+        const clear = doc.createElement('button');
+        clear.type = 'button';
+        clear.className = 'vela-md-search-clear';
+        clear.setAttribute('aria-label', 'Clear search');
+        clear.appendChild(iconEl('close', doc));
+        clear.hidden = this.query === '';
+        input.addEventListener('input', () => {
+            this.query = input.value;
+            clear.hidden = this.query === '';
+            this.applyFilter();
+        });
+        clear.addEventListener('click', () => {
+            this.query = '';
+            input.value = '';
+            clear.hidden = true;
+            this.applyFilter();
+            input.focus({ preventScroll: true });
+        });
+        wrap.append(input, clear);
+        return wrap;
+    }
+
+    /** Hide every row/action that does not match the query, then every heading whose
+     *  block went empty. A hint stands in when nothing at all matches. */
+    private applyFilter(): void {
+        const body = this.drawer.body;
+        const q = this.query.trim().toLowerCase();
+        const items = [...body.querySelectorAll<HTMLElement>('.vela-md-row, .vela-md-action, .vela-md-lrow, .vela-md-lact')];
+        if (!q) {
+            for (const el of items) el.hidden = false;
+            for (const el of body.querySelectorAll<HTMLElement>('.vela-md-section, .vela-md-libhead, .vela-md-charthead, .vela-md-hero, .vela-md-actions, .vela-md-lib')) el.hidden = false;
+            body.querySelector('.vela-md-nomatch')?.remove();
+            return;
+        }
+        let any = false;
+        for (const el of items) {
+            const hit = (el.textContent ?? '').toLowerCase().includes(q);
+            el.hidden = !hit;
+            if (hit) any = true;
+        }
+        // A heading survives only while something under it does.
+        for (const list of body.querySelectorAll<HTMLElement>('.vela-md-list, .vela-md-lib, .vela-md-actions')) {
+            let live = false;
+            for (const child of [...list.children] as HTMLElement[]) {
+                if (child.matches('.vela-md-row, .vela-md-action, .vela-md-lrow, .vela-md-lact, .vela-md-list') && !child.hidden) live = true;
+            }
+            let kept = false;
+            for (const child of [...list.children] as HTMLElement[]) {
+                if (child.classList.contains('vela-md-section') || child.classList.contains('vela-md-libhead') || child.classList.contains('vela-md-charthead')) {
+                    // does anything between this heading and the next one survive?
+                    let next = child.nextElementSibling as HTMLElement | null;
+                    let seen = false;
+                    while (next && !(next.classList.contains('vela-md-section') || next.classList.contains('vela-md-libhead') || next.classList.contains('vela-md-charthead'))) {
+                        if (!next.hidden) seen = true;
+                        next = next.nextElementSibling as HTMLElement | null;
+                    }
+                    child.hidden = !seen;
+                    if (seen) kept = true;
+                }
+            }
+            // A wrapper (the actions strip, the library block) with nothing visible goes too.
+            if (list.classList.contains('vela-md-actions')) list.hidden = !live && !kept;
+            void live;
+        }
+        // The library is a compound surface (its own tabs, autosave, import/export) — while a
+        // query is up it either has a matching saved row or it steps aside entirely; leaving
+        // its chrome on screen next to one matched setting row reads as a rendering bug.
+        for (const lib of body.querySelectorAll<HTMLElement>('.vela-md-lib')) {
+            const anyRow = [...lib.querySelectorAll<HTMLElement>('.vela-md-lrow, .vela-md-lact')].some((r) => !r.hidden);
+            lib.hidden = q !== '' && !anyRow;
+        }
+        if (!any) {
+            let hint = body.querySelector<HTMLElement>('.vela-md-nomatch');
+            if (!hint) {
+                hint = body.ownerDocument.createElement('div');
+                hint.className = 'vela-md-nomatch';
+                body.appendChild(hint);
+            }
+            hint.textContent = `Nothing matches “${this.query.trim()}”.`;
+        } else {
+            body.querySelector('.vela-md-nomatch')?.remove();
+        }
     }
 
     private renderMain(doc: Document): void {

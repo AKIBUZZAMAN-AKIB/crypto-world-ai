@@ -127,6 +127,8 @@ export interface CellNativeInfo {
     supported: boolean;
     present: boolean;
     beta?: boolean;
+    /** Picker group the descriptor declares ("Oscillators", "Volume", …). */
+    category?: string;
 }
 
 /** What every cell shares from the workspace. */
@@ -1290,7 +1292,9 @@ export class ChartCell {
      *  then the manifest in the host's own order. */
     libraryRows(): Array<{ name: string; language?: string; category?: string; native?: boolean; nativeType?: string; beta?: boolean }> {
         return [
-            ...this.supportedNatives().map((n) => ({ name: n.title, category: 'Built-in', native: true, nativeType: n.type, beta: n.beta })),
+            // The descriptor's OWN family, not one 'Built-in' bucket: 77 rows under a single
+            // heading is a wall of text with no way in.
+            ...this.supportedNatives().map((n) => ({ name: n.title, category: n.category ?? 'Built-in', native: true, nativeType: n.type, beta: n.beta })),
             ...this.manifest.map((e) => ({ name: e.name, language: e.language, category: e.category })),
         ];
     }
@@ -1478,7 +1482,7 @@ export class ChartCell {
         if (!chart) return;
         void chart.availableNativeIndicators().then((list) => {
             if (this.destroyed || this.inner !== chart) return;
-            this.nativeCatalog = list.map((n) => ({ type: n.type, title: n.title, supported: n.supported, present: n.present, beta: n.beta }));
+            this.nativeCatalog = list.map((n) => ({ type: n.type, title: n.title, supported: n.supported, present: n.present, beta: n.beta, category: n.category }));
             this.deps.onIndicatorsChanged(this.id);
         });
     }

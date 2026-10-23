@@ -8,6 +8,9 @@
 // FAVOURITES: the star on a row was decoration without a door. A lead tab (★) now lists
 // every starred tool across all groups — TradingView's favourites tab — so a trader who
 // has pinned four tools never pages through five categories to reach them.
+// RECENTS: the same door for the tools you have not committed to yet. A second lead tab
+// (a clock) lists the last few tools you drew with, newest first — the star is a promise,
+// a habit is not, and the tool you used five minutes ago is the one you want back.
 import { Drawer } from '../ui/components/drawer';
 import { iconEl } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
@@ -54,6 +57,8 @@ const CSS = `
     padding: 0 2px 8px;
     border-bottom: 1px solid var(--vela-border);
     background: var(--vela-surface);
+    mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 20px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 20px), transparent 100%);
 }
 .vela-dd-tabs::-webkit-scrollbar { display: none; }
 .vela-dd-tab {
@@ -119,6 +124,8 @@ const CSS = `
 
 /** The favourites tab's sentinel id — never a real group id. */
 const FAV_TAB = '__fav';
+/** The recents tab's sentinel id — same trick, a mode over the same list. */
+const RECENT_TAB = '__recent';
 
 export interface DrawingsDrawerOptions {
     host: HTMLElement;
@@ -128,6 +135,8 @@ export interface DrawingsDrawerOptions {
     isFavorite: (type: DrawingTypeKey) => boolean;
     onFavorite: (type: DrawingTypeKey, on: boolean) => void;
     onSelect: (type: DrawingTypeKey) => void;
+    /** Recently used tools, newest first (see `favorites.ts#recentOf`). */
+    recent?: () => readonly string[];
     onOpenChange?: (open: boolean) => void;
 }
 
@@ -175,7 +184,7 @@ export class DrawingsDrawer {
 
     open(): void {
         this.definition = this.opts.toolbar();
-        if (this.activeGroup !== FAV_TAB && !this.definition.groups.some((g) => g.id === this.activeGroup)) {
+        if (this.activeGroup !== FAV_TAB && this.activeGroup !== RECENT_TAB && !this.definition.groups.some((g) => g.id === this.activeGroup)) {
             this.activeGroup = this.definition.groups[0]?.id ?? '';
         }
         this.input.value = '';
@@ -196,7 +205,7 @@ export class DrawingsDrawer {
      *  shows the flattened results — no tabs to page through, so the swipe is inert. */
     private stepGroup(step: number): void {
         if (this.input.value.trim()) return;
-        const ids = [FAV_TAB, ...this.definition.groups.map((g) => g.id)];
+        const ids = [FAV_TAB, RECENT_TAB, ...this.definition.groups.map((g) => g.id)];
         const next = ids[ids.indexOf(this.activeGroup) + step];
         if (next === undefined) return;
         this.activeGroup = next;
@@ -225,6 +234,21 @@ export class DrawingsDrawer {
             this.renderList();
         });
         this.tabs.appendChild(fav);
+
+        const recent = doc.createElement('button');
+        recent.className = 'vela-dd-tab';
+        recent.dataset.fav = '1'; // same glyph-only treatment as the star tab
+        recent.setAttribute('aria-label', 'Recent tools');
+        recent.appendChild(iconEl('clock', doc));
+        if (this.activeGroup === RECENT_TAB) recent.dataset.active = '1';
+        recent.addEventListener('click', () => {
+            this.activeGroup = RECENT_TAB;
+            this.input.value = '';
+            this.renderTabs();
+            this.renderList();
+        });
+        this.tabs.appendChild(recent);
+
         for (const group of this.definition.groups) {
             const tab = doc.createElement('button');
             tab.className = 'vela-dd-tab';
@@ -323,6 +347,23 @@ export class DrawingsDrawer {
                 empty.textContent = 'No favourites yet — tap the star on any tool to pin it here.';
                 this.list.appendChild(empty);
             }
+            return;
+        }
+
+        if (this.activeGroup === RECENT_TAB) {
+            // Newest first, resolved through the toolbar model so an id whose plugin type
+            // went away simply drops out (and a group heading says where it came from).
+            const byType = new Map<string, { tool: ToolDefinition; group: string }>();
+            for (const g of this.definition.groups) for (const t of g.tools) byType.set(t.type, { tool: t, group: g.label });
+            const used = (this.opts.recent?.() ?? []).map((id) => byType.get(id)).filter((v): v is { tool: ToolDefinition; group: string } => !!v);
+            if (used.length === 0) {
+                const empty = doc.createElement('div');
+                empty.className = 'vela-dd-empty';
+                empty.textContent = 'Tools you draw with appear here, newest first.';
+                this.list.appendChild(empty);
+                return;
+            }
+            for (const { tool } of used) row(tool);
             return;
         }
 

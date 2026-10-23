@@ -168,7 +168,15 @@ const CSS = `
    overflowing the body, and the result list stops capping itself — it fills the
    rest of the screen. The bottom inset (+ safe area) is the kit's: every mobile
    dialog body carries it, flush or not, so the list adds none of its own. */
-[data-layout='mobile'] .vela-sp-tabs { overflow-x: auto; scrollbar-width: none; gap: 6px; }
+/* A tab cut off at the right edge reads as a BUG, not as "there is more"; a short fade
+   says "scroll" in the one cue a phone gives before you try. */
+[data-layout='mobile'] .vela-sp-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+    gap: 6px;
+    mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 22px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 22px), transparent 100%);
+}
 [data-layout='mobile'] .vela-sp-tabs::-webkit-scrollbar { display: none; }
 [data-layout='mobile'] .vela-sp-tab { flex: none; padding: 7px 10px; }
 [data-layout='mobile'] .vela-sp-list { flex: 1 1 auto; max-height: none; margin-bottom: 0; }

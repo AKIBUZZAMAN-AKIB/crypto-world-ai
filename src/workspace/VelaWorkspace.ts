@@ -32,7 +32,7 @@ import { DataWindow } from '../widget/data-window';
 import type { ScriptRun } from '../core/script-run';
 import { PanelDock } from '../widget/panel-dock';
 import { SymbolPicker } from '../widget/symbol-picker';
-import { IndicatorPicker } from '../widget/indicator-picker';
+import { IndicatorPicker, indicatorKey } from '../widget/indicator-picker';
 import { TimeframeQuick } from '../widget/timeframe-quick';
 import { ShortcutsHelp } from '../widget/shortcuts-help';
 import { AlertList } from '../widget/alert-list';
@@ -40,6 +40,7 @@ import { Tip } from '../widget/tip';
 import { REDUCED_MOTION_CSS } from '../ui/motion';
 import { CommandPalette, type PaletteCommand } from '../widget/command-palette';
 import { Toast } from '../widget/toast';
+import { recordRecent, recentOf } from '../widget/favorites';
 import { Glider, ZOOM_IN, ZOOM_OUT, PAN_FAST } from '../widget/glide';
 import { toolShortcutHints } from '../widget/tool-shortcuts';
 import { legendActionsProviderFor, legendCalloutsProviderFor, mobilePlacement, statePersistenceHandlers, topbarActionOverride, widgetActions, widgetAttachments, type WidgetActionDescriptor } from '../widget/contributions';
@@ -284,6 +285,16 @@ const CSS = `
 /* Mobile: the docked drawing-toolbar column would eat a phone-width grid — the shell's
    drawings drawer + on-chart pill replace it (same policy as the widget's in-chart bar). */
 [data-layout='mobile'] .vela-ws-toolbar { display: none; }
+[data-layout='mobile'] .vela-ws-drawdock { flex: none; min-height: 0; }
+/* No bottom bar: the strip still has to sit on the grid's bottom edge, so it goes back
+   to being an overlay (nothing else can overlap it — there is no bar below). */
+[data-layout='mobile'] .vela-ws-grid > .vela-drawdock {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 31;
+}
 /* A maximized cell owns the whole grid: the splitter strips have no seams to grab and
    the active ring would just outline the only visible chart — both are noise here. */
 .vela-ws-grid[data-maximized='1'] .vela-ws-splitter { display: none; }
@@ -449,6 +460,11 @@ export class VelaWorkspace {
     private globalSnap: SnapMode = 'off';
     /** Sticky drawing (TradingView's stay-in-drawing-mode) is the DEFAULT. */
     private globalStay = true;
+    /** Starred chart types — a shared preference, persisted with the document (the same
+     *  channel as drawing-tool and timeframe favourites). */
+    private styleFavs: string[] = [];
+    /** Starred indicator keys (see `IndicatorPicker`): document-backed, like the two above. */
+    private indFavs: string[] = [];
     /** Live subscription to the ACTIVE cell's unified history (rebound on every projection). */
     private historyUnsub: (() => void) | null = null;
     /** Favorite drawing tools — a WORKSPACE preference (one star set, every cell). */
@@ -681,6 +697,8 @@ export class VelaWorkspace {
         this.cursorStyle = normalizeCursorStyle(boot?.cursor ?? opts.cursor);
         if (boot?.favorites) this.favs = [...boot.favorites];
         if (boot?.timeframeFavorites) this.tfFavs = [...boot.timeframeFavorites];
+        if (boot?.chartTypeFavorites) this.styleFavs = [...boot.chartTypeFavorites];
+        if (boot?.indicatorFavorites) this.indFavs = [...boot.indicatorFavorites];
         if (boot?.drawingTools) this.adoptDrawingTools(boot.drawingTools);
         const sync = boot?.sync ?? opts.sync;
         for (const kind of SYNC_KINDS) this.applySyncSetting(kind, sync?.[kind]);
@@ -758,6 +776,7 @@ export class VelaWorkspace {
                 // outside-dismiss — close them on every cell explicitly.
                 if (open) for (const cell of this.cells()) cell.chart.renderer.closeDialogs();
                 this.trackDialog(open);
+                this.mobileBar?.setExpanded('symbol', open);
             },
         });
         this.symbolPicker.setSource(() => this.feed.symbols());
@@ -772,14 +791,23 @@ export class VelaWorkspace {
                       host: this.root,
                       library: () => this.active.libraryRows(),
                       onChart: () => this.active.onChartRows(),
-                      onAdd: (i) => this.active.addFromLibrary(i),
+                      onAdd: (i) => {
+                          this.active.addFromLibrary(i);
+                          // The clock tab's feed — the habit, not the promise (a star).
+                          const row = this.active.libraryRows()[i];
+                          if (row) recordRecent('indicators', indicatorKey(row));
+                      },
                       onRemove: (i) => this.active.removeFromChart(i),
                       onSettings: (i) => this.active.openChartRowSettings(i),
+                      favorites: () => this.indFavs,
+                      onFavorite: (key, on) => this.setIndicatorFavorite(key, on),
+                      recent: () => recentOf('indicators'),
                       onOpenChange: (open) => {
                           // Same rule as the symbol search: the renderer's in-chart dialogs never see
                           // an outside-dismiss from a topbar dialog — close them on every cell.
                           if (open) for (const cell of this.cells()) cell.chart.renderer.closeDialogs();
                           this.trackDialog(open);
+                          this.mobileBar?.setExpanded('indicators', open);
                       },
                   })
                 : null;
@@ -812,6 +840,7 @@ export class VelaWorkspace {
             onTimeframe: (tf) => this.setActiveTimeframe(tf),
             onTimeframeFavorite: (tf, on) => this.setTimeframeFavorite(tf, on),
             onPriceStyle: (style) => this.active.setPriceStyle(style),
+            onStyleFavorite: (id, on) => this.setStyleFavorite(id, on),
             // Single-chart mode: no layout block at all — the topbar renders no layout
             // button and no sync switches (see TopbarOptions.layout).
             layout: this.monoLayout ? undefined : {
@@ -1103,6 +1132,9 @@ export class VelaWorkspace {
                       // `setActiveCell` has run — resolve through the map, never `active`.
                       currentStyle: () => this.cellsById.get(this.activeId ?? '')?.priceStyle ?? 'candles',
                       onStyleSelect: (id) => this.active.setPriceStyle(id),
+                      // One star set for every surface: the bar's sheet, More, the topbar menu.
+                      styleFavorites: () => this.styleFavs,
+                      onStyleFavorite: (id, on) => this.setStyleFavorite(id, on),
                       ...(this.monoLayout
                           ? {}
                           : {
@@ -1114,8 +1146,16 @@ export class VelaWorkspace {
                       onSettingsClick: () => this.active.chart.renderer.openSettings(),
                   })
                 : null;
-        // One pill for the whole grid — rebound to the active cell on every projection.
-        this.drawingPill = this.drawingsEnabled ? new DrawingPill(this.gridEl) : null;
+        // One strip for the whole grid — rebound to the active cell on every projection.
+        // It docks in the flow ABOVE the bottom bar (never over the plot: the old floating
+        // pill covered the last row's time axis). Without a bottom bar it falls back to the
+        // grid, where CSS pins it to the bottom edge.
+        const drawHost =
+            this.mobileBar && this.mobileBar.el.parentElement === this.root
+                ? this.root.insertBefore(doc.createElement('div'), this.mobileBar.el)
+                : this.gridEl;
+        drawHost.className = this.mobileBar ? 'vela-ws-drawdock' : drawHost.className;
+        this.drawingPill = this.drawingsEnabled ? new DrawingPill(drawHost) : null;
 
         hostEl.appendChild(this.root);
 
@@ -1389,6 +1429,8 @@ export class VelaWorkspace {
         if (this.activeId) state.activeCellId = this.activeId;
         if (this.favs.length > 0) state.favorites = [...this.favs];
         if (this.tfFavs.length > 0) state.timeframeFavorites = [...this.tfFavs];
+        if (this.styleFavs.length > 0) state.chartTypeFavorites = [...this.styleFavs];
+        if (this.indFavs.length > 0) state.indicatorFavorites = [...this.indFavs];
         const tools = this.drawingToolsState();
         if (tools) state.drawingTools = tools;
         if (this.trackSizes.size > 0) state.trackSizes = Object.fromEntries([...this.trackSizes].map(([k, v]) => [k, { ...v }]));
@@ -1584,6 +1626,16 @@ export class VelaWorkspace {
         if (st.timeframeFavorites) {
             this.tfFavs = [...st.timeframeFavorites];
             this.topbar.setTimeframeFavorites(this.tfFavs);
+            this.tfDrawer?.refreshFavorites();
+        }
+        if (st.chartTypeFavorites) {
+            this.styleFavs = [...st.chartTypeFavorites];
+            this.mobileBar?.setStyleFavorites(this.styleFavs);
+            this.topbar.setStyleFavorites(this.styleFavs);
+        }
+        if (st.indicatorFavorites) {
+            this.indFavs = [...st.indicatorFavorites];
+            this.indicatorPicker?.sync();
         }
         // Absent in documents written before the dock existed — those leave the column closed.
         this.dock.applyState(st.panels);
@@ -2600,6 +2652,9 @@ export class VelaWorkspace {
             if (cell.id !== this.activeId) return;
             this.globalTool = type;
             this.drawToolbar?.setActiveTool(type);
+            // ONE record point for the habit, whichever door armed the tool (docked
+            // toolbar, sheet, keyboard shortcut, the pill's own menu).
+            if (type) recordRecent('drawings', type);
         });
         chart.on('drawing:snap', ({ mode }) => {
             if (cell.id !== this.activeId) return;
@@ -4381,6 +4436,27 @@ export class VelaWorkspace {
         if (on === this.tfFavs.includes(tf)) return;
         this.tfFavs = on ? [tf, ...this.tfFavs] : this.tfFavs.filter((f) => f !== tf);
         this.topbar.setTimeframeFavorites(this.tfFavs);
+        this.tfDrawer?.refreshFavorites();
+        this.markStateDirty();
+    }
+
+    /** Star/unstar an INDICATOR — a workspace preference like the other stars: the picker
+     *  reads this one set, and the document carries it to a saved layout / share link. */
+    private setIndicatorFavorite(key: string, on: boolean): void {
+        if (on === this.indFavs.includes(key)) return;
+        this.indFavs = on ? [key, ...this.indFavs] : this.indFavs.filter((k) => k !== key);
+        this.indicatorPicker?.sync();
+        this.markStateDirty();
+    }
+
+    /** Star/unstar a chart type — a WORKSPACE preference like the timeframe stars: the
+     *  chart-type sheet, the More drawer and the desktop style menu all read this one set,
+     *  and the document carries it. */
+    private setStyleFavorite(id: string, on: boolean): void {
+        if (on === this.styleFavs.includes(id)) return;
+        this.styleFavs = on ? [id, ...this.styleFavs] : this.styleFavs.filter((f) => f !== id);
+        this.mobileBar?.setStyleFavorites(this.styleFavs);
+        this.topbar.setStyleFavorites(this.styleFavs);
         this.markStateDirty();
     }
 
@@ -4440,7 +4516,14 @@ export class VelaWorkspace {
                 this.active.applyRange(preset);
                 this.bottombar?.setActiveRange(preset.id); // the desktop bar stays truthful across a mode flip
             },
-            onOpenChange: (open) => this.trackDialog(open),
+            // The timeframe stars are ONE set (topbar chips + this sheet): starring here
+            // lights the desktop dropdown's star too, and the layout carries both.
+            favorites: () => this.tfFavs,
+            onFavorite: (tf, on) => this.setTimeframeFavorite(tf, on),
+            onOpenChange: (open) => {
+                this.trackDialog(open);
+                this.mobileBar?.setExpanded('timeframe', open);
+            },
         });
         this.tfDrawer.open();
     }
@@ -4453,7 +4536,11 @@ export class VelaWorkspace {
             isFavorite: (type) => this.active.chart.drawings.isFavorite(type),
             onFavorite: (type, on) => this.active.chart.drawings.setFavorite(type, on),
             onSelect: (type) => this.active.chart.drawings.setTool(type),
-            onOpenChange: (open) => this.trackDialog(open),
+            recent: () => recentOf('drawings'),
+            onOpenChange: (open) => {
+                this.trackDialog(open);
+                this.mobileBar?.setExpanded('drawings', open);
+            },
         });
         this.drawingsDrawer.open();
     }
@@ -4590,6 +4677,7 @@ export class VelaWorkspace {
             onExportDrawingTemplate: (tool, name) => this.exportDrawingTemplate(tool, name),
             onOpenChange: (open) => {
                 this.trackDialog(open);
+                this.mobileBar?.setExpanded('more', open);
                 // While the sheet is up its table numbers the charts, so "column 3" and
                 // the chart wearing "3" are visibly the same thing.
                 this.setSyncSurfaceOpen(open);
@@ -4606,9 +4694,20 @@ export class VelaWorkspace {
     /** The contributed topbar actions the mobile menu lists, from one cluster. */
     private drawerActions(cluster: 'left' | 'right'): Array<{ label: string; icon?: string; run: () => void }> {
         const builtin = new Set<string>(TOPBAR_BUILTIN_IDS);
-        return widgetActions('topbar', this.context())
+        const out = widgetActions('topbar', this.context())
             .filter((a) => mobilePlacement(a) === 'menu' && (a.align === 'left') === (cluster === 'left') && !builtin.has(a.id))
             .map((a) => ({ label: a.label, icon: a.icon, run: () => a.run(this.context()) }));
+        // The maximize toggle lives on the bar — except on the narrowest phones, where
+        // the bar's stops must stay 44px and this one is the least-used. It stays
+        // reachable here, so nothing is lost when the media query hides it.
+        if (cluster === 'left' && !this.monoLayout) {
+            out.unshift({
+                label: this.maximizedId ? 'Restore the grid' : 'Maximize the active chart',
+                icon: this.maximizedId ? 'restore' : 'maximize',
+                run: () => this.toggleMobileMaximize(),
+            });
+        }
+        return out;
     }
 
     private openTimezoneDrawer(): void {
@@ -5222,6 +5321,11 @@ export class VelaWorkspace {
 
     private trackDialog(open: boolean): void {
         this.openDialogs = Math.max(0, this.openDialogs + (open ? 1 : -1));
+        // D4: a modal sheet already traps focus, but the chart behind it stayed in the
+        // accessibility tree and reachable by keyboard. `inert` on every shell child except
+        // the sheet (and its own backdrop, which must keep taking the dismiss tap) makes the
+        // word "modal" true for a screen reader too.
+        this.applyModalInert(this.openDialogs > 0);
         if (open) {
             this.keymap.pushScope('dialog');
             // A coach mark must never float on top of a sheet: it points at a badge that
@@ -5233,6 +5337,23 @@ export class VelaWorkspace {
             this.keymap.popScope('dialog');
             // A coach mark that was suppressed while the sheet was open gets its turn now.
             if (this.openDialogs === 0) this.root.ownerDocument.defaultView?.setTimeout(() => this.maybeShowGroupTip(), 320);
+        }
+    }
+
+    /** Inert the chrome behind an open sheet (see `trackDialog`). The sheet and its own
+     *  backdrop are skipped; everything else in the shell goes quiet until it closes. */
+    private applyModalInert(open: boolean): void {
+        for (const el of [...this.root.children] as HTMLElement[]) {
+            if (el.classList.contains('vela-drawer-backdrop') || el.classList.contains('vela-dialog-backdrop')) continue;
+            const hostsSheet = el.matches('.vela-drawer-positioner, .vela-dialog-positioner') && el.querySelector('[role="dialog"]') !== null;
+            if (hostsSheet) continue;
+            if (open) {
+                el.setAttribute('inert', '');
+                el.dataset.velaInert = '1';
+            } else if (el.dataset.velaInert) {
+                el.removeAttribute('inert');
+                delete el.dataset.velaInert;
+            }
         }
     }
 

@@ -20,7 +20,7 @@ import { injectStyles } from '../ui/styles';
 import { iconEl } from '../ui/icons';
 import { announceSurface } from '../ui/surface-events';
 import { holdForExit, type SurfaceExit } from '../ui/surface-exit';
-import { favoritesOf, isFavorite, onFavoritesChange, pruneFavorites, toggleFavorite } from './favorites';
+import { isFavorite, onFavoritesChange, toggleFavorite } from './favorites';
 
 const STYLE_ID = 'vela-widget-chart-type-sheet';
 
@@ -49,6 +49,23 @@ const CSS = `
 @keyframes vela-cts-out { from { opacity: 1; } to { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.985); } }
 @media (prefers-reduced-motion: reduce) {
     .vela-cts, .vela-cts[data-closing] { animation: none; }
+}
+/* A phone on its side has ~390px of height, not 844: the sheet must use the width it
+   suddenly has instead of squeezing two rows of tiles under a 46px bar. Six columns and
+   a taller scroll area turn 19 styles into four comfortable rows. */
+@media (max-height: 560px) {
+    .vela-cts {
+        bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+        max-height: min(84vh, 420px);
+        width: min(560px, calc(100% - 16px));
+        padding: 7px 9px 6px;
+    }
+    .vela-cts-grid { grid-template-columns: repeat(6, 1fr); gap: 4px; }
+    .vela-cts-tile { min-height: 52px; padding: 4px 3px 4px; }
+    .vela-cts-tile svg { width: 18px; height: 18px; }
+    .vela-cts-head { padding-bottom: 4px; min-height: 30px; }
+    .vela-cts-scroll { max-height: calc(84vh - 108px); }
+    .vela-cts-layout { min-height: 34px; }
 }
 
 /* ── header ── */
@@ -179,25 +196,36 @@ const CSS = `
     line-clamp: 2;
     overflow-wrap: anywhere;
 }
+/* Below 360px the four columns are ~72px wide: the label has to fit TWO lines of 9.5px
+   text or it wraps to a third and the tile grows under its neighbours. Tighten the type
+   and the padding instead of clamping the name away — "Hollow candles" must stay legible. */
+@media (max-width: 360px) {
+    .vela-cts-tile { min-height: 56px; padding: 5px 2px 4px; gap: 4px; }
+    .vela-cts-tile svg { width: 18px; height: 18px; }
+    .vela-cts-name { font-size: 9px; line-height: 1.1; hyphens: none; }
+}
 /* The star sits on the tile's corner, quiet until it is the point: a star is a small
    deliberate act, not a second primary action. 24px is the smallest comfortable thumb
    target that does not eat the 86px tile. */
 .vela-cts-star {
     all: unset;
     position: absolute;
-    top: 1px;
-    right: 1px;
+    top: 0;
+    right: 0;
     box-sizing: border-box;
-    width: 24px;
-    height: 24px;
+    /* 30px: the smallest target that is reliably hittable with a thumb on an 86px tile,
+       without stealing the tile's own press (the star sits in the corner, the glyph in
+       the middle). The visible star stays 12px — the target is the invisible box. */
+    width: 30px;
+    height: 30px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 7px;
+    border-radius: 8px;
     color: var(--vela-fg-faint);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    opacity: 0.55;
+    opacity: 0.6;
     transition: opacity 120ms var(--vela-ease), color 120ms var(--vela-ease), transform 120ms var(--vela-ease);
 }
 .vela-cts-star .vela-icon { font-size: 12px; width: 12px; height: 12px; }
@@ -254,6 +282,13 @@ export interface ChartTypeSheetOptions {
     onSelect: (id: string) => void;
     /** Multi-chart shells only: the layout door the bar stop gave up. */
     layout?: { label: () => string; glyph: () => string; onOpen: () => void };
+    /**
+     * The starring channel. A shell that PERSISTS the set (the workspace writes it into
+     * the document, beside the drawing/timeframe favourites) injects both; with neither,
+     * the sheet falls back to the local store so a standalone host still gets stars.
+     */
+    isFavorite?: (id: string) => boolean;
+    onToggleFavorite?: (id: string, on: boolean) => void;
 }
 
 const COLS = 4;
@@ -303,6 +338,18 @@ export class ChartTypeSheet {
         return this.isOpen;
     }
 
+    /** Star state — the shell's set when it owns one, else the local store. */
+    private fav(id: string): boolean {
+        return this.opts.isFavorite ? this.opts.isFavorite(id) : isFavorite('chartTypes', id);
+    }
+
+    private toggleFav(id: string): boolean {
+        const next = !this.fav(id);
+        if (this.opts.onToggleFavorite) this.opts.onToggleFavorite(id, next);
+        else toggleFavorite('chartTypes', id);
+        return next;
+    }
+
     toggle(): void {
         if (this.isOpen) this.close();
         else this.open();
@@ -320,8 +367,6 @@ export class ChartTypeSheet {
 
         const styles = this.opts.styles();
         const current = this.opts.current();
-        // A saved star for a type the host no longer registers is dead weight.
-        pruneFavorites('chartTypes', styles.map((s) => s.id));
 
         const el = doc.createElement('div');
         el.className = 'vela-cts';
@@ -428,9 +473,9 @@ export class ChartTypeSheet {
                 star.setAttribute('aria-label', `${on ? 'Remove from' : 'Add to'} favourites — ${s.label}`);
                 star.replaceChildren(iconEl(on ? 'star-filled' : 'star', doc));
             };
-            painted(isFavorite('chartTypes', s.id));
+            painted(this.fav(s.id));
             star.addEventListener('click', () => {
-                painted(toggleFavorite('chartTypes', s.id));
+                painted(this.toggleFav(s.id));
                 this.syncFavorites();
             });
 
@@ -482,7 +527,7 @@ export class ChartTypeSheet {
         doc.addEventListener('keydown', this.onDocKeydown, true);
         this.unsubFavorites = onFavoritesChange(() => {
             for (const c of this.cells) {
-                const on = isFavorite('chartTypes', c.option.id);
+                const on = this.fav(c.option.id);
                 c.star.setAttribute('aria-pressed', on ? 'true' : 'false');
                 c.star.setAttribute('aria-label', `${on ? 'Remove from' : 'Add to'} favourites — ${c.option.label}`);
                 c.star.replaceChildren(iconEl(on ? 'star-filled' : 'star', doc));
@@ -507,10 +552,10 @@ export class ChartTypeSheet {
         const allGrid = this.allGrid;
         if (!favGrid || !allGrid) return;
         for (const c of this.cells) {
-            const on = isFavorite('chartTypes', c.option.id);
+            const on = this.fav(c.option.id);
             (on ? favGrid : allGrid).appendChild(c.root);
         }
-        const favCount = this.cells.filter((c) => isFavorite('chartTypes', c.option.id)).length;
+        const favCount = this.cells.filter((c) => this.fav(c.option.id)).length;
         if (this.favSection) this.favSection.hidden = favCount === 0; // the filtered list IS this section
         // …and in that mode the header already says "Favourites" — no second title over the
         // same three tiles.
@@ -519,7 +564,7 @@ export class ChartTypeSheet {
         if (this.allSecLabel) this.allSecLabel.hidden = favCount === 0;
         if (this.emptyEl) this.emptyEl.hidden = !(this.onlyFavorites && favCount === 0);
         if (this.kickerEl) this.kickerEl.textContent = this.onlyFavorites ? 'Favourites' : 'Chart type';
-        for (const c of this.cells) c.root.hidden = this.onlyFavorites && !isFavorite('chartTypes', c.option.id);
+        for (const c of this.cells) c.root.hidden = this.onlyFavorites && !this.fav(c.option.id);
         if (this.onlyBtn) this.onlyBtn.setAttribute('aria-label', this.onlyFavorites ? 'Show every chart type' : 'Show favourites only');
     }
 
@@ -564,6 +609,20 @@ export class ChartTypeSheet {
         if (this.nowEl) this.nowEl.textContent = label;
         const idx = this.cells.findIndex((c) => c.option.id === id);
         if (idx >= 0) this.cursor = idx;
+    }
+
+    /** Repaint every star + the pinned section from the CURRENT set (the shell wrote it,
+     *  or the desktop menu did) without rebuilding the sheet. */
+    refreshFavorites(): void {
+        if (!this.isOpen) return;
+        const doc = this.doc;
+        for (const c of this.cells) {
+            const on = this.fav(c.option.id);
+            c.star.setAttribute('aria-pressed', on ? 'true' : 'false');
+            c.star.setAttribute('aria-label', `${on ? 'Remove from' : 'Add to'} favourites — ${c.option.label}`);
+            c.star.replaceChildren(iconEl(on ? 'star-filled' : 'star', doc));
+        }
+        this.syncFavorites();
     }
 
     /** Repaint the layout row's caption (the grid changed while the sheet is open). */

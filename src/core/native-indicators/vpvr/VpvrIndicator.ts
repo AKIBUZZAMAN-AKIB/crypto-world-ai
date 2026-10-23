@@ -82,6 +82,7 @@ export const vpvrDescriptor: NativeIndicatorDescriptor = {
     type: 'vpvr',
     title: 'Visible Range Volume Profile',
     shortTitle: 'VRVP',
+    category: 'Volume',
     paneHint: 'price',
     overlay: true,
     inputsSchema: (): InputSchema[] => [

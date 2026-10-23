@@ -14,9 +14,12 @@ import type { Unsubscribe } from '../core/util/types';
 const KEY = 'vela-favorites-v1';
 
 /** The pickers that own a favourites set. New kinds need no schema change. */
-export type FavoriteKind = 'chartTypes' | 'drawings';
+export type FavoriteKind = 'chartTypes' | 'drawings' | 'indicators' | 'timeframes';
 
 type Bag = Partial<Record<FavoriteKind, string[]>>;
+
+/** How many recently-used ids one kind remembers. */
+export const RECENT_CAP = 6;
 
 const listeners = new Set<() => void>();
 /** The session copy: the source of truth when storage is unavailable, and the cache
@@ -98,6 +101,28 @@ export function pruneFavorites(kind: FavoriteKind, known: readonly string[]): vo
 export function onFavoritesChange(fn: () => void): Unsubscribe {
     listeners.add(fn);
     return () => listeners.delete(fn);
+}
+
+// ── recents ────────────────────────────────────────────────────────────────────
+// TradingView keeps a short "recently used" strip beside the favourites: a trader
+// repeats the same three tools all session, and a star is too strong a commitment for
+// something they may drop tomorrow. Recents are per KIND, newest first, capped.
+
+function recentsBag(bag: Bag): Record<string, string[]> {
+    return ((bag as { recent?: Record<string, string[]> }).recent ?? {}) as Record<string, string[]>;
+}
+
+/** The recently used ids of one kind, newest first. */
+export function recentOf(kind: FavoriteKind): readonly string[] {
+    return recentsBag(load())[kind] ?? [];
+}
+
+/** Push an id to the front of a kind's recent list (dedup, capped). */
+export function recordRecent(kind: FavoriteKind, id: string): void {
+    const bag = load();
+    const recent = recentsBag(bag);
+    const next = [id, ...(recent[kind] ?? []).filter((v) => v !== id)].slice(0, RECENT_CAP);
+    save({ ...bag, recent: { ...recent, [kind]: next } } as Bag);
 }
 
 /** Test seam: forget the cache (a fresh read hits storage again). */

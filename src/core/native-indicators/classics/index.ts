@@ -25,9 +25,26 @@ export const classicSpecs: ClassicIndicatorSpec[] = [
     ...overlaySpecs,
 ];
 
+/**
+ * The catalog's picker groups, in the order a trader scans them: the price-overlay
+ * families first, the oscillators (its own pane) after. A file = a family, so the group
+ * a study lands in is a property of where it is DEFINED, never of its title's spelling.
+ */
+export const CLASSIC_CATEGORIES: ReadonlyArray<readonly [string, readonly ClassicIndicatorSpec[]]> = [
+    ['Moving averages', averageSpecs],
+    ['Bands & channels', bandSpecs],
+    ['Overlays', overlaySpecs],
+    ['Trend', trendSpecs],
+    ['Oscillators', oscillatorSpecs],
+    ['Volatility', volatilitySpecs],
+    ['Volume', volumeSpecs],
+];
+
 /** Register the classic indicator catalog (idempotent). Called by the composition root. */
 export function registerClassicIndicators(): void {
-    for (const spec of classicSpecs) registerNativeIndicator(classicDescriptor(spec));
+    for (const [category, specs] of CLASSIC_CATEGORIES) {
+        for (const spec of specs) registerNativeIndicator({ ...classicDescriptor(spec), category });
+    }
 }
 
 export { classicDescriptor } from './define';

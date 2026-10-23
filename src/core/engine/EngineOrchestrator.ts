@@ -1864,6 +1864,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
                 supported: await this.isNativeSupported(d, symbol),
                 present: present.has(d.type),
                 beta: d.beta,
+                ...(d.category ? { category: d.category } : {}),
                 ...(d.multiInstance ? { multiInstance: true } : {}),
             })),
         );

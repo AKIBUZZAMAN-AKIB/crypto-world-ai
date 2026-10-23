@@ -878,7 +878,12 @@ ${overlayScrollbarCss('.vela-dialog.vela-ind-dialog *', 9)}
 .vela-ind-fold:hover{border-color:var(--vela-border-strong);opacity:0.9;}
 /* Touch: the chip is the only legend affordance a phone shows, so it carries a full
    44px target instead of the desktop 24px one. */
-@media (pointer: coarse){.vela-ind-fold{min-height:44px !important;min-width:44px !important;padding:0 8px !important;background-clip:padding-box;}}`;
+@media (pointer: coarse){.vela-ind-fold{min-height:44px !important;min-width:44px !important;padding:0 8px !important;background-clip:padding-box;}}
+/* A phone's grid wears one of these per cell: four 44px chips is 24% of a 195px cell before
+   a single indicator row has been drawn. In the MOBILE layout the chip drops to 34x30 — still
+   a comfortable thumb target for a secondary toggle, and the coarse-pointer 44px rule stays
+   in force on a lone chart / touch tablet where there is room for it. */
+[data-layout='mobile'] .vela-ind-fold{min-height:30px !important;min-width:34px !important;padding:1px 6px !important;}`;
     if (!existing) document.head.appendChild(s);
 }
 

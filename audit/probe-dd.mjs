@@ -1,0 +1,22 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+const ctx = await browser.newContext({ viewport: { width: 390, height: 780 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+const page = await ctx.newPage();
+await page.goto('http://127.0.0.1:5190/offline.html', { waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => window.__ws?.cells().length >= 1, null, { timeout: 60000 });
+await page.waitForTimeout(1200);
+const facts = {};
+// arm two tools so recents has a feed
+await page.evaluate(() => { const d = window.__ws.cells()[0].chart.drawings; d.setTool('trendline'); d.setTool('rect'); });
+await page.locator('.vela-mb-drawings').tap();
+await page.waitForTimeout(500);
+facts.tabs = await page.evaluate(() => [...document.querySelectorAll('.vela-dd-tab')].map((t) => ({ t: t.textContent.trim(), a: t.getAttribute('aria-label'), act: t.dataset.active })));
+await page.locator('.vela-dd-tab[aria-label="Recent tools"]').tap();
+await page.waitForTimeout(350);
+facts.recent = await page.evaluate(() => ({ rows: [...document.querySelectorAll('.vela-dd-row')].map((r) => r.textContent.trim()), empty: document.querySelector('.vela-dd-empty')?.textContent ?? null }));
+await page.screenshot({ path: '/home/user/shots/41-drawings-recent.png' });
+await page.locator('.vela-dd-tab[aria-label="Favourites"]').tap();
+await page.waitForTimeout(300);
+facts.fav = await page.evaluate(() => ({ empty: document.querySelector('.vela-dd-empty')?.textContent ?? null }));
+console.log(JSON.stringify(facts, null, 1));
+await browser.close();
