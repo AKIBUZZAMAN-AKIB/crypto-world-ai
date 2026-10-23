@@ -4485,6 +4485,9 @@ export class VelaWorkspace {
             priceStyles: () => priceStyleIds().map((id) => ({ id, label: priceStyleLabel(id), icon: priceStyleIcon(id) })),
             priceStyle: () => this.active.priceStyle,
             onPriceStyle: (id) => this.active.setPriceStyle(id),
+            // One chart picker on the phone: the drawer's row raises the same sheet the
+            // bar's chart-type stop does (a shell without the mobile bar keeps the list).
+            ...(this.mobileBar ? { onChartType: () => this.mobileBar!.openSheet() } : {}),
             panels: () => (has('panels') ? [...this.dock.list()] : []),
             onTogglePanel: (id) => this.dock.toggle(id),
             ...(has('alerts') ? { alerts: () => this.alerts.map((a) => ({ title: `${a.source} · ${a.title}`, message: a.message, time: a.time })) } : {}),

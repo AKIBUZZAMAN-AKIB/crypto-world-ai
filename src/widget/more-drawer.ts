@@ -858,6 +858,10 @@ export interface MoreDrawerOptions {
     canRedo: () => boolean;
     /** Chart style list + current selection (read live at open). */
     priceStyles: () => Array<{ id: string; label: string; icon?: string }>;
+    /** The premium chart-type surface (the mobile bar's sheet). When the shell provides
+     *  it, the Chart type row opens THAT instead of the drawer's own flat list, so the
+     *  phone never grows two different chart pickers. */
+    onChartType?: () => void;
     priceStyle: () => string;
     onPriceStyle: (id: string) => void;
     /** Docked side panels (built-in + contributed), toggled by id. */
@@ -1141,7 +1145,21 @@ export class MoreDrawer {
             if (lib.childElementCount > 0) this.drawer.body.append(lib);
         }
         const current = this.opts.priceStyles().find((s) => s.id === this.opts.priceStyle());
-        list.appendChild(this.row(doc, 'Chart type', { icon: 'style-line', value: current?.label, chevron: true, onClick: () => this.show('style') }));
+        list.appendChild(
+            this.row(doc, 'Chart type', {
+                icon: 'style-line',
+                value: current?.label,
+                chevron: true,
+                onClick: () => {
+                    if (!this.opts.onChartType) {
+                        this.show('style');
+                        return;
+                    }
+                    this.drawer.hide();
+                    this.opts.onChartType();
+                },
+            }),
+        );
         if (this.opts.cursorStyle) {
             // The pointer is the same kind of choice as the chart type — how you READ the
             // chart — so it sits beside it, with the live label as its value.
