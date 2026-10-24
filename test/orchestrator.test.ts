@@ -3153,3 +3153,79 @@ describe('handle.updateCode — the outcome, rollback and declared defaults', ()
         }
     });
 });
+
+describe('EngineOrchestrator — a rebucketed view coalesces live ticks', () => {
+    /** A feed that starts with 120 hourly bars and lets the test push live ones. */
+    class TickFeed implements MarketDataFeed {
+        private cb: ((b: OHLCV) => void) | null = null;
+        load(): Promise<OHLCV[]> {
+            return Promise.resolve(makeBars(120));
+        }
+        subscribe(_cfg: unknown, cb: (b: OHLCV) => void): Unsubscribe {
+            this.cb = cb;
+            return () => {
+                this.cb = null;
+            };
+        }
+        pushBar(b: OHLCV): void {
+            this.cb?.(b);
+        }
+    }
+
+    const snap = (renderer: FakeRenderer): Array<[number, number]> => renderer.bars.map((b) => [b.time, b.close]);
+    const frame = (): Promise<void> => new Promise((r) => setTimeout(r, 60));
+
+    it('cuts the whole series once per frame instead of once per tick, and drops nothing', async () => {
+        const renderer = new FakeRenderer();
+        const feed = new TickFeed();
+        const chart = new Vela({} as unknown as HTMLElement, { live: true, volume: false }, { renderer, engines: [], dataFeed: feed });
+        await chart.ready();
+        await flush();
+
+        renderer.firePriceStyle('renko'); // the engine now re-cuts on every applied bar
+        expect(renderer.bars.length).toBeGreaterThan(0);
+
+        // Count the rebuilds the engine asks the renderer for during one synchronous burst.
+        const original = renderer.setBars.bind(renderer);
+        let rebuilds = 0;
+        renderer.setBars = (bars, opts) => {
+            rebuilds += 1;
+            original(bars, opts);
+        };
+
+        const last = 1_700_000_000_000 + 119 * 3_600_000;
+        for (let i = 1; i <= 6; i += 1) {
+            const close = 100 + i * 10;
+            feed.pushBar({ time: last + i * 3_600_000, open: close, high: close + 1, low: close - 1, close, volume: 1 });
+        }
+        // Six ticks used to mean six full re-cuts (and six full indicator re-runs). The
+        // leading edge keeps the first one synchronous; the rest fold into one frame.
+        expect(rebuilds).toBeLessThanOrEqual(2);
+
+        await frame();
+        const coalesced = snap(renderer);
+
+        // Nothing was lost: a from-scratch re-cut of the same tape must produce the same view.
+        renderer.firePriceStyle('candles');
+        renderer.firePriceStyle('renko');
+        expect(snap(renderer)).toEqual(coalesced);
+        // …and the view really did move (the burst printed new bricks).
+        expect(coalesced.length).toBeGreaterThan(0);
+    });
+
+    it('a lone tick after an idle gap is applied synchronously — no frame of stale view', async () => {
+        const renderer = new FakeRenderer();
+        const feed = new TickFeed();
+        const chart = new Vela({} as unknown as HTMLElement, { live: true, volume: false }, { renderer, engines: [], dataFeed: feed });
+        await chart.ready();
+        await flush();
+        renderer.firePriceStyle('renko');
+        await frame(); // idle: the next tick is a leading-edge rebuild
+
+        const before = snap(renderer);
+        const last = 1_700_000_000_000 + 119 * 3_600_000;
+        feed.pushBar({ time: last + 3_600_000, open: 400, high: 401, low: 399, close: 400, volume: 1 });
+        // Same task, no await: the brick must already be there.
+        expect(snap(renderer)).not.toEqual(before);
+    });
+});

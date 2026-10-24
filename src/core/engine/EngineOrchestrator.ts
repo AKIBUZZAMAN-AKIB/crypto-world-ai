@@ -1733,13 +1733,16 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
 
     /**
      * Schedule (or run immediately) the rebucket rebuild. Leading edge: if nothing has been
-     * rebuilt in the last frame, rebuild NOW so a lone tick stays synchronous. Otherwise
-     * coalesce into the next frame — the tape is already in `rawBars`, so nothing is lost.
+     * rebuilt in the last frame, rebuild NOW so a lone tick stays synchronous (a scripted
+     * `pushBar` followed by `getBars()` in the same task behaves exactly as before).
+     * Otherwise coalesce into the next frame — the tape is already in `rawBars`, so no tick
+     * is lost, only the number of re-cuts is bounded to one per frame.
      */
     private scheduleRebucketRebuild(notify: boolean): void {
         const now = nowMs();
         if (now - this.lastRebucketAt >= EngineOrchestrator.REBUILD_MIN_GAP_MS) {
-            this.flushRebucketRebuild(notify);
+            this.rebuildViewNow();
+            if (notify) this.notifyAfterRebuild();
             return;
         }
         this.rebucketPendingNotify = this.rebucketPendingNotify || notify;
@@ -1748,29 +1751,45 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
             this.rebucketFrame = null;
             const pending = this.rebucketPendingNotify;
             this.rebucketPendingNotify = false;
-            this.flushRebucketRebuild(pending);
+            this.rebuildViewNow();
+            if (pending) this.notifyAfterRebuild();
         });
     }
 
-    /** Re-cut the view from the raw tape and repaint; notify the studies once. */
-    private flushRebucketRebuild(notify: boolean): void {
+    /** Re-cut the view from the raw tape and repaint. No notification — that is the caller's
+     *  business, and its timing is not negotiable (see {@link flushPendingRebucket}). */
+    private rebuildViewNow(): void {
         this.lastRebucketAt = nowMs();
         this.bars = this.deriveView(this.rawBars);
         this.renderer.setBars(this.bars, { preserveView: true });
-        // Same notification the incremental path sends — every consumer is a bar-count
-        // change away from a full re-run, so the RAW bar is what travels.
-        if (notify) this.notifySessionsBars(this.historyState === 'backfill' ? 'backfill' : undefined);
     }
 
-    /** Flush a deferred rebuild NOW. Every read of the view (or a teardown) calls this, so a
-     *  caller can never observe a view that is one frame behind the tape it just fed in. */
+    /** The notification a bar-count change sends: every consumer re-runs over the canonical
+     *  array, so all that travels is the reason. Only ever called off a tick or a frame —
+     *  never from inside a read. */
+    private notifyAfterRebuild(): void {
+        this.notifySessionsBars(this.historyState === 'backfill' ? 'backfill' : undefined);
+    }
+
+    /**
+     * Bring the view up to date before it is READ, so no caller can observe a view one frame
+     * behind the tape it just fed in. The study notification is deliberately NOT delivered
+     * from here: a read can happen inside a session's own run (`ctx.bars()`), and
+     * `ExecutionSession` is implemented by engines Vela does not own, so re-entering one is
+     * not safe. The notification is handed to the next frame instead.
+     */
     private flushPendingRebucket(): void {
         if (this.rebucketFrame == null) return;
         clearFrame(this.rebucketFrame);
         this.rebucketFrame = null;
         const pending = this.rebucketPendingNotify;
         this.rebucketPendingNotify = false;
-        this.flushRebucketRebuild(pending);
+        this.rebuildViewNow();
+        if (!pending) return;
+        this.rebucketFrame = scheduleFrame(() => {
+            this.rebucketFrame = null;
+            this.notifyAfterRebuild();
+        });
     }
 
     /**
@@ -1793,13 +1812,13 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
             else if (!last || bar.time > last.time) this.rawBars.push(bar);
             else return;
             this.barCause = last && bar.time === last.time ? 'tick' : 'bar';
-            this.events.emit('bar', bar);
-            // The rebuild (a full re-cut + a full re-run of every study) is COALESCED into
-            // one animation frame: a burst of ticks used to re-derive a 5,000-bar series and
-            // re-execute every indicator once PER TICK, which is what made a busy Renko
-            // chart drop frames. The first tick after an idle gap still rebuilds instantly,
-            // so a single-tick chart behaves exactly as before.
+            // Rebuild (or coalesce) BEFORE announcing: a `bar` listener that reads the view
+            // must find it current. The rebuild is a full re-cut + a full re-run of every
+            // study, so a burst of ticks used to repeat it once PER TICK — that is what made
+            // a busy Renko chart drop frames. It is now bounded to one per frame, with the
+            // leading edge kept synchronous.
             this.scheduleRebucketRebuild(notify);
+            this.events.emit('bar', bar);
             return;
         }
         let viewBar = bar;
