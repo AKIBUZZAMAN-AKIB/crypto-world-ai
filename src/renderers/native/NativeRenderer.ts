@@ -1681,6 +1681,7 @@ export class NativeRenderer implements IChartRenderer {
                 };
             },
             chartBarMs: () => this.coords.barInterval,
+            axisWidth: () => this.rightAxisW,
             timeZone: () => this.scene.timezone,
             priceDecimals: () => (this.scene.priceMintick ? tickDecimals(this.scene.priceMintick) : null),
             snap: (pt, paneId, mode, cursorPx) => this.snapToCandle(pt, paneId, mode, cursorPx),

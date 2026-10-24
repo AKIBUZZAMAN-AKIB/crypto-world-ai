@@ -24,6 +24,9 @@ export interface DrawingStyle {
     extendRight?: boolean;
     /** The "Stats" readout beside a two-point drawing (see `stats.ts`). */
     stats?: DrawingStatsStyle;
+    /** Level tools only: a standing price tag on the axis gutter for the level this drawing
+     *  marks. Absent ⇒ on (a level's price is its identity); `false` mutes the tag. */
+    showPriceLabel?: boolean;
 }
 
 /** A drawing's editable text/annotation block. */

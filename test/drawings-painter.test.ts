@@ -94,6 +94,55 @@ describe('DrawingPainter.paintAll handle highlighting', () => {
     });
 });
 
+describe('DrawingPainter.paintAxisChips — the price tag in the axis gutter', () => {
+    /** Records the strings `fillText` was handed — one per tag. */
+    function tagged() {
+        const base = recordingCtx();
+        const texts: string[] = [];
+        (base.ctx as unknown as Record<string, unknown>).fillText = (s: string) => { texts.push(s); };
+        return { ctx: base.ctx, texts: () => texts };
+    }
+
+    it('a level tool carries a standing tag — the axis shows where the line sits', () => {
+        const { ctx, texts } = tagged();
+        new DrawingPainter().paintAxisChips(ctx, [hline('a', 30)], fakeProjector(), theme, {}, 60);
+        expect(texts()).toEqual(['30.00']);
+    });
+
+    it('muting the price label drops the tag, not the line', () => {
+        const d = hline('a', 30);
+        d.style.showPriceLabel = false;
+        const { ctx, texts } = tagged();
+        new DrawingPainter().paintAxisChips(ctx, [d], fakeProjector(), theme, {}, 60);
+        expect(texts()).toEqual([]);
+    });
+
+    it('tags the anchors of the drawing being held, one per anchor', () => {
+        const t = createDrawing('trendline', {
+            id: 't',
+            paneId: 'price',
+            anchors: [{ time: 0, price: 20 }, { time: 10, price: 40 }],
+        })!;
+        const { ctx, texts } = tagged();
+        new DrawingPainter().paintAxisChips(ctx, [t], fakeProjector(), theme, { selected: new Set(['t']) }, 60);
+        expect(texts()).toEqual(['40.00', '20.00']); // screen order: the higher price tags first
+        const untouched = tagged();
+        new DrawingPainter().paintAxisChips(untouched.ctx, [t], fakeProjector(), theme, {}, 60);
+        expect(untouched.texts()).toEqual([]); // an untargeted line tags nothing
+    });
+
+    it('stays quiet when the axis has no room, and for a hidden drawing', () => {
+        const narrow = tagged();
+        new DrawingPainter().paintAxisChips(narrow.ctx, [hline('a', 30)], fakeProjector(), theme, {}, 10);
+        expect(narrow.texts()).toEqual([]);
+        const gone = hline('a', 30);
+        gone.visible = false;
+        const hidden = tagged();
+        new DrawingPainter().paintAxisChips(hidden.ctx, [gone], fakeProjector(), theme, {}, 60);
+        expect(hidden.texts()).toEqual([]);
+    });
+});
+
 describe('sliceKeyFor — which interleave layer a drawing paints on', () => {
     // Boundaries: an indicator at -2, the candles at 0, a raised indicator at 5.
     const bounds = [-2, 0, 5];

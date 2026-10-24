@@ -190,7 +190,7 @@ registerDrawingType({
     group: 'lines',
     label: 'Horizontal Line',
     icon: HLINE_ICON,
-    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 2, lineStyle: 'dashed' },
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 2, lineStyle: 'dashed', showPriceLabel: true },
     create: (init) => new HorizontalLine(init),
 });
 
@@ -242,7 +242,7 @@ registerDrawingType({
     group: 'lines',
     label: 'Horizontal Ray',
     icon: HRAY_ICON,
-    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 2, lineStyle: 'solid' },
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 2, lineStyle: 'solid', showPriceLabel: true },
     create: (init) => new HorizontalRay(init),
 });
 

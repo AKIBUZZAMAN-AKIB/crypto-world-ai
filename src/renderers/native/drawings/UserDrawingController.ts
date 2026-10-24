@@ -68,6 +68,9 @@ export interface UserDrawingDeps {
     /** Decimals of the symbol's price increment, or null when unknown — point prices in the
      *  settings panel are shown to it. */
     priceDecimals?(): number | null;
+    /** Width of the price-axis gutter to the right of the plot, in CSS px (0 when there is none) —
+     *  room for the anchor price tags the painter puts there. */
+    axisWidth?(): number;
     /** Snap a data point to the nearest candle (time + OHLC), per magnet `mode` + the cursor pixel. */
     snap(point: DrawingPoint, paneId: string, mode: SnapMode, cursorPx?: { x: number; y: number }): DrawingPoint;
     /** Set the sticky magnet mode (driven by the toolbar's 3-state button). */
@@ -1181,6 +1184,9 @@ export class UserDrawingController implements IDrawingsRendererPort {
         if (this.measure.isActive()) this.measure.paint(ctx, proj, this.deps.theme());
         const marquee = this.interaction.marqueeRect();
         if (marquee) this.painter.paintMarquee(ctx, marquee);
+        // Anchor price tags in the axis gutter, over everything: the drawing layer sits above
+        // the chrome layer, so these land on top of the axis the chrome painted.
+        this.painter.paintAxisChips(ctx, shown, proj, this.deps.theme(), targets, this.deps.axisWidth?.() ?? 0);
         this.paintZoomRegion(ctx); // the zoom tool's rubber band, over everything
     }
 

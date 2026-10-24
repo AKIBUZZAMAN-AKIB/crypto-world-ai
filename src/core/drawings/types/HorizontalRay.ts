@@ -50,6 +50,12 @@ export class HorizontalRay extends Drawing {
     }
 
     schema(): SettingsSchema {
-        return { fields: [...LINE_FIELDS, ...TEXT_FIELDS] };
+        return {
+            fields: [
+                ...LINE_FIELDS,
+                { path: 'style.showPriceLabel', label: 'Price label', kind: 'boolean', group: 'line' },
+                ...TEXT_FIELDS,
+            ],
+        };
     }
 }

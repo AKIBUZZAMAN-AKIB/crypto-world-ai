@@ -107,6 +107,79 @@ export class DrawingPainter {
         }
     }
 
+    /**
+     * Price tags in the axis gutter — the reference's "where does this drawing sit" readout.
+     * A tag rides each anchor of a drawing the user holds (selection / drag / hover), so the
+     * numbers track the shape while it moves; a level tool (horizontal line or ray) carries a
+     * STANDING tag, because its price is the whole point of the tool (`style.showPriceLabel`).
+     * The drawing layer paints above the chrome layer, so a tag lands in the column the axis
+     * owns — `axisWidth` is how much of that column exists (0 ⇒ no axis, draw nothing).
+     */
+    paintAxisChips(
+        ctx: CanvasRenderingContext2D,
+        drawings: readonly Drawing[],
+        proj: Projector,
+        theme: VelaTheme,
+        targets: PaintTargets,
+        axisWidth: number,
+    ): void {
+        if (axisWidth < 22) return; // no gutter, or a strip too narrow to read a number in
+        const held = handleIdsFor(targets);
+        const picked: Array<{ y: number; text: string; tint: string }> = [];
+        const seen = new Set<string>();
+        for (const d of drawings) {
+            if (!d.visible) continue;
+            const level = d.type === 'hline' || d.type === 'hray';
+            const standing = level && d.style.showPriceLabel !== false;
+            if (!standing && !held.has(d.id)) continue;
+            const rect = proj.paneRect ? proj.paneRect(d.paneId) : null;
+            if (proj.paneRect && (!rect || rect.height <= 0)) continue; // pane hidden
+            for (const a of d.anchors) {
+                const y = proj.yOf(a.price, d.paneId);
+                if (y == null) continue;
+                if (rect && (y < rect.top || y > rect.top + rect.height)) continue;
+                const key = `${Math.round(y)}|${a.price}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                picked.push({ y, text: formatPriceTag(a.price), tint: d.style.lineColor || DEFAULT_DRAWING_COLOR });
+            }
+        }
+        if (picked.length === 0) return;
+        // A phone's column is ~34px: the tag steps down a size there instead of clipping.
+        const fs = axisWidth >= 64 ? 10.5 : 9;
+        const padX = axisWidth >= 64 ? 5 : 3;
+        const h = Math.round(fs + 5);
+        const r = 2;
+        ctx.save();
+        ctx.font = `${fs}px ${theme.fontFamily}`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        // Stack the tags in y order, pushing apart only where two would overlap — the same
+        // greedy pass the axis labels use, so a cluster stays readable instead of piling up.
+        picked.sort((a, b) => a.y - b.y);
+        for (let i = 1; i < picked.length; i += 1) {
+            const min = picked[i - 1]!.y + h + 1;
+            if (picked[i]!.y < min) picked[i]!.y = min;
+        }
+        const maxY = Math.max(0, proj.height - h / 2);
+        const x = proj.width + 1;
+        for (const chip of picked) {
+            const cy = Math.max(h / 2, Math.min(maxY, chip.y));
+            const w = Math.min(ctx.measureText(chip.text).width + padX * 2, axisWidth - 2);
+            if (w <= 4) continue;
+            roundRect(ctx, x, cy - h / 2, w, h, r);
+            ctx.fillStyle = chip.tint;
+            ctx.fill();
+            ctx.save();
+            roundRect(ctx, x, cy - h / 2, w, h, r);
+            ctx.clip(); // a narrow gutter truncates the number rather than spilling off-canvas
+            ctx.fillStyle = contrastColor(chip.tint);
+            ctx.fillText(chip.text, x + padX, cy + 0.5);
+            ctx.restore();
+        }
+        ctx.restore();
+    }
+
     /** Run `paint` clipped to the drawing's pane rect; a hidden pane (height 0) paints nothing. */
     private paintClipped(ctx: CanvasRenderingContext2D, d: Drawing, proj: Projector, paint: () => void): void {
         if (!proj.paneRect) { paint(); return; } // projector exposes no pane geometry → unclipped
