@@ -52,7 +52,7 @@ import { Scheduler, InvalidateLevel, repaintsData, repaintsChrome } from './core
 import { Animator, EaseSetting, easeToward } from './core/Animator';
 import { InputController } from './core/InputController';
 import { KeyboardController } from './core/KeyboardController';
-import { SceneGraph, paneLogScale, paneScaleMode, paneInvert, type PaneNode, type HighlightArea, type SessionZones, type ScaleMode } from './core/SceneGraph';
+import { SceneGraph, paneLogScale, paneScaleMode, paneInvert, percentScaleFor, type PaneNode, type HighlightArea, type SessionZones, type ScaleMode } from './core/SceneGraph';
 import { clampBarSpacing, defaultViewport, MIN_BAR_SPACING, MAX_BAR_SPACING, type ViewportState } from './core/ViewportState';
 import { Canvas2dBackend } from './backend/Canvas2dBackend';
 import type { IRenderBackend } from './backend/IRenderBackend';
@@ -67,7 +67,7 @@ import { IndicatorDrawingSlices, mergeSlices } from './drawings/IndicatorDrawing
 import { createProjector } from './drawings/Projector';
 import type { Projector, SnapMode } from '../../core/drawings';
 import type { IDrawingsRendererPort } from '../../core/drawings';
-import { formatPriceLabel, tickDecimals } from './chrome/ticks';
+import { formatAxisValue, formatPriceLabel, tickDecimals } from './chrome/ticks';
 import { zonedDate } from './chrome/tz';
 import { computePaneScale, expandScaleByPixels, overlaySeriesRange } from './core/autoscale';
 import { mergeTradeMarkersState, tradesPriceHints, type TradeMarkerHints } from '../shared/trade-markers';
@@ -3292,6 +3292,21 @@ export class NativeRenderer implements IChartRenderer {
         return this.scene.orderedPanes().find((p) => p.kind === 'price') ?? null;
     }
 
+    /** A plot readout on ITS pane's scale — percent/indexed panes read as the axis reads,
+     *  so a compare line sharing a +% axis cannot print a raw price beside it. */
+    private readoutFmt(v: number, pane: PaneNode | null): string {
+        if (!pane) return String(v);
+        return formatAxisValue(
+            pane.scale,
+            pane.bounds.height,
+            v,
+            percentScaleFor(this.scene, pane),
+            this.scene.priceMintick,
+            pane.axisFormat,
+            this.axisLabelsCompact,
+        );
+    }
+
     private dataWindowFmt(v: number, pane: PaneNode | null): string {
         return pane ? formatPriceLabel(pane.scale, pane.bounds.height, v, this.scene.priceMintick, this.axisLabelsCompact) : String(v);
     }
@@ -3342,7 +3357,7 @@ export class NativeRenderer implements IChartRenderer {
                 continue; // markers carry no scalar readout
             }
             if (value == null || !Number.isFinite(value)) continue;
-            rows.push({ label: s.title || model.title, value: this.dataWindowFmt(value, pane), color });
+            rows.push({ label: s.title || model.title, value: this.readoutFmt(value, pane), color });
         }
         return rows;
     }
