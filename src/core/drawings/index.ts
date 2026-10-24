@@ -79,7 +79,7 @@ export { SineLine } from './types/SineLine';
 export { Sector } from './types/Sector';
 export { BarProjection, BarsPattern, GhostFeed, type ProjectedCandle, type ProjectionStyle } from './types/BarProjection';
 export { TableDrawing, type TableCell, type TableLayout } from './types/TableDrawing';
-export { PositionForecast, type ForecastLayout, type ForecastOutcome } from './types/PositionForecast';
+export { PositionForecast, defaultForecastStyle, openVerdictStyle, type ForecastLayout, type ForecastOutcome, type ForecastStyle } from './types/PositionForecast';
 export { AnchoredVolumeProfile } from './types/AnchoredVolumeProfile';
 export { GlyphStamp, FlagMark, IconStamp, GLYPH_OPTIONS, STAMP_SIZE_OPTIONS } from './types/GlyphStamp';
 export { FibRatios, type FibLevel, type FibTextSize, type FibEntryLine } from './types/FibRatios';

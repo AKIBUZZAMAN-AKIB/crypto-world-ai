@@ -3,6 +3,41 @@ import type { Projector } from '../geometry';
 import type { SettingsSchema } from '../schema';
 import { LINE_FIELDS, TEXT_FIELDS } from '../schema';
 import { handleAt } from '../hittest';
+import { BEARISH, BULLISH, NEUTRAL, ON_PLATE, SLATE, SLATE_DEEP } from '../../palette';
+
+/**
+ * The forecast's three blocks, in the reference's own terms: the two endpoint labels
+ * (Source / Target) each carry a text, background and border color, and the result box
+ * switches between a success and a failure pair. Transparency lives in each color's own
+ * alpha (the picker edits it), so a faded border is one setting, not two.
+ */
+export interface ForecastStyle {
+    labelText: string;
+    labelBg: string;
+    labelBorder: string;
+    successText: string;
+    successBg: string;
+    failureText: string;
+    failureBg: string;
+}
+
+/** A solid, readable default: dark labels, green/red result boxes with white ink. */
+export function defaultForecastStyle(): ForecastStyle {
+    return {
+        labelText: ON_PLATE,
+        labelBg: SLATE_DEEP,
+        labelBorder: SLATE,
+        successText: ON_PLATE,
+        successBg: BULLISH,
+        failureText: ON_PLATE,
+        failureBg: BEARISH,
+    };
+}
+
+/** The result box while the window is still open — no verdict yet, so no verdict color. */
+export function openVerdictStyle(): { text: string; bg: string } {
+    return { text: ON_PLATE, bg: NEUTRAL };
+}
 
 /** How a forecast has played out so far. */
 export type ForecastOutcome = 'open' | 'success' | 'failure';
@@ -32,6 +67,9 @@ export interface ForecastLayout {
  */
 export class PositionForecast extends Drawing {
     readonly type = 'positionforecast' as const;
+    /** Declared without an initializer: the base constructor reads `props` before subclass
+     *  fields initialise, so `= defaultForecastStyle()` here would wipe a saved palette. */
+    forecast!: ForecastStyle;
 
     anchorSchema(): { min: number; max: number; slots: AnchorSlot[] } {
         return { min: 2, max: 2, slots: [{ role: 'source', free: 'both' }, { role: 'target', free: 'both' }] };
@@ -123,7 +161,40 @@ export class PositionForecast extends Drawing {
         return a && b ? { min: Math.min(a.price, b.price), max: Math.max(a.price, b.price) } : null;
     }
 
+    /** The resolved palette, defaulting on first use (a drawing made before this existed, or
+     *  one whose props never mentioned it). */
+    palette(): ForecastStyle {
+        return (this.forecast ??= defaultForecastStyle());
+    }
+
     schema(): SettingsSchema {
-        return { fields: [...LINE_FIELDS, ...TEXT_FIELDS] };
+        return {
+            fields: [
+                ...LINE_FIELDS,
+                { path: 'forecast.labelText', label: 'Source/target text', kind: 'color', group: 'text' },
+                { path: 'forecast.labelBg', label: 'Source/target background', kind: 'color', group: 'text' },
+                { path: 'forecast.labelBorder', label: 'Source/target border', kind: 'color', group: 'text' },
+                { path: 'forecast.successText', label: 'Success text', kind: 'color', group: 'text' },
+                { path: 'forecast.successBg', label: 'Success background', kind: 'color', group: 'text' },
+                { path: 'forecast.failureText', label: 'Failure text', kind: 'color', group: 'text' },
+                { path: 'forecast.failureBg', label: 'Failure background', kind: 'color', group: 'text' },
+                ...TEXT_FIELDS,
+            ],
+        };
+    }
+
+    protected override writeProps(): Record<string, unknown> {
+        return { forecast: { ...this.palette() } };
+    }
+
+    protected override readProps(props: Record<string, unknown>): void {
+        const raw = props.forecast as Partial<ForecastStyle> | undefined;
+        if (!raw || typeof raw !== 'object') return;
+        const base = defaultForecastStyle();
+        for (const key of Object.keys(base) as Array<keyof ForecastStyle>) {
+            const v = raw[key];
+            if (typeof v === 'string' && v.trim() !== '') base[key] = v;
+        }
+        this.forecast = base;
     }
 }

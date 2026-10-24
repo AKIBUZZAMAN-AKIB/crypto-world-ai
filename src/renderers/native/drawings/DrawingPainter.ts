@@ -1,5 +1,5 @@
 import type { Drawing, Projector, DrawingStyle } from '../../../core/drawings';
-import { SegmentDrawing, TrendLine, FibRatios, RadialFib, FibSpiral, GannSquare, GANN_SQUARE_ARCS, Pin, DedekindTessellation, MachFigure, MeasureBox, PositionTool, PatternDrawing, CalloutBase, Callout, Comment, PriceNote, Signpost, Note, PriceLabel, ArrowMark, GlyphStamp, RegressionChannel, AnchoredVwap, FixedRangeVolumeProfile, Magnifier, PriceActionZone, Liquidity, BarProjection, TableDrawing, PositionForecast, AnchoredVolumeProfile, magnifierTimeframeLabel, lineSegmentIntersection, effectiveFillColor, VALID_FILL, INVALID_FILL, DEFAULT_DRAWING_COLOR, computeDrawingStats, statsEnabled, formatDuration } from '../../../core/drawings';
+import { SegmentDrawing, TrendLine, FibRatios, RadialFib, FibSpiral, GannSquare, GANN_SQUARE_ARCS, Pin, DedekindTessellation, MachFigure, MeasureBox, PositionTool, PatternDrawing, CalloutBase, Callout, Comment, PriceNote, Signpost, Note, PriceLabel, ArrowMark, GlyphStamp, RegressionChannel, AnchoredVwap, FixedRangeVolumeProfile, Magnifier, PriceActionZone, Liquidity, BarProjection, TableDrawing, PositionForecast, AnchoredVolumeProfile, openVerdictStyle, magnifierTimeframeLabel, lineSegmentIntersection, effectiveFillColor, VALID_FILL, INVALID_FILL, DEFAULT_DRAWING_COLOR, computeDrawingStats, statsEnabled, formatDuration } from '../../../core/drawings';
 import type { VelaTheme } from '../../../core/options';
 import { contrastColor, dashPattern, extendEndpoints, namedFontSize, labelLineHeight, TEXT_FRAME_INSET, TEXT_FRAME_RISE, uprightLineAngle } from '../../shared/drawing-geometry';
 import { BEARISH, BULLISH, NEUTRAL, SLATE, SLATE_DEEP } from '../../../core/palette';
@@ -1631,11 +1631,28 @@ export class DrawingPainter {
         });
         this.paintArrowhead(ctx, [L.x0, L.y0], [L.x1, L.y1], { lineColor: color, lineWidth: d.style.lineWidth, lineStyle: 'solid' });
         const verdict = L.outcome === 'success' ? 'Success' : L.outcome === 'failure' ? 'Failure' : 'Open';
-        const verdictColor = L.outcome === 'success' ? BULLISH : L.outcome === 'failure' ? BEARISH : NEUTRAL;
-        const chips: Array<{ x: number; y: number; text: string; tint: string }> = [];
-        if (a) chips.push({ x: L.x0, y: L.y0, text: `Source ${formatPriceTag(a.price)}`, tint: color });
-        if (b) chips.push({ x: L.x1, y: L.y1, text: `Target ${formatPriceTag(b.price)}  ${L.movePct >= 0 ? '+' : ''}${L.movePct.toFixed(2)}%`, tint: color });
-        chips.push({ x: (L.x0 + L.x1) / 2, y: (L.y0 + L.y1) / 2, text: verdict, tint: verdictColor });
+        // The reference's own blocks: Source/Target labels wear the label palette (text, background,
+        // border), and the result box switches between the success and failure pairs. While the
+        // window is still open there is no verdict to color, so it holds a neutral plate.
+        const pal = d.palette();
+        const result = L.outcome === 'success'
+            ? { text: pal.successText, bg: pal.successBg }
+            : L.outcome === 'failure'
+                ? { text: pal.failureText, bg: pal.failureBg }
+                : openVerdictStyle();
+        const chips: Array<{ x: number; y: number; text: string; bg: string; text_color: string; border: string | null }> = [];
+        if (a) chips.push({ x: L.x0, y: L.y0, text: `Source ${formatPriceTag(a.price)}`, bg: pal.labelBg, text_color: pal.labelText, border: pal.labelBorder });
+        if (b) {
+            chips.push({
+                x: L.x1,
+                y: L.y1,
+                text: `Target ${formatPriceTag(b.price)}  ${L.movePct >= 0 ? '+' : ''}${L.movePct.toFixed(2)}%`,
+                bg: pal.labelBg,
+                text_color: pal.labelText,
+                border: pal.labelBorder,
+            });
+        }
+        chips.push({ x: (L.x0 + L.x1) / 2, y: (L.y0 + L.y1) / 2, text: verdict, bg: result.bg, text_color: result.text, border: null });
         ctx.save();
         ctx.font = `11px ${theme.fontFamily}`;
         ctx.textAlign = 'center';
@@ -1647,17 +1664,21 @@ export class DrawingPainter {
             const h = 18;
             const bx = chip.x - w / 2;
             const by = chip.y - h - 6;
-            ctx.globalAlpha = 0.92 * ctx.globalAlpha;
+            // save/restore per box: the colors carry their own alpha, so the alpha the caller
+            // set (a ghosted placement, say) has to survive the loop.
+            ctx.save();
             roundRect(ctx, bx, by, w, h, 3);
-            ctx.fillStyle = BADGE_FILL;
+            ctx.fillStyle = chip.bg;
             ctx.fill();
-            ctx.globalAlpha = 1;
-            ctx.strokeStyle = chip.tint;
-            ctx.lineWidth = 1;
-            roundRect(ctx, bx + 0.5, by + 0.5, w - 1, h - 1, 3);
-            ctx.stroke();
-            ctx.fillStyle = theme.textColor;
+            if (chip.border) {
+                ctx.strokeStyle = chip.border;
+                ctx.lineWidth = 1;
+                roundRect(ctx, bx + 0.5, by + 0.5, w - 1, h - 1, 3);
+                ctx.stroke();
+            }
+            ctx.fillStyle = chip.text_color;
             ctx.fillText(chip.text, chip.x, by + h / 2);
+            ctx.restore();
         }
         ctx.restore();
     }

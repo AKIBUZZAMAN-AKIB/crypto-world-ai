@@ -62,6 +62,10 @@ export const SLATE = '#475569';
  *  chip stands off the axis on both themes while its white ink stays readable. */
 export const CHIP_PLATE = '#595959';
 
+/** Ink for text that sits ON one of those fixed plates (or on a colored result box): the
+ *  plate does not follow the theme, so its text cannot either. */
+export const ON_PLATE = '#ffffff';
+
 /** Strategy trade markers — entry arrows per position side, and the exits' shared violet.
  *  The entry pair deliberately reuses the accent blue / bearish red (the reference palette
  *  of order-fill marks); the violet keeps exits apart from both directions. */
