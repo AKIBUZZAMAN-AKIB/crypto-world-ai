@@ -182,6 +182,8 @@ export interface SavedPriceAlert {
     state: 'active' | 'fired' | 'paused';
     createdAt: number;
     fires: number;
+    /** The drawing the alert follows, when it was armed from a drawing's clock button. */
+    source?: { drawingId: string };
 }
 
 export interface WorkspaceState {
@@ -386,6 +388,12 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
                 state: a.state === 'fired' || a.state === 'paused' ? a.state : 'active',
                 createdAt: typeof a.createdAt === 'number' ? a.createdAt : 0,
                 fires: typeof a.fires === 'number' && a.fires >= 0 ? Math.floor(a.fires) : 0,
+                // A drawing-backed alert keeps its binding only when the id survived the
+                // round-trip; an unknown shape simply restores as a plain level alert.
+                source:
+                    a.source != null && typeof a.source === 'object' && typeof (a.source as { drawingId?: unknown }).drawingId === 'string'
+                        ? { drawingId: (a.source as { drawingId: string }).drawingId }
+                        : undefined,
             });
         }
         if (rows.length > 0) out.priceAlerts = rows;

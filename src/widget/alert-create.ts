@@ -145,7 +145,14 @@ export interface AlertCreateOptions {
     /** The last print, used to prefill the level; null while nothing is loaded. */
     currentPrice: () => number | null;
     /** Create the alert. Returns false when the level was rejected (the sheet stays open). */
-    onCreate: (request: { condition: AlertCondition; value: number; frequency: AlertFrequency; bars: number }) => boolean;
+    onCreate: (request: {
+        condition: AlertCondition;
+        value: number;
+        frequency: AlertFrequency;
+        bars: number;
+        /** Set when the alert watches a DRAWING: the level then follows the line. */
+        source?: { drawingId: string };
+    }) => boolean;
     onOpenChange?: (open: boolean) => void;
 }
 
@@ -155,6 +162,9 @@ export class AlertCreateSheet {
     private frequency: AlertFrequency = 'once';
     private value = '';
     private bars = DEFAULT_MOVE_BARS;
+    /** The drawing this alert watches, when it was opened from a drawing's clock button. */
+    private source: { drawingId: string } | null = null;
+    private sourceLabel = '';
     private opts: AlertCreateOptions;
     private readonly symbolEl: HTMLElement;
     private readonly input: HTMLInputElement;
@@ -269,7 +279,7 @@ export class AlertCreateSheet {
                 this.input.focus({ preventScroll: true });
                 return;
             }
-            const ok = this.opts.onCreate({ condition: this.condition, value, frequency: this.frequency, bars: this.bars });
+            const ok = this.opts.onCreate({ condition: this.condition, value, frequency: this.frequency, bars: this.bars, source: this.source ?? undefined });
             if (ok) this.drawer.hide();
         });
 
@@ -289,6 +299,11 @@ export class AlertCreateSheet {
     }
 
     private paint(): void {
+        // A sourced alert's level belongs to the drawing: editing the number would only
+        // confuse, because the next bar overwrites it. Say so instead of pretending.
+        this.input.readOnly = this.source != null;
+        this.input.toggleAttribute('data-inherited', this.source != null);
+        this.hint.textContent = this.source ? 'Follows the line' : '';
         for (const [condition, el] of this.conditionOpts) {
             el.dataset.on = condition === this.condition ? '1' : '';
             el.setAttribute('aria-pressed', condition === this.condition ? 'true' : 'false');
@@ -337,13 +352,25 @@ export class AlertCreateSheet {
         return `${sign}${pct.toFixed(2)}% from now`;
     }
 
-    open(): void {
-        this.symbolEl.replaceChildren(iconEl('bell', this.symbolEl.ownerDocument), this.symbolEl.ownerDocument.createTextNode(this.opts.symbol()));
+    /**
+     * Open the sheet. `prefill` binds it to a DRAWING (the floating bar's clock): the level is
+     * the line's price at the current bar and the field follows the line instead of the market.
+     */
+    open(prefill?: { value: number; label: string; drawingId: string }): void {
+        this.source = prefill ? { drawingId: prefill.drawingId } : null;
+        this.sourceLabel = prefill?.label ?? '';
+        const label = this.source ? `${this.opts.symbol()} · ${this.sourceLabel}` : this.opts.symbol();
+        this.symbolEl.replaceChildren(iconEl('bell', this.symbolEl.ownerDocument), this.symbolEl.ownerDocument.createTextNode(label));
         // Prefill with the live print: "alert me if it crosses HERE" is the common case, and
         // a keyboard-first sheet that opens empty makes the user retype a number the chart
         // already knows. Two decimals is what the price axis prints.
         this.condition = 'cross';
         this.resetValue();
+        // A drawing's level beats the live print: it is what the user just pointed at.
+        if (prefill) {
+            this.value = String(Number(prefill.value.toFixed(6)));
+            this.input.value = this.value;
+        }
         this.frequency = 'once';
         this.bars = DEFAULT_MOVE_BARS;
         this.barsInput.value = String(DEFAULT_MOVE_BARS);

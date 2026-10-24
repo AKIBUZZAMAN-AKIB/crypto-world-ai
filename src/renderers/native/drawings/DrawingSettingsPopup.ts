@@ -17,6 +17,7 @@ import {
     effectiveFillColor,
     templateColor,
     templateMatches,
+    canAlertOn,
 } from '../../../core/drawings';
 import { icon, svg24, svg24Solid } from '../../../core/icons';
 import { applyChromeTokens } from '../../shared/theme-tokens';
@@ -63,6 +64,8 @@ export interface SettingsActions {
     pasteStyle?(): void;
     /** Whether a look has been copied this session — the menu hides Paste style until then. */
     hasCopiedStyle?(): boolean;
+    /** Arm a price alert that follows this drawing's line (the clock button). */
+    addAlert?(): void;
 }
 
 /** The value of a control whose drawings disagree — the bar shows it as "mixed" and the first
@@ -413,6 +416,12 @@ export class DrawingSettingsPopup {
         // away from any selected drawing (and from a same-type multi-selection).
         if (actions.saveTemplate || (actions.templates?.().length ?? 0) > 0 || actions.applyToolSettings) {
             bar.appendChild(this.templatesButton(actions));
+        }
+        // The reference's clock: an alert that watches THIS line. Offered only for tools that
+        // have a price over time (a vertical line or an arc has none), and never on a mixed
+        // selection, where "the line" would be ambiguous.
+        if (!multi && actions.addAlert && drawings.every((d) => canAlertOn(d.type))) {
+            bar.appendChild(this.iconBtn('Alert on this line', CLOCK_ICON, () => actions.addAlert?.()));
         }
         if (!multi) bar.appendChild(this.iconBtn('Settings', GEAR_ICON, () => this.openPanel()));
         bar.appendChild(this.toggle('Lock', LOCK_ICON, common((d) => d.locked), (v) => actions.setLocked(v), UNLOCK_ICON));
@@ -1255,6 +1264,7 @@ const GRIP_ICON = icon('grip');
 const KEBAB_ICON = icon('kebab');
 const CLONE_ICON = icon('clone');
 const STYLE_COPY_ICON = icon('style-copy');
+const CLOCK_ICON = icon('clock');
 const STYLE_PASTE_ICON = icon('style-paste');
 const RESET_ICON = icon('reset');
 const GEAR_ICON = icon('gear');

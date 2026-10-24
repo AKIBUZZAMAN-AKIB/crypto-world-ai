@@ -77,6 +77,8 @@ export interface VelaEventMap extends Record<string, unknown> {
   "pane:moved": { paneId: string; dir: "up" | "down" };
   /** A user drawing was created (interactively or via `chart.drawings.add`). */
   "drawing:created": { id: string };
+  /** The floating bar asked for a price alert on one drawing (the clock button). */
+  "drawing:alert-request": { id: string };
   /** An interactive placement is in progress — the ghost's current shape after each
    *  anchor click / cursor move, `null` when placement ends (finalized or
    *  cancelled). Transient: nothing is in the store yet. Multi-chart hosts mirror

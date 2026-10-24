@@ -1398,6 +1398,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
                 if (d) this.pasteStyleOnto([d]);
             },
             hasCopiedStyle: () => this.copiedStyle != null,
+            addAlert: () => this.emit({ kind: 'alert', id }),
             saveTemplate: (name) => {
                 const d = live();
                 if (d) this.emit({ kind: 'template-save', type: d.type, name, settings: captureToolDefaults(d) });

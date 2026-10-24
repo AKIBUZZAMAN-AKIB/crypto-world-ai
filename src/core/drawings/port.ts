@@ -35,6 +35,8 @@ export type DrawingIntent =
     | { kind: 'delete'; ids: string[] }
     | { kind: 'reorder'; id: string; to: 'front' | 'back' }
     | { kind: 'settings'; id: string }
+    /** The floating bar's clock: "alert me when price crosses this drawing". */
+    | { kind: 'alert'; id: string }
     | { kind: 'tool-finished'; type: DrawingTypeKey }
     | { kind: 'favorite'; type: DrawingTypeKey; on: boolean } // flyout star toggled
     /** The settings panel saved the drawing's look as a named style for its tool. */

@@ -44,6 +44,12 @@ export interface PriceAlert {
     fires: number;
     /** The id of the horizontal line drawn at the level ('' = none drawn). */
     lineId: string;
+    /**
+     * When set, the level is not `value` but the DRAWING's price at the bar being evaluated —
+     * the alert follows the line as it slopes. `value` then holds the last resolved level, so
+     * the bell row and the sheet read the number the alert actually fired on.
+     */
+    source?: { drawingId: string };
 }
 
 export interface AlertTick {

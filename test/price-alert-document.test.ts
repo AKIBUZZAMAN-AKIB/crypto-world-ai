@@ -29,6 +29,21 @@ describe('document — armed price alerts', () => {
         expect(out.priceAlerts).toEqual(doc.priceAlerts);
     });
 
+    it('carries the drawing a sourced alert follows, and drops a malformed one', () => {
+        const out = sanitizeState({
+            ...base,
+            priceAlerts: [
+                { cellId: 'a', symbol: 'AAA', condition: 'cross', value: 100, source: { drawingId: 'd1' } },
+                { cellId: 'a', symbol: 'AAA', condition: 'cross', value: 101, source: { drawingId: 7 } },
+                { cellId: 'a', symbol: 'AAA', condition: 'cross', value: 102, source: 'd2' },
+            ],
+        })!;
+        expect(out.priceAlerts![0]!.source).toEqual({ drawingId: 'd1' });
+        // A junk source is dropped, not coerced: the row still restores as a plain level alert.
+        expect(out.priceAlerts![1]!.source).toBeUndefined();
+        expect(out.priceAlerts![2]!.source).toBeUndefined();
+    });
+
     it('drops rows that can never fire (no cell, no level, no condition)', () => {
         const out = sanitizeState({
             ...base,

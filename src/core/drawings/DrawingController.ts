@@ -733,6 +733,11 @@ export class DrawingController {
             case 'paste':
                 this.paste();
                 break;
+            case 'alert':
+                // Alerts are a chart feature, not a drawing-store one: hand the id to the
+                // host, which owns the alert engine.
+                this.events.emit('drawing:alert-request', { id: i.id });
+                break;
         }
     }
 }

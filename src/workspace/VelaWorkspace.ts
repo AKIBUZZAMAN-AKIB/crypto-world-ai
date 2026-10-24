@@ -64,7 +64,7 @@ import { resolveIndicators, type IndicatorManifest, type ResolvedIndicator } fro
 import { DrawingToolbar } from '../renderers/native/drawings/DrawingToolbar';
 import { applyAttributionMarkTheme, createAttributionMark, createCustomMark } from '../renderers/native/chrome/AttributionMark';
 import { rendererDefaults } from '../core/renderer-defaults';
-import { buildToolbar, getDrawingType, templateColor, type DrawingTypeKey, type SerializedDrawing, type SnapMode, type ToolbarDefinition } from '../core/drawings';
+import { buildToolbar, drawingLevelAt, getDrawingType, templateColor, type DrawingTypeKey, type SerializedDrawing, type SnapMode, type ToolbarDefinition } from '../core/drawings';
 import { timeframeToMs } from '../data/timeframe';
 import { timeframeLabel } from '../widget/timeframe';
 import { registerBuiltinChartTypes } from '../chart-types/builtins';
@@ -616,9 +616,11 @@ export class VelaWorkspace {
                 firedAt: 0,
                 fires: row.fires,
                 lineId: '',
+                source: row.source,
             };
             const cell = this.cellsById.get(row.cellId);
-            if (cell) alert.lineId = this.drawAlertLevel(cell, alert) ?? '';
+            // A drawing-backed alert draws nothing extra: its line is the drawing itself.
+            if (cell && !alert.source) alert.lineId = this.drawAlertLevel(cell, alert) ?? '';
             this.priceAlerts.push(alert);
         }
         this.alertList?.refresh();
@@ -1531,6 +1533,7 @@ export class VelaWorkspace {
                 state: a.state,
                 createdAt: a.createdAt,
                 fires: a.fires,
+                source: a.source ? { ...a.source } : undefined,
             }));
         }
         if (this.favs.length > 0) state.favorites = [...this.favs];
@@ -2792,6 +2795,8 @@ export class VelaWorkspace {
         chart.on('drawing:hidden-all', () => {
             if (cell.id === this.activeId) this.drawToolbar?.refreshChartTools();
         });
+        // The floating bar's clock: arm a price alert whose level IS this drawing's line.
+        chart.on('drawing:alert-request', ({ id }) => this.openAlertForDrawing(cell, id));
         // Tool/magnet/mode reflection (trigger ②): the ACTIVE cell's drawing state drives
         // the shared bar and the global mirrors — whatever the source (bar press, keymap,
         // API, a one-shot tool disarming itself after placement).
@@ -5351,7 +5356,7 @@ export class VelaWorkspace {
 
     /** Open the create-alert sheet for the active chart (bell `+`, More drawer, ⌥A on iOS
      *  is out of scope — the sheet is the one door on the touch layout). */
-    openAlertCreate(): void {
+    openAlertCreate(prefill?: { value: number; label: string; drawingId: string }): void {
         if (!this.activeId) return;
         this.alertCreate ??= new AlertCreateSheet({
             host: this.root,
@@ -5360,11 +5365,31 @@ export class VelaWorkspace {
             onCreate: (req) => this.createPriceAlert(req),
             onOpenChange: (open) => this.trackDialog(open),
         });
-        this.alertCreate.open();
+        this.alertCreate.open(prefill);
+    }
+
+    /**
+     * The clock button on a drawing: open the alert sheet bound to that line. The level shown
+     * is the line's price at the newest bar, and from then on the alert re-reads the line each
+     * bar — so a sloped trend line alerts where it actually is, not where it started.
+     */
+    private openAlertForDrawing(cell: ChartCell, drawingId: string): void {
+        const doc = cell.chart.drawings.all().find((d) => d.id === drawingId);
+        if (!doc) return;
+        const time = this.lastBarTime.get(cell.id) ?? Date.now();
+        const level = drawingLevelAt(doc, time);
+        if (level == null) return; // the line has no price here (a vertical tool)
+        this.openAlertCreate({ value: level, label: getDrawingType(doc.type)?.label ?? 'Drawing', drawingId });
     }
 
     /** Arm one price alert on the active chart, draw its level line, and tell the user. */
-    private createPriceAlert(req: { condition: AlertCondition; value: number; frequency: AlertFrequency; bars: number }): boolean {
+    private createPriceAlert(req: {
+        condition: AlertCondition;
+        value: number;
+        frequency: AlertFrequency;
+        bars: number;
+        source?: { drawingId: string };
+    }): boolean {
         const id = this.activeId;
         if (!id) return false;
         const cell = this.cellsById.get(id);
@@ -5384,6 +5409,7 @@ export class VelaWorkspace {
             firedAt: 0,
             fires: 0,
             lineId: '',
+            source: req.source,
         };
         // A level the price ALREADY crossed would fire on the next tick for a condition the
         // user set on purpose — evaluate once against the current print so the state is
@@ -5397,7 +5423,8 @@ export class VelaWorkspace {
             alert.fires = folded.alert.fires;
             alert.firedAt = folded.alert.firedAt;
         }
-        alert.lineId = this.drawAlertLevel(cell, alert) ?? '';
+        // A drawing-backed alert needs no level line: the drawing IS the line.
+        alert.lineId = alert.source ? '' : (this.drawAlertLevel(cell, alert) ?? '');
         this.priceAlerts.push(alert);
         this.toast(`${alertRowLabel(alert)} — alert created`, 'success', 2600);
         if (alert.state === 'fired') this.recordPriceAlert(alert);
@@ -5533,6 +5560,12 @@ export class VelaWorkspace {
         }
     }
 
+    /** The price a drawing sits at, at `time` — the level a drawing-backed alert watches. */
+    private levelOfDrawing(cell: ChartCell, drawingId: string, time: number): number | null {
+        const doc = cell.chart.drawings.all().find((d) => d.id === drawingId);
+        return doc ? drawingLevelAt(doc, time) : null;
+    }
+
     /** Evaluate every armed alert that belongs to this cell against one printed price. */
     private evaluatePriceAlerts(cell: ChartCell, price: number, time: number): void {
         if (this.priceAlerts.length === 0) return;
@@ -5560,8 +5593,17 @@ export class VelaWorkspace {
                 this.recordPriceAlert(next);
                 continue;
             }
-            const prev = current.anchorPrice;
-            const { alert, fired } = advanceAlert(current, { prev, now: price });
+            // A drawing-backed alert watches a MOVING level: re-read the line at this bar.
+            // No level here (a horizontal ray before its anchor, a deleted drawing) means the
+            // alert simply waits instead of judging against a stale number.
+            let watched = current;
+            if (current.source) {
+                const level = this.levelOfDrawing(cell, current.source.drawingId, time);
+                if (level == null) continue;
+                watched = current.value === level ? current : { ...current, value: level };
+            }
+            const prev = watched.anchorPrice;
+            const { alert, fired } = advanceAlert(watched, { prev, now: price });
             if (alert !== current) {
                 this.priceAlerts[i] = alert;
                 changed = true;

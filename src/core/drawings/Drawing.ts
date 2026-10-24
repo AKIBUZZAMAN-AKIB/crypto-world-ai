@@ -1,3 +1,4 @@
+import { drawingLevelAt } from './alert-level';
 import type { DrawingPoint, FreeAxis, Projector } from './geometry';
 import type { DrawingStyle, DrawingText } from './style';
 import { defaultStyle, defaultText } from './style';
@@ -267,6 +268,14 @@ export abstract class Drawing {
      */
     editableLevels(): Array<{ ratio: number; color: string; enabled: boolean; label?: string }> | null {
         return null;
+    }
+
+    /**
+     * The price this drawing sits at, at `time` — what a price alert on it watches. Null for
+     * tools that have no single price over time (see `alert-level.ts`, the one definition).
+     */
+    levelAt(time: number): number | null {
+        return drawingLevelAt(this, time);
     }
 
     /** Apply a `{ 'dot.path': value }` patch (the popup emits these). */
