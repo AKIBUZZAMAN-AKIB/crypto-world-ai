@@ -14,7 +14,7 @@ import type {
     SnapMode,
     ToolbarDefinition,
 } from '../../../core/drawings';
-import { applyToolDefaults, captureToolDefaults, deserializeDrawing, getDrawingType, resetDrawingSettings, shownOnTimeframe, Callout, Magnifier, TextLabel } from '../../../core/drawings';
+import { applyToolDefaults, captureToolDefaults, deserializeDrawing, getDrawingType, resetDrawingSettings, shownOnTimeframe, Callout, Magnifier, TableDrawing, TextLabel } from '../../../core/drawings';
 import type { Unsubscribe } from '../../../core/util/types';
 import { contrastColor, namedFontSize, labelLineHeight, TEXT_FRAME_INSET, TEXT_FRAME_RISE } from '../../shared/drawing-geometry';
 import { withAlpha } from '../core/chartConfig';
@@ -30,6 +30,8 @@ import type { DrawingSlice } from '../core/SceneGraph';
 
 /** Shown in the inline editor while a label carries no text yet. */
 const TEXT_PLACEHOLDER = 'Enter Text';
+/** How near a table's column separator a press counts as grabbing it (px, either side). */
+const COLUMN_GRAB = 5;
 /** Extra width past the measured glyphs so the caret has somewhere to sit. */
 const CARET_ROOM = 8;
 /** The editor's border weight; its padding is the shared TEXT_FRAME inset/rise minus this, so the
@@ -156,6 +158,10 @@ export class UserDrawingController implements IDrawingsRendererPort {
     // opened with (so Escape can put it back), and the text the core currently holds (so an edit is
     // reported exactly when it actually changes).
     private textEditor: { el: HTMLTextAreaElement; id: string; initial: string; stored: string } | null = null;
+    /** The table cell being typed into (a one-line editor over that cell), if any. */
+    private cellEditor: { el: HTMLInputElement; id: string; row: number; col: number; initial: string } | null = null;
+    /** A column separator drag: which table + column, and where it started. */
+    private colDrag: { id: string; col: number; startX: number; startW: number } | null = null;
 
     private readonly painter = new DrawingPainter();
     private readonly interaction: DrawingInteraction;
@@ -292,6 +298,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
         // The edited drawing can vanish from under the editor (deleted, erased, undone) — take the
         // editor with it instead of leaving a live textarea over nothing.
         if (this.textEditor && !this.editedDrawing(this.textEditor.id)) this.closeTextEditor();
+        if (this.cellEditor && !this.drawings.some((d) => d.id === this.cellEditor!.id)) this.closeCellEditor(false);
         this.invalidateSlices();
         this.render();
         this.deps.requestScaleUpdate();
@@ -449,6 +456,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
     claim(x: number, y: number): boolean {
         if (this.measureMode || this.eraserMode || this.zoomMode) return true; // these modes capture their clicks (no pan)
         if (this.magnifierChipAt(x, y)) return true; // the chip is a dropdown trigger, never a pan start
+        if (this.tableEdgeAt(x, y)) return true; // a column separator drag, not a pan
         return this.interaction.claim(x, y);
     }
 
@@ -490,6 +498,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
         const ids = deleteTargets(hit, this.selectedIds, this.drawings, withSelection);
         if (ids.length === 0) return false;
         this.popup.close();
+        if (this.cellEditor && ids.includes(this.cellEditor.id)) this.closeCellEditor(false);
         this.emit({ kind: 'delete', ids });
         return true;
     }
@@ -538,6 +547,13 @@ export class UserDrawingController implements IDrawingsRendererPort {
             this.deleteAt(x, y);
             return;
         }
+        const edge = this.tableEdgeAt(x, y);
+        if (edge) {
+            // Grab the separator: the column takes a width of its own from here on.
+            this.colDrag = { id: edge.d.id, col: edge.col, startX: x, startW: edge.width };
+            this.render();
+            return;
+        }
         if (this.measureMode) {
             const g = this.interaction.snapCursor(x, y, snap);
             this.measure.down(x, y, g.x, g.y);
@@ -573,6 +589,14 @@ export class UserDrawingController implements IDrawingsRendererPort {
             const g = this.interaction.snapCursor(x, y, snap);
             this.measure.move(g.x, g.y); // click-move-click: the cursor sizes the ruler with no button down
             this.render();
+            return;
+        }
+        if (this.colDrag) {
+            const t = this.drawings.find((d) => d.id === this.colDrag!.id);
+            if (t instanceof TableDrawing) {
+                t.setColumnWidth(this.colDrag.col, this.colDrag.startW + (x - this.colDrag.startX));
+                this.render();
+            }
             return;
         }
         this.interaction.move(x, y, snap, shift);
@@ -627,6 +651,14 @@ export class UserDrawingController implements IDrawingsRendererPort {
             const g = this.interaction.snapCursor(x, y, snap);
             this.measure.up(x, y, g.x, g.y); // press-drag-release finishes the ruler in one gesture
             if (this.measure.isFinished()) this.withModeIntent(() => this.exitMeasure(false));
+            this.render();
+            return;
+        }
+        if (this.colDrag) {
+            const drag = this.colDrag;
+            this.colDrag = null;
+            const t = this.drawings.find((d) => d.id === drag.id);
+            if (t instanceof TableDrawing) this.emit({ kind: 'edit', doc: t.serialize() });
             this.render();
             return;
         }
@@ -879,6 +911,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
     cursorAt(x: number, y: number): string | null {
         if (this.eraserMode) return 'pointer'; // signal "click to delete" while erasing
         if (this.activeTool == null && this.magnifierChipAt(x, y)) return 'pointer'; // the chip is clickable
+        if (this.activeTool == null && this.tableEdgeAt(x, y)) return 'col-resize'; // the column grab
         return this.interaction.cursorAt(x, y);
     }
 
@@ -909,9 +942,122 @@ export class UserDrawingController implements IDrawingsRendererPort {
     /** Double-click over a drawing opens its full settings panel (a callout or text label edits
      *  its words in place instead) and suppresses the chart's view reset. Returns true only
      *  when a drawing is under the cursor. */
+    /** The table column separator under a point (the resize grab), scanning top-down. */
+    private tableEdgeAt(x: number, y: number): { d: TableDrawing; col: number; width: number } | null {
+        if (this.activeTool != null) return null;
+        const proj = this.deps.projector();
+        const shown = this.onScreen();
+        for (let i = shown.length - 1; i >= 0; i -= 1) {
+            const d = shown[i]!;
+            if (!(d instanceof TableDrawing) || !d.visible || d.locked) continue;
+            const edge = d.columnEdgeAt(x, y, proj, COLUMN_GRAB);
+            if (edge) return { d, col: edge.col, width: edge.width };
+        }
+        return null;
+    }
+
+    /**
+     * Type straight into a table cell: a one-line editor laid over the cell, the canvas copy
+     * muted underneath, Enter or a click elsewhere keeps the value and Escape puts the old one
+     * back — the same contract as the inline label editor, one cell at a time.
+     */
+    private editTableCell(id: string, row: number, col: number): void {
+        const d = this.drawings.find((x) => x.id === id);
+        if (!(d instanceof TableDrawing) || d.locked) return;
+        this.closeCellEditor(false);
+        const box = this.cellBox(d, row, col);
+        if (!box) return;
+        const theme = this.deps.theme();
+        const text = d.text;
+        const cell = d.layout(this.deps.projector())?.cells[row * (d.columnCount()) + col];
+        const initial = cell?.text ?? '';
+        const el = document.createElement('input');
+        el.type = 'text';
+        el.value = initial;
+        el.spellcheck = false;
+        el.setAttribute('aria-label', 'Table cell');
+        el.style.cssText = this.cellEditorCss(box, d, theme, row === 0 && d.cells().length > 1);
+        el.addEventListener('pointerdown', (e) => e.stopPropagation());
+        el.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.closeCellEditor(true);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                this.closeCellEditor(false);
+            }
+        });
+        el.addEventListener('blur', () => this.closeCellEditor(true)); // clicking away keeps the value
+        this.overlayHost.appendChild(el);
+        this.cellEditor = { el, id, row, col, initial };
+        el.focus();
+        el.select(); // a cell edit replaces the value, like any spreadsheet
+        this.render();
+    }
+
+    /** The pixel rect of one cell, or null when the table is off-pane. */
+    private cellBox(d: TableDrawing, row: number, col: number): { x: number; y: number; w: number; h: number } | null {
+        const L = d.layout(this.deps.projector());
+        const cell = L?.cells[row * L.cols + col];
+        return cell ? cell.box : null;
+    }
+
+    /** Where the cell editor sits, in the overlay host's coordinates (the header row is bold,
+     *  exactly as the painter draws it, so the text doesn't jump when editing starts). */
+    private cellEditorCss(box: { x: number; y: number; w: number; h: number }, d: TableDrawing, theme: VelaTheme, header: boolean): string {
+        const L = d.layout(this.deps.projector());
+        const fs = L?.fontSize ?? 14;
+        const text = d.text;
+        return (
+            'position:absolute;z-index:24;box-sizing:border-box;resize:none;overflow:hidden;margin:0;outline:none;pointer-events:auto;' +
+            `left:${Math.round(box.x)}px;top:${Math.round(box.y)}px;width:${Math.round(box.w)}px;height:${Math.round(box.h)}px;` +
+            `padding:0 ${TEXT_FRAME_INSET}px;border:${EDITOR_BORDER}px solid ${withAlpha(theme.textColor, 0.3)};border-radius:3px;` +
+            `background:transparent;color:${text?.color ?? theme.textColor};` +
+            `font:${header ? 'bold ' : ''}${fs}px ${theme.fontFamily};line-height:${Math.round(box.h)}px;`
+        );
+    }
+
+    /** Commit (`true`) or revert (`false`) the open cell editor. */
+    private closeCellEditor(commit: boolean): void {
+        const ed = this.cellEditor;
+        if (!ed) return;
+        this.cellEditor = null; // null first: removing a focused input fires blur → re-entrant close
+        const value = ed.el.value;
+        ed.el.remove();
+        const d = this.drawings.find((x) => x.id === ed.id);
+        if (d instanceof TableDrawing) {
+            if (commit && value !== ed.initial) {
+                d.setCellText(ed.row, ed.col, value);
+                this.emit({ kind: 'edit', doc: d.serialize() });
+            }
+        }
+        this.render();
+    }
+
+    /** Keep an open cell editor glued to its cell (pan/zoom/resize all move it). */
+    private layoutCellEditor(): void {
+        const ed = this.cellEditor;
+        if (!ed) return;
+        const d = this.drawings.find((x) => x.id === ed.id);
+        if (!(d instanceof TableDrawing)) {
+            this.closeCellEditor(false);
+            return;
+        }
+        const box = this.cellBox(d, ed.row, ed.col);
+        if (box) ed.el.style.cssText = this.cellEditorCss(box, d, this.deps.theme(), ed.row === 0 && d.cells().length > 1);
+    }
+
     dblClick(x: number, y: number): boolean {
         if (this.interaction.finishPlacing(true)) return true; // double-click finishes a polyline (drops the dup point)
         const hit = topDrawingAt(this.onScreen(), x, y, this.deps.projector(), HIT_TOLERANCE);
+        if (hit instanceof TableDrawing) {
+            const cell = hit.cellAt(x, y, this.deps.projector());
+            if (cell) {
+                this.editTableCell(hit.id, cell.row, cell.col); // double-click a cell → type in it
+                return true;
+            }
+        }
         if (isInlineEditable(hit)) {
             this.editTextInline(hit.id); // double-click a callout / text label → edit its text in place
             return true;
@@ -1145,6 +1291,9 @@ export class UserDrawingController implements IDrawingsRendererPort {
             hovered: this.hoveredId,
             dragged: this.interaction.activeDragId(),
             mutedLabel: edited instanceof TextLabel ? edited.id : null,
+            mutedCell: this.cellEditor
+                ? { id: this.cellEditor.id, row: this.cellEditor.row, col: this.cellEditor.col }
+                : null,
         };
         // Front (non-interleaved) drawings paint fully here; the ones interleaved into the series
         // stack painted their bodies on the backend layers, so only their handles come back on top
@@ -1159,6 +1308,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
         const clones = this.interaction.dragClones();
         if (clones) this.painter.paintAll(ctx, clones, proj, this.deps.theme(), { selected: new Set(clones.map((c) => c.id)) });
         this.layoutTextEditor();
+        this.layoutCellEditor();
         const ghost = this.interaction.ghost();
         if (ghost) this.painter.paintGhost(ctx, ghost, proj, this.deps.theme());
         // A remote placement mirrored here (drawings sync) paints as the same ghost.
@@ -1192,6 +1342,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
 
     destroy(): void {
         this.closeTextEditor();
+        this.closeCellEditor(false);
         this.popup.destroy();
         this.toolbar.destroy();
         this.seriesGwUnsub?.();

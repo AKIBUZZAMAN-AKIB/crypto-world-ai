@@ -580,7 +580,11 @@ export class DrawingSettingsPanel {
 
     /** A note, a callout, a text label: the words lead the panel. */
     private textContentBlock(b: Build, has: (p: string) => boolean): HTMLElement {
-        return block(null, this.textArea(b, 'Text', 3), row('Style', ...this.textStyling(b, has)));
+        // A table's text IS its grid, so the field is framed as the cells it writes — this is also
+        // the phone-friendly way in, where the chart's double-click has no equivalent.
+        const table = b.live().type === 'table';
+        const area = this.textArea(b, table ? 'Header | Value (one row per line)' : 'Text', table ? 4 : 3);
+        return block(null, area, row('Style', ...this.textStyling(b, has)));
     }
 
     /** A shape's optional label: folded to one line saying what it reads. */

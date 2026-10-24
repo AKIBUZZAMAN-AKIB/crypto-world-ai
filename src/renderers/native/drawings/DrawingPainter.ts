@@ -37,6 +37,9 @@ export interface PaintTargets {
     hovered?: string | null;
     dragged?: string | null;
     mutedLabel?: string | null;
+    /** A table cell an inline editor owns — its text is muted on the canvas so the two copies
+     *  don't paint over each other (the twin of `mutedLabel` for the table's grid). */
+    mutedCell?: { id: string; row: number; col: number } | null;
 }
 
 /** The ids whose handles show for `targets`: selected ∪ dragged ∪ hovered, minus the muted
@@ -1590,14 +1593,25 @@ export class DrawingPainter {
         const text = d.text;
         const color = text?.color ?? theme.textColor;
         const italic = text?.italic ? 'italic ' : '';
+        const muted = this.targets.mutedCell && this.targets.mutedCell.id === d.id ? this.targets.mutedCell : null;
         ctx.save();
         ctx.textAlign = 'left';
         ctx.textBaseline = 'alphabetic';
-        for (const cell of L.cells) {
+        for (let i = 0; i < L.cells.length; i += 1) {
+            const cell = L.cells[i]!;
             if (!cell.text) continue;
+            // The cell an inline editor owns is muted: the textarea is the only copy on screen.
+            if (muted && Math.floor(i / L.cols) === muted.row && i % L.cols === muted.col) continue;
             ctx.font = `${cell.header ? 'bold ' : ''}${italic}${L.fontSize}px ${theme.fontFamily}`;
             ctx.fillStyle = color;
+            // A column dragged narrower than its longest value clips the value to the cell
+            // instead of bleeding text into the neighbouring column.
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(cell.box.x + 2, cell.box.y, cell.box.w - 4, cell.box.h);
+            ctx.clip();
             ctx.fillText(cell.text, cell.x, cell.y);
+            ctx.restore();
         }
         ctx.restore();
     }
