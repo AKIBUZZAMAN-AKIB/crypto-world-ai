@@ -5,24 +5,14 @@ import type { ScriptingEngine } from '../src/core/ports/ScriptingEngine';
 import { PINE_SCRIPTS } from '../playground/pine-scripts';
 
 /**
- * `vela-pine-libre` is installed as a local file dependency (`file:../pine-alpha`), so it
- * exists only where both repos sit side by side. CI checks out this repo alone, where the
- * module is genuinely absent — the suite then SKIPS rather than failing a build over a
- * dependency that is not part of this package.
+ * The engine is the VENDORED build under `playground/vendor/pine-libre` (MIT, see its
+ * README) — the same bytes the playground pages import, so this suite exercises exactly
+ * what the browser runs and works from a plain checkout of this repo.
  */
-// A NON-LITERAL specifier on purpose: TypeScript resolves a literal `import('x')` at
-// compile time and fails the build where the package is not installed. Through a variable
-// the type is `any` and the failure stays a runtime rejection we can skip on.
-const ENGINE_MODULE = 'vela-pine-libre';
-const hasEngine = await import(/* @vite-ignore */ ENGINE_MODULE).then(
-    () => true,
-    () => false,
-);
-const describeEngine = hasEngine ? describe : describe.skip;
+import { PineEngine } from '../playground/vendor/pine-libre/index.js';
 
 async function newPineEngine(): Promise<ScriptingEngine> {
-    const mod = (await import(/* @vite-ignore */ ENGINE_MODULE)) as { PineEngine: new () => ScriptingEngine };
-    return new mod.PineEngine();
+    return new PineEngine();
 }
 
 /**
@@ -87,7 +77,7 @@ async function runScript(source: string) {
     return { model: out.model, context, errors };
 }
 
-describeEngine('pine engine integration', () => {
+describe('pine engine integration', () => {
     it('registers under the language the chart asks for', async () => {
         const engine = await newPineEngine();
         expect(engine.language).toBe('pine');

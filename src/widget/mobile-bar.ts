@@ -32,7 +32,15 @@ const CSS = `
     border-top: 1px solid var(--vela-border);
     color: var(--vela-fg-muted);
     flex: none;
+    /* The stop list is OPEN: a host may contribute left-aligned actions (the editor entry
+       point is one), and every stop keeps the 44px tap-target floor. On a 390px phone the
+       stops then outgrow the row — so the ROW scrolls, not the page. Without this the bar
+       pushed the document 20px wide and the whole layout scrolled sideways. */
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
 }
+.vela-mobilebar::-webkit-scrollbar { display: none; }
 [data-layout='mobile'] .vela-mobilebar { display: flex; }
 [data-layout='mobile'] .vela-widget-topbar { display: none; }
 [data-layout='mobile'] .vela-widget-bottombar { display: none; }
