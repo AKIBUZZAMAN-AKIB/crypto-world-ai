@@ -100,7 +100,11 @@ export class CalloutBubble {
             this.el.setAttribute('role', 'button');
             this.el.tabIndex = 0;
         } else {
-            this.el.removeAttribute('role');
+            // A status bubble is a PICTURE of a state (a coloured dot that names itself).
+            // `role="img"` is what lets the label live on a <span>; dropping the role and
+            // keeping `aria-label` is prohibited (axe: aria-prohibited-attr) and left the
+            // status unnamed for assistive tech.
+            this.el.setAttribute('role', 'img');
             this.el.removeAttribute('tabindex');
         }
     }

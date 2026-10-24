@@ -69,7 +69,7 @@ const CSS = `
 .vela-bb-range:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
 .vela-bb-range[data-active='1'] { color: var(--vela-fg-bright); background: var(--vela-hover); }
 .vela-bb-spacer { flex: 1 1 auto; }
-.vela-bb-clock { font-variant-numeric: tabular-nums; color: var(--vela-fg-bright); font-weight: 600; }
+.vela-bb-clock { font-variant-numeric: tabular-nums; color: var(--vela-fg-bright); font-weight: 600; padding-right: 2px; }
 .vela-bb-tz {
     all: unset;
     height: 26px;
@@ -82,6 +82,10 @@ const CSS = `
     color: var(--vela-fg-bright);
     cursor: pointer;
 }
+/* 26px tall is the drawn size; the finger needs 44 — an invisible centred hit box
+   widens it without changing the bar's height. */
+.vela-bb-tz { position: relative; }
+.vela-bb-tz::after { content: ''; position: absolute; left: 50%; top: 50%; width: calc(100% + 8px); height: 44px; transform: translate(-50%, -50%); }
 .vela-bb-tz:hover { background: var(--vela-hover); }
 .vela-bb-session { display: inline-flex; border: 1px solid var(--vela-border-strong); border-radius: 4px; overflow: hidden; margin-left: 6px; }
 .vela-bb-session-btn {
@@ -166,16 +170,21 @@ export class Bottombar {
         }
         const spacer = doc.createElement('span');
         spacer.className = 'vela-bb-spacer';
-        // The clock lives INSIDE the timezone trigger: clicking the time opens the same
-        // zone dropdown as clicking the zone label (one affordance, reference behavior).
-        this.tzButton = doc.createElement('button');
-        this.tzButton.className = 'vela-bb-tz';
-        this.tzButton.setAttribute('aria-label', 'Time zone');
+        // The clock is its own readout, NOT a child of the zone trigger. Nested, it made
+        // the button's visible text "04:44:03UTC" while its accessible name could only
+        // say "Time zone: UTC" — a 2.5.3 label-in-name mismatch axe flags, because no
+        // sensible name can contain a clock that changes every second. Split, the button
+        // names exactly what it shows and the clock stays plain text beside it.
         this.clockEl = doc.createElement('span');
         this.clockEl.className = 'vela-bb-clock';
+        this.tzButton = doc.createElement('button');
+        this.tzButton.className = 'vela-bb-tz';
+        // Named AFTER its visible label ("Time zone: UTC"), not instead of it: a screen
+        // reader's voice command needs the words the user can see (WCAG 2.5.3).
         this.tzLabelEl = doc.createElement('span');
         this.tzLabelEl.textContent = tzButtonLabel(this.displayZone);
-        this.tzButton.append(this.clockEl, this.tzLabelEl);
+        this.tzButton.setAttribute('aria-label', `Time zone: ${this.tzLabelEl.textContent}`);
+        this.tzButton.append(this.tzLabelEl);
         const session = doc.createElement('span');
         session.className = 'vela-bb-session';
         this.sessionEl = session;
@@ -202,7 +211,7 @@ export class Bottombar {
         settingsBtn.setAttribute('aria-label', 'Chart settings');
         if (opts.onSettingsClick) settingsBtn.addEventListener('click', opts.onSettingsClick);
         this.settingsTip = new Tooltip(settingsBtn, { content: 'Chart settings', triggerId: 'vela-bb-settings', host });
-        this.el.append(spacer, this.tzButton, session, settingsBtn);
+        this.el.append(spacer, this.clockEl, this.tzButton, session, settingsBtn);
         host.appendChild(this.el);
 
         this.tzMenu = new Menu({
@@ -233,6 +242,7 @@ export class Bottombar {
         this.timezone = zone;
         this.exchangeTimezone = exchangeTimezone;
         this.tzLabelEl.textContent = tzButtonLabel(this.displayZone);
+        this.tzButton.setAttribute('aria-label', `Time zone: ${this.tzLabelEl.textContent}`);
         if (choiceChanged) this.tzMenu.setItems(this.tzItems()); // the rows only depend on the choice
         this.tick();
     }

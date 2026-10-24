@@ -4,7 +4,7 @@
 // wrong in a hand-rolled version: an alert created AT the price (no side to come from) and
 // a repeat alert that must not re-fire while the price sits past the level.
 import { describe, it, expect } from 'vitest';
-import { advanceAlert, alertFires, formatLevel, movingFires, nextAlertId, type PriceAlert } from '../src/workspace/price-alerts';
+import { advanceAlert, alertFires, formatLevel, movingFires, nextAlertId, type PriceAlert, alertWatchesSymbol } from '../src/workspace/price-alerts';
 
 const alert = (over: Partial<PriceAlert> = {}): PriceAlert => ({
     id: 'a1',
@@ -132,5 +132,23 @@ describe('price alert — moving conditions', () => {
     it('a level operator never answers a moving question', () => {
         expect(movingFires({ condition: 'cross', value: 1, bars: 2 }, [100, 120, 130])).toBe(false);
         expect(alertFires({ condition: 'move-up', value: 1 }, { prev: 100, now: 130 })).toBe(false);
+    });
+});
+
+describe('alert-watches-symbol — an alert belongs to the market it was armed on', () => {
+    const a = (symbol: string) => ({ symbol });
+
+    it('matches only its own symbol', () => {
+        expect(alertWatchesSymbol(a('BTCUSDT'), 'BTCUSDT')).toBe(true);
+        expect(alertWatchesSymbol(a('BTCUSDT'), 'SOLUSDT')).toBe(false);
+    });
+
+    it('is case/space tolerant of how symbols are stored', () => {
+        expect(alertWatchesSymbol(a(' BTCUSDT '), 'BTCUSDT')).toBe(true);
+    });
+
+    it('judges an alert whose symbol is unknown (legacy documents)', () => {
+        expect(alertWatchesSymbol(a(''), 'SOLUSDT')).toBe(true);
+        expect(alertWatchesSymbol(a('BTCUSDT'), '')).toBe(true);
     });
 });

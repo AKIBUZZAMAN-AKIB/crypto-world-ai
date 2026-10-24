@@ -98,6 +98,15 @@ export class ShortcutsHelp {
             addCategory(category);
             for (const b of bindings) addRow(b.label, b.display);
         }
+        // Chart-resident keys: the drawings layer handles these itself (they are scoped
+        // to the focused plot, which is why they are not workspace bindings). Listed
+        // here anyway — a help panel that hides half the keys is a worse reference.
+        addCategory('Drawing objects (chart focused)');
+        addRow('Copy the selected object', ['Ctrl', 'C']);
+        addRow('Paste the copied object', ['Ctrl', 'V']);
+        addRow('Duplicate in place', ['Ctrl', 'D']);
+        addRow('Delete the selected or hovered object', ['Del']);
+        addRow('Nudge the selection (Shift = 10px)', ['Arrow keys']);
         // Pointer gestures live outside the keymap — list them like bindings so the
         // panel stays the one complete reference.
         addCategory('Mouse');
@@ -107,7 +116,8 @@ export class ShortcutsHelp {
         // The two type-to-act routes live outside the keymap (any-printable routing).
         const s = doc.createElement('div');
         s.className = 'vela-sh-static';
-        s.textContent = 'Typing a letter or 0 opens the symbol search; typing a digit from 1 to 9 opens the timeframe entry.';
+        s.textContent =
+            'Typing a letter or 0 opens the symbol search. Typing a digit from 1 to 9 switches the interval (1=1m, 5=5m, 6=1h, 7=4h, 8=1D, 9=1W); press , to type any interval instead.';
         this.list.appendChild(s);
     }
 }

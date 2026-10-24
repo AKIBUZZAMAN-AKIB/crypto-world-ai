@@ -46,7 +46,9 @@ export function themeTokens(t: VelaTheme): Record<string, string> {
         // Chrome text is slightly brighter than the chart's own axis text, which is
         // deliberately recessive; the chart keeps using `t.textColor` directly.
         '--vela-fg': dark ? '#d1d4dc' : t.textColor,
-        '--vela-fg-muted': dark ? '#868a96' : withAlpha(t.textColor, 0.62),
+        // 0.68 on white measures 4.8:1 — the floor for the small (9pt) range chips in the
+        // bottom bar. 0.62 read 4.31:1 and failed AA on the light theme.
+        '--vela-fg-muted': dark ? '#868a96' : withAlpha(t.textColor, 0.68),
         '--vela-fg-faint': withAlpha(t.textColor, 0.35),
         '--vela-fg-bright': dark ? '#f0f3fa' : '#000000',
         '--vela-surface': t.background,

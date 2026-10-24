@@ -883,7 +883,10 @@ ${overlayScrollbarCss('.vela-dialog.vela-ind-dialog *', 9)}
    a single indicator row has been drawn. In the MOBILE layout the chip drops to 34x30 — still
    a comfortable thumb target for a secondary toggle, and the coarse-pointer 44px rule stays
    in force on a lone chart / touch tablet where there is room for it. */
-[data-layout='mobile'] .vela-ind-fold{min-height:30px !important;min-width:34px !important;padding:1px 6px !important;}`;
+[data-layout='mobile'] .vela-ind-fold{min-height:30px !important;min-width:34px !important;padding:1px 6px !important;position:relative;}
+/* …but the DRAWN size is not the TAPPABLE size: a 44x44 pseudo-element centred on the chip
+   gives the thumb the target it needs without spending a single pixel of the cell. */
+[data-layout='mobile'] .vela-ind-fold::after{content:'';position:absolute;left:50%;top:50%;width:46px;height:46px;transform:translate(-50%,-50%);}`;
     if (!existing) document.head.appendChild(s);
 }
 

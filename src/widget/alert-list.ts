@@ -84,6 +84,7 @@ const CSS = `
 .vela-al-time { flex: none; font-variant-numeric: tabular-nums; color: var(--vela-fg-faint, var(--vela-fg-muted)); font-size: 11px; padding-top: 1px; }
 .vela-al-body { flex: 1 1 auto; min-width: 0; }
 .vela-al-title { font-weight: 600; }
+.vela-al-away { color: var(--vela-fg-bright, var(--vela-fg)); }
 .vela-al-src { color: var(--vela-fg-muted); }
 .vela-al-actions {
     display: flex;
@@ -154,6 +155,9 @@ export interface ArmedAlertRow {
     label: string;
     state: 'active' | 'fired' | 'paused';
     fires: number;
+    /** The alert's own symbol when its chart currently shows a DIFFERENT one — the row
+     *  stays armed but cannot fire until that symbol is back on the cell. */
+    offChart?: string | null;
     onDelete: () => void;
 }
 
@@ -260,6 +264,14 @@ export class AlertList {
                     fired.className = 'vela-al-src';
                     fired.textContent = ` · fired ${a.fires}×`;
                     text.appendChild(fired);
+                }
+                if (a.offChart) {
+                    // "Watching BTCUSDT" — honest about why this row is quiet on the chart
+                    // the user is looking at right now.
+                    const away = doc.createElement('span');
+                    away.className = 'vela-al-src vela-al-away';
+                    away.textContent = ` · watching ${a.offChart}`;
+                    text.appendChild(away);
                 }
                 const del = doc.createElement('button');
                 del.type = 'button';

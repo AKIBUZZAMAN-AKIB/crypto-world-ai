@@ -262,7 +262,11 @@ export function formatTimeStamp(ms: number, timeZone: string, barIntervalMs: num
     const d = zonedDate(ms, timeZone);
     const date = `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} '${pad2(d.getUTCFullYear() % 100)}`;
     if (barIntervalMs >= DAY) return date;
-    return `${date} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+    const clock = `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+    // Sub-minute bars need the second or every stamp in a minute reads the same. A
+    // ZERO interval means "no bars yet" (unknown), which reads as a normal intraday stamp.
+    const subMinute = barIntervalMs > 0 && barIntervalMs < MIN;
+    return `${date} ${subMinute ? `${clock}:${pad2(d.getUTCSeconds())}` : clock}`;
 }
 
 function pickStep(targetMs: number): number {
@@ -297,6 +301,9 @@ export function timeTicks(fromMs: number, toMs: number, target = 8, offsetMs = 0
             if (h === 0 && m === 0) {
                 label = `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
                 major = true;
+            } else if (step < MIN) {
+                // A seconds ladder prints the second — `12:00` twice would be a lie.
+                label = `${pad2(h)}:${pad2(m)}:${pad2(d.getUTCSeconds())}`;
             } else {
                 label = `${pad2(h)}:${pad2(m)}`;
             }

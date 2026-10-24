@@ -162,6 +162,20 @@ export function advanceAlert(alert: PriceAlert, tick: AlertTick): { alert: Price
 }
 
 /**
+ * May this alert be judged against `shown`, the symbol its cell currently displays? An
+ * alert belongs to the market it was armed on; a cell is one surface that can show any
+ * market, so a BTC level must never be tested against SOL's tape. An alert with no
+ * recorded symbol (documents written before symbols were required) is left judged — the
+ * conservative reading is "it was armed here".
+ */
+export function alertWatchesSymbol(alert: Pick<PriceAlert, 'symbol'>, shown: string): boolean {
+    const own = String(alert.symbol ?? '').trim();
+    const now = String(shown ?? '').trim();
+    if (!own || !now) return true;
+    return own === now;
+}
+
+/**
  * Does a MOVING alert fire? It looks back `bars` bars: the price must have travelled at
  * least `value` (absolute) or `value`% since the close that many bars ago — up for
  * `move-up*`, down for `move-down*`. The reference starts the window at the last formed

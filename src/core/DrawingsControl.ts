@@ -82,6 +82,13 @@ export class DrawingsControl {
 
     /** Hide every drawing (a VIEW flag, TradingView's Hide button): nothing is deleted,
      *  nothing is persisted, and a second call with `false` brings them all back. */
+    /** Whether "hide all drawings" is on right now (the toolbar button's state). The
+     *  flag is a VIEW setting — the drawings keep their own `visible`, and nothing is
+     *  written to the model, so a host reflecting it must read here, not off the docs. */
+    get hiddenAll(): boolean {
+        return this.ctrl.getAllHidden();
+    }
+
     setHiddenAll(hidden = true): this {
         if (this.ok('setHiddenAll')) this.ctrl.setAllHidden(hidden);
         return this;

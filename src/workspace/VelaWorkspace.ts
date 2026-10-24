@@ -21,6 +21,7 @@ import { isEditableTarget, KeymapManager } from '../ui/keymap';
 import { Menu, type MenuItemDescriptor } from '../ui/components/menu';
 import { Popover } from '../ui/components/popover';
 import { DatePicker, isoDate } from '../ui/components/date-picker';
+import { Dialog } from '../ui/components/dialog';
 import { ReplayToolbar, REPLAY_CALENDAR_CLASS, REPLAY_DEFAULT_SPEED } from '../widget/replay-toolbar';
 import type { Vela } from '../Vela';
 import { joinWorkspaceLink } from './link';
@@ -40,7 +41,7 @@ import { AlertCreateSheet } from '../widget/alert-create';
 import { CompareSheet } from '../widget/compare-sheet';
 import type { CompareDisplay } from '../core/native-indicators/compare';
 import type { SavedPriceAlert } from '../state/document';
-import { advanceAlert, alertRowLabel, describeAlert, isMoveCondition, movingFires, nextAlertId, type AlertCondition, type AlertFrequency, type PriceAlert } from './price-alerts';
+import { advanceAlert, alertRowLabel, alertWatchesSymbol, describeAlert, isMoveCondition, movingFires, nextAlertId, type AlertCondition, type AlertFrequency, type PriceAlert } from './price-alerts';
 import { Tip } from '../widget/tip';
 import { REDUCED_MOTION_CSS } from '../ui/motion';
 import { CommandPalette, type PaletteCommand } from '../widget/command-palette';
@@ -260,6 +261,8 @@ const CSS = `
     padding: 8px 12px; border-radius: 8px; border: 1px solid var(--vela-border);
     background: var(--vela-surface-elev); color: var(--vela-fg);
     font: 600 12px/1.6 system-ui, -apple-system, 'Segoe UI', sans-serif; text-decoration: none;
+    /* A skip link is used with a keyboard or a thumb — both want a 44px box. */
+    min-height: 44px; display: inline-flex; align-items: center;
 }
 .vela-ws-skip:focus { top: 10px; outline: 2px solid var(--vela-accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: no-preference) { .vela-ws-skip { transition: top 120ms cubic-bezier(.2,.7,.3,1); } }
@@ -457,6 +460,8 @@ export class VelaWorkspace {
     private readonly indicatorPicker: IndicatorPicker | null;
     private readonly tfQuick: TimeframeQuick;
     private shortcutsHelp: ShortcutsHelp | null = null;
+    /** The Alt+G dialog, kept so a second press replaces it instead of stacking. */
+    private goToDateDialog: Dialog | null = null;
     private readonly toastHost: Toast;
     private readonly glider = new Glider(() => (this.activeId ? (this.cellsById.get(this.activeId)?.chart ?? null) : null));
     private readonly drawToolbar: DrawingToolbar | null;
@@ -823,6 +828,7 @@ export class VelaWorkspace {
         skip.textContent = 'Skip to charts';
         this.root.appendChild(skip);
         ensureUIHost(this.root, resolveTheme(opts.theme));
+        this.publishPageBackground(resolveTheme(opts.theme));
 
         // ONE shared feed: providers registered once; every cell's `chart.data` operates
         // on the same registry, symbol index, and closed-bar cache.
@@ -1903,11 +1909,28 @@ export class VelaWorkspace {
         const t = resolveTheme(theme);
         this.opts.theme = theme;
         ensureUIHost(this.root, t); // token re-write re-skins all token-driven chrome in place
+        this.publishPageBackground(t);
         this.drawToolbar?.setTheme(t);
         if (this.attributionMark) applyAttributionMarkTheme(this.attributionMark, t.background);
         // Each cell's own `setTheme` no-ops once the theme already matches, so the
         // per-cell `theme:changed` echoes (see wireCell) terminate immediately.
         for (const cell of this.cellsById.values()) cell.chart.setTheme(t);
+    }
+
+    /**
+     * Publish the app background as `--vela-page-bg` on the document root. The workspace
+     * paints its own rectangle, but the PAGE behind it (overscroll rubber-banding on
+     * macOS/iOS, the margin around a contained chart, a short page) still showed the
+     * host's colour — a dark strip under a white light-theme chart.
+     */
+    private publishPageBackground(t: VelaTheme): void {
+        const doc = this.root.ownerDocument;
+        const body = doc.body;
+        if (!body || !body.contains(this.root)) return;
+        // Only a VARIABLE is published — never a background of our own — so a host page
+        // opts in with `background: var(--vela-page-bg, <its own>)` and an embedded chart
+        // changes nothing that the page didn't ask to change.
+        doc.documentElement.style.setProperty('--vela-page-bg', t.background);
     }
 
     // ── layout ──────────────────────────────────────────────────
@@ -4508,6 +4531,10 @@ export class VelaWorkspace {
     private onCellMarketChanged(id: string): void {
         this.refreshRetention();
         this.propagateMarket(id);
+        // A level line belongs to the symbol it was drawn for: hide it while this cell
+        // shows another market (otherwise "alert at 50,000" floats over a $150 chart),
+        // and bring it back the moment the symbol returns.
+        this.syncAlertLines(this.cellsById.get(id));
         this.markStateDirty();
         if (id !== this.activeId) return;
         const cell = this.cellsById.get(id);
@@ -5437,7 +5464,7 @@ export class VelaWorkspace {
     }
 
     /** The Alert Manager's rows (one per armed level), newest first. */
-    private armedAlertRows(): Array<{ id: string; cellId: string; label: string; state: PriceAlert['state']; fires: number; onDelete: () => void }> {
+    private armedAlertRows(): Array<{ id: string; cellId: string; label: string; state: PriceAlert['state']; fires: number; offChart: string | null; onDelete: () => void }> {
         return [...this.priceAlerts]
             .reverse()
             .map((a) => ({
@@ -5446,15 +5473,39 @@ export class VelaWorkspace {
                 label: alertRowLabel(a),
                 state: a.state,
                 fires: a.fires,
+                offChart: this.alertIsOffChart(a) ? a.symbol : null,
                 onDelete: () => this.removePriceAlert(a.id),
             }));
     }
 
+    /** Show/hide each armed level line so it only ever appears on its own symbol's chart. */
+    private syncAlertLines(cell: ChartCell | undefined): void {
+        if (!cell) return;
+        const shown = String(cell.symbol ?? '');
+        for (const alert of this.priceAlerts) {
+            if (alert.cellId !== cell.id || !alert.lineId) continue;
+            const mine = !!alert.symbol && !!shown && alert.symbol === shown;
+            try {
+                cell.chart.drawings.update?.(alert.lineId, { visible: mine });
+            } catch {
+                /* the line may be gone with the drawing it shared — nothing to sync */
+            }
+        }
+    }
+
+    /** True when the alert's own symbol is NOT what its cell currently shows — the list
+     *  says so out loud instead of letting a stale row look armed. */
+    alertIsOffChart(alert: PriceAlert): boolean {
+        const cell = this.cellsById.get(alert.cellId);
+        if (!cell || !alert.symbol) return false;
+        return String(cell.symbol ?? '') !== alert.symbol;
+    }
+
     /** The More drawer's armed list (mobile's door to the same truth). */
-    private morePriceAlerts(): Array<{ id: string; label: string; state: PriceAlert['state']; fires: number; onDelete: () => void }> {
+    private morePriceAlerts(): Array<{ id: string; label: string; state: PriceAlert['state']; fires: number; offChart: string | null; onDelete: () => void }> {
         return [...this.priceAlerts]
             .reverse()
-            .map((a) => ({ id: a.id, label: alertRowLabel(a), state: a.state, fires: a.fires, onDelete: () => this.removePriceAlert(a.id) }));
+            .map((a) => ({ id: a.id, label: alertRowLabel(a), state: a.state, fires: a.fires, offChart: this.alertIsOffChart(a) ? a.symbol : null, onDelete: () => this.removePriceAlert(a.id) }));
     }
 
     /** Append a close to the cell's rolling window (one entry per BAR — a live tick that
@@ -5486,9 +5537,14 @@ export class VelaWorkspace {
     private evaluatePriceAlerts(cell: ChartCell, price: number, time: number): void {
         if (this.priceAlerts.length === 0) return;
         let changed = false;
+        const shown = String(cell.symbol ?? '');
         for (let i = 0; i < this.priceAlerts.length; i += 1) {
             const current = this.priceAlerts[i];
             if (!current || current.cellId !== cell.id) continue;
+            // An alert watches the SYMBOL it was armed on (the cell is one surface that can
+            // show any market): a BTC level must never be judged against SOL's tape. The
+            // alert simply waits — still armed — until that symbol is back on the cell.
+            if (!alertWatchesSymbol(current, shown)) continue;
             if (isMoveCondition(current.condition)) {
                 // A Moving alert asks a WINDOW question, not a level one.
                 if (current.state !== 'active') continue;
@@ -5556,6 +5612,81 @@ export class VelaWorkspace {
         if (!action.when || action.when(ctx)) action.run(ctx);
     }
 
+    /** Digits map to the interval ladder a trader expects, not to "the nth item". */
+    private static readonly DIGIT_TFS: Record<string, string> = {
+        '1': '1',
+        '2': '3',
+        '3': '5',
+        '4': '15',
+        '5': '30',
+        '6': '60',
+        '7': '240',
+        '8': 'D',
+        '9': 'W',
+    };
+
+    /** Point the ACTIVE chart at an interval (the same path the topbar chip takes). */
+    private applyTimeframeToActive(timeframe: string): void {
+        const cell = this.activeCell();
+        if (!cell || cell.timeframe === timeframe) return;
+        cell.setTimeframe(timeframe);
+        this.topbar.setTimeframe(timeframe);
+        this.mobileBar?.setTimeframe(timeframe);
+        // No refocus here on purpose: the topbar's interval field would take focus and the
+        // NEXT digit would be typed into it (the keymap ignores editable targets), so
+        // `7` `8` would set 4h and then do nothing.
+    }
+
+    /** Is the active chart's price axis inverted right now? */
+    private activeScaleInverted(): boolean {
+        return Boolean(this.active.chart.renderer.get('invertScale'));
+    }
+
+    /** Alt+G — frame a day on the active chart, keeping the zoom span the user had. The
+     *  reference does the same: the window keeps its width and slides to the date. */
+    private openGoToDate(): void {
+        const doc = this.root.ownerDocument;
+        const range = this.active.chart.getVisibleRange();
+        const span = range ? Math.max(60_000, range.to - range.from) : 0;
+        const seek = (iso: string): void => {
+            const at = Date.parse(`${iso}T12:00:00Z`);
+            if (!Number.isFinite(at)) return;
+            const half = span / 2;
+            this.active.chart.setVisibleRange({ from: at - half, to: at + half });
+            this.refocusActive();
+        };
+        this.goToDateDialog?.hide();
+        const dlg = new Dialog({
+            title: 'Go to date',
+            host: this.root,
+            align: 'center',
+            className: 'vela-gtd',
+            onOpenChange: (open) => {
+                this.trackDialog(open);
+                if (!open) {
+                    this.goToDateDialog?.destroy();
+                    this.goToDateDialog = null;
+                }
+            },
+        });
+        const hint = doc.createElement('div');
+        hint.className = 'vela-gtd-hint';
+        hint.textContent = 'Jump the chart to a day, keeping the current zoom.';
+        hint.style.color = 'var(--vela-fg-muted)';
+        hint.style.fontSize = 'var(--vela-font-size-sm)';
+        hint.style.paddingBottom = 'var(--vela-space-2)';
+        const picker = new DatePicker({
+            value: isoDate(new Date(range?.to ?? Date.now())),
+            onPick: (iso) => {
+                seek(iso);
+                dlg.hide();
+            },
+        });
+        dlg.body.append(hint, picker.el);
+        this.goToDateDialog = dlg;
+        dlg.show();
+    }
+
     /** The default shortcut set — every binding acts on the ACTIVE cell. */
     private registerDefaultKeys(): void {
         // The screenshot chord belongs to the screenshot SLOT — a composition that
@@ -5616,6 +5747,8 @@ export class VelaWorkspace {
             run: () => this.saveActiveLayout(),
         });
         this.keymap.register({ id: 'chart.reset-view', keys: 'alt+r', label: 'Reset view (all history)', category: 'Chart', run: () => this.active.chart.setVisibleRangePreset('ALL') });
+        this.keymap.register({ id: 'chart.go-to-date', keys: 'alt+g', label: 'Go to a date on the chart', category: 'Chart', run: () => this.openGoToDate() });
+        this.keymap.register({ id: 'app.watchlist', keys: 'alt+w', label: 'Open the watchlist & symbol search', category: 'Chart', run: () => this.symbolPicker.open() });
         this.keymap.register({ id: 'chart.toggle-log', keys: 'alt+l', label: 'Toggle logarithmic scale', category: 'Chart', run: () => this.active.chart.renderer.set('logScale', !this.active.chart.renderer.get('logScale')) });
         this.keymap.register({
             id: 'chart.toggle-percent',
@@ -5647,6 +5780,58 @@ export class VelaWorkspace {
                 const c = this.active;
                 if (c.lastCrossTime != null && c.lastCrossPrice != null) c.chart.drawings.add('vline', { anchors: [{ time: c.lastCrossTime, price: c.lastCrossPrice }] });
             },
+        });
+        // ── The reference's other muscle-memory chords ────────────────────────────────
+        // Chosen to match TradingView's defaults so a user arriving from there keeps their
+        // hands: alert, invert, hide-all, copy/paste an object, go to date, layouts, and
+        // bare digits for the interval.
+        this.keymap.register({
+            id: 'alerts.create',
+            keys: 'alt+a',
+            label: 'Create an alert on this chart',
+            category: 'Alerts',
+            run: () => this.openAlertCreate(),
+        });
+        this.keymap.register({
+            id: 'view.invert-scale',
+            keys: 'alt+i',
+            label: 'Invert the price scale (high at the bottom)',
+            category: 'Chart',
+            run: () => {
+                const chart = this.active.chart;
+                chart.renderer.set('invertScale', !this.activeScaleInverted());
+            },
+        });
+        this.keymap.register({
+            id: 'drawings.hide-all',
+            keys: ['mod+alt+h', 'alt+shift+h'],
+            label: 'Hide / show every drawing',
+            category: 'Drawings',
+            run: () => {
+                const d = this.active.chart.drawings;
+                // The flag is a VIEW setting: every doc keeps `visible: true` while hidden,
+                // so toggling must read the flag itself or the second press is a no-op.
+                d.setHiddenAll(!d.hiddenAll);
+                this.drawToolbar?.refreshChartTools();
+                this.refocusActive();
+            },
+        });
+        this.keymap.register({
+            id: 'layout.open',
+            keys: '.',
+            label: 'Open the layouts & templates panel',
+            category: 'Layout',
+            run: () => this.openMoreDrawer('layout'),
+        });
+        // Interval entry: `,` opens the typed interval field (the reference's own entry
+        // dialog). A BARE DIGIT is handled in `routeTyping` — one owner for the digits,
+        // so pressing `8` cannot both switch to 1D and seed a text field.
+        this.keymap.register({
+            id: 'chart.timeframe-entry',
+            keys: ',',
+            label: 'Type an interval (e.g. 15, 4h, 30S)',
+            category: 'Chart',
+            run: () => this.tfQuick.open(),
         });
         this.keymap.register({ id: 'history.undo', keys: ['mod+z'], label: 'Undo (active chart)', category: 'Edit', run: () => this.active.history.undo() });
         this.keymap.register({ id: 'history.redo', keys: ['mod+y', 'mod+shift+z'], label: 'Redo (active chart)', category: 'Edit', run: () => this.active.history.redo() });
@@ -5828,7 +6013,8 @@ export class VelaWorkspace {
         return out;
     }
 
-    /** Bare-typing router: letters and `0` → symbol search (seeded), digits 1–9 → timeframe entry. */
+    /** Bare-typing router: letters and `0` → symbol search (seeded), digits 1–9 → the
+     *  instant interval ladder, digits typed inside the open entry → that entry. */
     private routeTyping(ev: KeyboardEvent): void {
         if (this.destroyed) return;
         if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
@@ -5836,8 +6022,19 @@ export class VelaWorkspace {
         const hit = resolveTyping(ev.key, { dialogs: this.openDialogs, symbolSearch: this.symbolPicker.isOpen, timeframeEntry: this.tfQuick.isOpen });
         if (!hit) return;
         ev.preventDefault();
-        if (hit.target === 'symbol') this.symbolPicker.type(hit.text);
-        else this.tfQuick.type(hit.text);
+        if (hit.target === 'symbol') {
+            this.symbolPicker.type(hit.text);
+            return;
+        }
+        // A bare digit from the idle workspace is the reference's instant interval chord
+        // (`8` → 1D). Only a digit typed INTO the open entry extends the entry, so the
+        // two never fight over the same keystroke.
+        if (this.openDialogs === 0) {
+            const tf = VelaWorkspace.DIGIT_TFS[ev.key];
+            if (tf) this.applyTimeframeToActive(tf);
+            return;
+        }
+        this.tfQuick.type(hit.text);
     }
 
     private trackDialog(open: boolean): void {

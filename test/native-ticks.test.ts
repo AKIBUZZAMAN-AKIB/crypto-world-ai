@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { logPriceTicks, valueDecimals, priceTicks, tickDecimals, axisDecimals, formatPriceLabel, formatAxisValue, formatTimeStamp } from '../src/renderers/native/chrome/ticks';
+import { logPriceTicks, valueDecimals, priceTicks, tickDecimals, axisDecimals, formatPriceLabel, formatAxisValue, formatTimeStamp, timeTicks } from '../src/renderers/native/chrome/ticks';
 
 describe('native ticks · logPriceTicks', () => {
     it('places 1/2/5 per decade over a wide (multi-decade) range', () => {
@@ -142,5 +142,20 @@ describe('native ticks · formatTimeStamp (crosshair time chip)', () => {
 
     it('treats an unknown bar interval (no bars yet) as intraday', () => {
         expect(formatTimeStamp(sun30Aug26_19h, 'UTC', 0)).toBe("Sun 30 Aug '26 19:00");
+    });
+});
+
+describe('native ticks · seconds resolution', () => {
+    it('prints the second on a sub-minute stamp and on a seconds ladder', () => {
+        expect(formatTimeStamp(Date.UTC(2026, 7, 30, 19, 0, 7), 'UTC', 15_000)).toBe("Sun 30 Aug '26 19:00:07");
+        expect(formatTimeStamp(Date.UTC(2026, 7, 30, 19, 0, 7), 'UTC', 60_000)).toBe("Sun 30 Aug '26 19:00");
+    });
+
+    it('labels a 30-second window with distinct HH:MM:SS ticks', () => {
+        const from = Date.UTC(2026, 7, 30, 19, 0);
+        const labels = timeTicks(from, from + 30_000, 5).map((t) => t.label);
+        expect(labels.length).toBeGreaterThan(1);
+        for (const l of labels) expect(l).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+        expect(new Set(labels).size).toBe(labels.length); // no two ticks read the same
     });
 });

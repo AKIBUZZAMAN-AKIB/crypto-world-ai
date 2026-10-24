@@ -45,11 +45,25 @@ const NATIVE_MINUTES = [1, 3, 5, 15, 30, 60, 120, 240, 360, 480, 720];
 const MIN_TO_INTERVAL: Record<number, string> = {
     1: '1m', 3: '3m', 5: '5m', 15: '15m', 30: '30m', 60: '1h', 120: '2h', 240: '4h', 360: '6h', 480: '8h', 720: '12h',
 };
-const SUPPORTED_TIMEFRAMES = ['1', '3', '5', '15', '30', '45', '60', '120', '180', '240', 'D', 'W', 'M'];
+const SUPPORTED_TIMEFRAMES = ['1S', '5S', '15S', '30S', '1', '3', '5', '15', '30', '45', '60', '120', '180', '240', 'D', 'W', 'M'];
+
+/**
+ * Second resolutions. Binance SPOT serves `1s` klines natively; USD-M futures start at
+ * `1m`, so a futures second chart is served by AGGREGATING spot-style `1s` buckets —
+ * except `1S` itself, which has no sub-candle to build from and is refused with a
+ * warning rather than silently rendered as hourly bars.
+ */
+const SECOND_TFS: Record<string, number> = { '1S': 1_000, '5S': 5_000, '15S': 15_000, '30S': 30_000 };
+const SECOND_TF_MS = new Set(Object.keys(SECOND_TFS));
+const NATIVE_SECOND = '1S';
 
 /** Normalize a user timeframe to a canonical key. */
 export function normalizeTf(tf: string): string {
-    return TF_NORMALIZE[tf] ?? TF_NORMALIZE[tf.toLowerCase()] ?? tf;
+    const known = TF_NORMALIZE[tf] ?? TF_NORMALIZE[tf.toLowerCase()];
+    if (known) return known;
+    // `15s` / `15S` → canonical seconds key (`15S`); minutes are the bare-number form.
+    const sec = /^(\d+)\s*s$/i.exec(tf);
+    return sec ? `${parseInt(sec[1]!, 10)}S` : tf;
 }
 
 /** Split a Vela ticker into the Binance API symbol + whether it's a perpetual future (`.P`). */
@@ -147,6 +161,23 @@ export class BinanceProvider implements DataProvider {
                 return dedupeSorted(klinesToOHLCV(await this.fetchKlines(base, apiSymbol, nativeInterval, range)));
             }
 
+            // Seconds: `1S` is a native spot interval; the rest aggregate from it. Futures
+            // has no second data at all, so `1S` there is refused instead of faked.
+            if (SECOND_TF_MS.has(tf)) {
+                if (tf === NATIVE_SECOND && !isFutures) {
+                    return dedupeSorted(klinesToOHLCV(await this.fetchKlines(base, apiSymbol, '1s', range)));
+                }
+                const bucketMs = SECOND_TFS[tf]!;
+                const ratioSec = bucketMs / SECOND_TFS[NATIVE_SECOND]!;
+                const subRangeSec: BarRange = {
+                    ...range,
+                    limit: range.limit != null ? range.limit * ratioSec + ratioSec : undefined,
+                };
+                const subSec = klinesToOHLCV(await this.fetchKlines(base, apiSymbol, '1s', subRangeSec));
+                const aggSec = aggregate(subSec, bucketMs);
+                return range.limit != null && aggSec.length > range.limit ? aggSec.slice(-range.limit) : aggSec;
+            }
+
             // Aggregation path: fetch a native sub-timeframe and combine.
             const targetMin = /^\d+$/.test(tf) ? parseInt(tf, 10) : null;
             const subMin = targetMin != null ? selectSubTf(targetMin) : null;
@@ -213,7 +244,10 @@ export class BinanceProvider implements DataProvider {
 
     subscribe(ticker: string, timeframe: string, onBar: (bar: OHLCV) => void): Unsubscribe {
         const { apiSymbol, isFutures } = parseTicker(ticker);
-        const interval = TF_TO_INTERVAL[normalizeTf(timeframe)];
+        const tf = normalizeTf(timeframe);
+        // `1S` has a real stream on spot (the `kline_1s` stream); nothing else in the
+        // second range does, and futures has no second stream at all.
+        const interval = tf === NATIVE_SECOND ? (isFutures ? undefined : '1s') : TF_TO_INTERVAL[tf];
         // Native interval + a WebSocket implementation ⇒ true streaming. Otherwise
         // (aggregated timeframe, or no WebSocket) fall back to polling getBars.
         if (interval && typeof WebSocket !== 'undefined') return this.streamKlines(ticker, timeframe, apiSymbol, isFutures, interval, onBar);

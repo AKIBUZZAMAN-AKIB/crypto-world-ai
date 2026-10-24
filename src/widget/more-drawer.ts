@@ -129,11 +129,15 @@ const CSS = `
     width: 28px;
     height: 28px;
     border-radius: 6px;
-    color: var(--vela-fg-muted);
+    color: var(--vela-fg);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
 .vela-md-search-clear:active { background: var(--vela-hover); }
+/* 28px is the drawn glyph's box, not the finger's: the hit area is widened to 44px with an
+   invisible centred pseudo-element so a thumb can actually land on it. */
+.vela-md-search-clear { position: relative; }
+.vela-md-search-clear::after { content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
 /* Create alert reads as a verb row, not a shortcut tile: full width, icon + label left,
    the sheet's accent colour, and a chevron where a sheet would show one. */
 .vela-md-createalert {
@@ -736,12 +740,19 @@ const CSS = `
     border-radius: 7px;
     font-size: 12px;
     text-align: center;
-    color: var(--vela-fg-muted);
+    /* Inactive stops carry the FULL foreground: on the light theme the muted token over
+       this tinted track measured 4.05:1, and the control is small text (WCAG AA needs
+       4.5). Hierarchy comes from the lifted active pill, not from dimming the label. */
+    color: var(--vela-fg);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
 .vela-md-segbtn[data-active] { background: var(--vela-elevated, var(--vela-hover-strong)); color: var(--vela-fg-bright); }
 .vela-md-segbtn:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: 1px; }
+/* The segmented tabs are 28px tall by design (they sit under a search field); the THUMB
+   gets 44 through an invisible centred hit box, so the drawer keeps its density. */
+.vela-md-segbtn { position: relative; }
+.vela-md-segbtn::after { content: ''; position: absolute; left: 50%; top: 50%; width: calc(100% + 4px); height: 46px; transform: translate(-50%, -50%); }
 .vela-md-libpane { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
 
 /* The open layout: one line, name + state, and a Save pill only when it has drifted. */
@@ -863,7 +874,7 @@ const CSS = `
     width: 100%;
     align-items: center;
     gap: 8px;
-    min-height: 40px;
+    min-height: 44px;
     padding: 0 8px;
     border-radius: 8px;
     font-size: 12.5px;
@@ -939,7 +950,7 @@ export interface MoreDrawerOptions {
     /** Open the create-alert sheet. Omitted ⇒ the Alerts view is a read-only log. */
     onCreateAlert?: () => void;
     /** Live price alerts (armed levels), newest first — shown above the log. */
-    priceAlerts?: () => Array<{ id: string; label: string; state: 'active' | 'fired' | 'paused'; fires: number; onDelete: () => void }>;
+    priceAlerts?: () => Array<{ id: string; label: string; state: 'active' | 'fired' | 'paused'; fires: number; offChart?: string | null; onDelete: () => void }>;
     /** "Reset chart view" — the desktop chart-body menu's one row a phone has no other
      *  door to (right-click is the crosshair hold here). Omitted ⇒ no row. */
     onResetView?: () => void;
@@ -2671,7 +2682,7 @@ export class MoreDrawer {
             const list = doc.createElement('div');
             list.className = 'vela-md-list';
             for (const a of armed) {
-                const row = this.row(doc, a.label, {
+                const row = this.row(doc, a.offChart ? `${a.label} · watching ${a.offChart}` : a.label, {
                     icon: a.state === 'active' ? 'bell' : a.state === 'fired' ? 'check' : 'pause',
                     value: a.fires > 1 ? `×${a.fires}` : undefined,
                     onClick: () => undefined,

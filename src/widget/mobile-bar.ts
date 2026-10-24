@@ -67,7 +67,9 @@ const CSS = `
    that used to bracket the layout count now bracket the style glyph. */
 .vela-mb-style {
     flex: 0 0 auto;
-    min-width: 40px;
+    /* The chart-type stop carried its own narrower floor than the other stops (40 vs the
+       44 every thumb-sized target owes); the glyph is still 19px, only the target grew. */
+    min-width: 44px;
     padding: 0 5px;
     border-left: 1px solid var(--vela-border);
     border-right: 1px solid var(--vela-border);
