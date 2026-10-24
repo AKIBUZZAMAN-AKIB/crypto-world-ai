@@ -10,12 +10,44 @@
 // No parsing happens here — a failed run is reported from the engine's own error.
 import { VelaWorkspace } from '../src/workspace';
 import { BinanceProvider } from '../src/data/providers/binance';
-import { PineEngine } from 'vela-pine-libre';
 import type { IndicatorHandle } from '../src/core/IndicatorHandle';
+import { createPineEngine } from './pine-engine';
 import { PINE_SCRIPTS } from './pine-scripts';
 import { EDITOR_STORAGE_KEY as STORAGE_KEY } from './editor-shared';
 
 const DEFAULT_SCRIPT = PINE_SCRIPTS[0]?.script ?? '';
+
+/** The engine is a local file dependency, so it resolves lazily (see pine-engine.ts).
+ *  A synchronous proxy is required because the shell builds the engine at chart creation. */
+const lazyEngine = {
+    language: 'pine',
+    capabilities: { streaming: true, visibleRange: false, inputs: true, props: true },
+    async prepare(source: string, instanceId: string) {
+        return (await createPineEngine()).prepare(source, instanceId);
+    },
+    execute(...args: Parameters<import('../src/core/ports/ScriptingEngine').ScriptingEngine['execute']>) {
+        const [request, handlers] = args;
+        let inner: ReturnType<import('../src/core/ports/ScriptingEngine').ScriptingEngine['execute']> | null = null;
+        let stopped = false;
+        const queued: Array<(s: NonNullable<typeof inner>) => void> = [];
+        void createPineEngine()
+            .then((engine) => {
+                if (stopped) return;
+                inner = engine.execute(request, handlers);
+                for (const fn of queued) fn(inner);
+                queued.length = 0;
+            })
+            .catch((error: unknown) => handlers.onError?.(error as Error));
+        const when = (fn: (s: NonNullable<typeof inner>) => void) => { if (inner) fn(inner); else queued.push(fn); };
+        return {
+            getContext: (select?: unknown) => (inner?.getContext ? inner.getContext(select as never) : Promise.resolve(null)),
+            stop: () => { stopped = true; inner?.stop(); },
+            update: (inputs: Record<string, never>, props?: Record<string, never>) => when((s2) => s2.update(inputs, props)),
+            setVisibleRange: (range: { left: number; right: number }) => when((s2) => s2.setVisibleRange(range)),
+            notifyBars: (reason?: 'backfill' | 'complete') => when((s2) => s2.notifyBars(reason)),
+        };
+    },
+};
 
 const ws = new VelaWorkspace('#chart', {
     layout: false,
@@ -24,7 +56,7 @@ const ws = new VelaWorkspace('#chart', {
     live: true,
     theme: 'dark',
     providers: { binance: () => new BinanceProvider() },
-    engines: { pine: () => new PineEngine() },
+    engines: { pine: lazyEngine },
     defaultLanguage: 'pine',
     persist: false, // the editor persists its own text; the shell starts clean each visit
 });

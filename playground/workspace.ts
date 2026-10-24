@@ -12,7 +12,8 @@
 import type { Vela } from "../src";
 import { VelaWorkspace } from "../src/workspace";
 import { BinanceProvider } from "../src/data/providers/binance";
-import { PineEngine } from "vela-pine-libre";
+import { createPineEngine } from "./pine-engine";
+import type { ScriptingEngine } from "../src/core/ports/ScriptingEngine";
 import { DemoEngine } from "./demo-engine";
 import { PINE_SCRIPTS } from "./pine-scripts";
 import { registerEditorEntry } from "./editor-link";
@@ -27,6 +28,44 @@ const forcedShell = shell === "mobile" || shell === "desktop" ? { layoutMode: sh
 
 // A topbar entry point to the Pine editor page (desktop tool + phone bottom-bar stop).
 registerEditorEntry();
+
+/**
+ * A stand-in engine that resolves `vela-pine-libre` on first use.
+ *
+ * The shell builds one engine instance per cell when the chart is created, long before a
+ * script runs, so the import has to be deferrable: this proxy holds the id and the
+ * capabilities, then forwards `prepare`/`execute` to the real engine once it loads. If the
+ * package is absent, every call rejects with a message the chart already renders.
+ */
+const lazyPineEngine: ScriptingEngine = {
+  language: "pine",
+  capabilities: { streaming: true, visibleRange: false, inputs: true, props: true },
+  async prepare(source, instanceId) {
+    const engine = await createPineEngine();
+    return engine.prepare(source, instanceId);
+  },
+  execute(request, handlers) {
+    // `execute` must return a session synchronously, so the run is parked in a session of
+    // its own until the engine lands; `stop()` before that cancels it.
+    let inner: ReturnType<ScriptingEngine["execute"]> | null = null;
+    let stopped = false;
+    const queued: Array<(s: NonNullable<typeof inner>) => void> = [];
+    void createPineEngine().then((engine) => {
+      if (stopped) return;
+      inner = engine.execute(request, handlers);
+      for (const fn of queued) fn(inner);
+      queued.length = 0;
+    }).catch((error: unknown) => handlers.onError?.(error as Error));
+    const when = (fn: (s: NonNullable<typeof inner>) => void) => { if (inner) fn(inner); else queued.push(fn); };
+    return {
+      getContext: (select) => (inner?.getContext ? inner.getContext(select) : Promise.resolve(null)),
+      stop: () => { stopped = true; inner?.stop(); },
+      update: (inputs, props) => when((s) => s.update(inputs, props)),
+      setVisibleRange: (range) => when((s) => s.setVisibleRange(range)),
+      notifyBars: (reason) => when((s) => s.notifyBars(reason)),
+    };
+  },
+};
 
 const ws = new VelaWorkspace("#workspace", {
   layout: "4",
@@ -44,8 +83,12 @@ const ws = new VelaWorkspace("#workspace", {
     bnb: { symbol: "BNBUSDT", timeframe: "D" },
   },
   providers: { binance: () => new BinanceProvider() },
-  engines: { pine: () => new PineEngine(), demo: () => new DemoEngine() }, // ONE instance per cell (a worker engine would get a thread each)
-  defaultLanguage: "pine", // scripts added without a `language` run on the engine above
+  // `engines` factories are SYNCHRONOUS, and the Pine package may not be installed (it is
+  // a local file dependency). A tiny proxy engine stands in immediately and forwards every
+  // call once the real module resolves; with no package the `pine` language simply is not
+  // registered, so the workspace keeps working on its native indicators and the demo engine.
+  engines: { pine: lazyPineEngine, demo: () => new DemoEngine() },
+  defaultLanguage: "demo", // added without a `language`: the engine that is always here
   // A script MANIFEST: the rows the Indicators dialog lists next to the built-in catalog.
   // These four are real Pine v6 (see pine-scripts.ts); the two `strategy()` scripts fill
   // the Strategy tester with their broker ledger when added to a cell.

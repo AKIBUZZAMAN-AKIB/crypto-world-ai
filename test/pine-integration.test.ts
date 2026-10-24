@@ -1,8 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { PineEngine } from 'vela-pine-libre';
 import type { OHLCV } from '../src/core/model/ohlcv';
 import type { IndicatorModel } from '../src/core/model/indicator';
+import type { ScriptingEngine } from '../src/core/ports/ScriptingEngine';
 import { PINE_SCRIPTS } from '../playground/pine-scripts';
+
+/**
+ * `vela-pine-libre` is installed as a local file dependency (`file:../pine-alpha`), so it
+ * exists only where both repos sit side by side. CI checks out this repo alone, where the
+ * module is genuinely absent — the suite then SKIPS rather than failing a build over a
+ * dependency that is not part of this package.
+ */
+// A NON-LITERAL specifier on purpose: TypeScript resolves a literal `import('x')` at
+// compile time and fails the build where the package is not installed. Through a variable
+// the type is `any` and the failure stays a runtime rejection we can skip on.
+const ENGINE_MODULE = 'vela-pine-libre';
+const hasEngine = await import(/* @vite-ignore */ ENGINE_MODULE).then(
+    () => true,
+    () => false,
+);
+const describeEngine = hasEngine ? describe : describe.skip;
+
+async function newPineEngine(): Promise<ScriptingEngine> {
+    const mod = (await import(/* @vite-ignore */ ENGINE_MODULE)) as { PineEngine: new () => ScriptingEngine };
+    return new mod.PineEngine();
+}
 
 /**
  * Integration: the playground's Pine manifest, executed by the real engine through the
@@ -39,7 +60,7 @@ function bars(n = 400): OHLCV[] {
 }
 
 async function runScript(source: string) {
-    const engine = new PineEngine();
+    const engine = await newPineEngine();
     const prepared = await engine.prepare(source, 'it-1');
     // Held in an object: a `let` assigned only inside the engine's callback is narrowed to
     // `null` by control-flow analysis (it cannot see the callback run), which would make the
@@ -66,9 +87,9 @@ async function runScript(source: string) {
     return { model: out.model, context, errors };
 }
 
-describe('pine engine integration', () => {
-    it('registers under the language the chart asks for', () => {
-        const engine = new PineEngine();
+describeEngine('pine engine integration', () => {
+    it('registers under the language the chart asks for', async () => {
+        const engine = await newPineEngine();
         expect(engine.language).toBe('pine');
         for (const entry of PINE_SCRIPTS) expect(entry.language).toBe('pine');
     });
@@ -124,7 +145,7 @@ describe('pine engine integration', () => {
 
     it('honours indicator inputs, so the settings dialog has something to edit', async () => {
         const ema = PINE_SCRIPTS.find((e) => e.name === 'Pine · EMA Cross');
-        const engine = new PineEngine();
+        const engine = await newPineEngine();
         const prepared = await engine.prepare(ema?.script as string, 'it-2');
         const keys = prepared.inputs.map((i) => i.key);
         expect(keys).toContain('fastLen');
