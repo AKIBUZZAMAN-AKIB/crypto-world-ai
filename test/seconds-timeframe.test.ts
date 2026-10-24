@@ -26,3 +26,28 @@ describe('seconds timeframes', () => {
         expect(normalizeTf('240')).toBe('240');
     });
 });
+
+// Months vs minutes: `M` is a MONTH, `m` is a minute. This used to resolve `3M` to three
+// minutes — silent, and exported as public API.
+describe('month and year resolutions', () => {
+    it('reads M/mo as months and keeps m as minutes', () => {
+        expect(timeframeToMs('M')).toBe(2_592_000_000);
+        expect(timeframeToMs('3M')).toBe(3 * 2_592_000_000);
+        expect(timeframeToMs('1mo')).toBe(2_592_000_000);
+        expect(timeframeToMs('3m')).toBe(180_000);
+        expect(timeframeToMs('12M')).toBe(12 * 2_592_000_000);
+    });
+
+    it('accepts years, and case-insensitive day/week/hour aliases', () => {
+        expect(timeframeToMs('1y')).toBe(31_536_000_000);
+        expect(timeframeToMs('2Y')).toBe(2 * 31_536_000_000);
+        expect(timeframeToMs('1D')).toBe(86_400_000);
+        expect(timeframeToMs('1w')).toBe(604_800_000);
+        expect(timeframeToMs('4H')).toBe(14_400_000);
+    });
+
+    it('falls back to one hour for garbage, and says so once', () => {
+        expect(timeframeToMs('banana')).toBe(3_600_000);
+        expect(timeframeToMs('banana')).toBe(3_600_000); // second read is quiet, not a second warn
+    });
+});

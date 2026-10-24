@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { lineBreak, rangeBars, renko, kagi, pointFigure, DEFAULT_RENKO, DEFAULT_KAGI } from '../src/core/price-styles/rebucket';
+import { lineBreak, rangeBars, renko, kagi, pointFigure, atrSeries, DEFAULT_RENKO, DEFAULT_KAGI } from '../src/core/price-styles/rebucket';
+import { atr as indicatorAtr } from '../src/core/native-indicators/classics/math';
 import type { OHLCV } from '../src/core/model/ohlcv';
 
 const bar = (t: number, c: number, h = c, l = c): OHLCV => ({ time: t, open: c, high: h, low: l, close: c, volume: 1 });
@@ -159,6 +160,18 @@ describe('rebucket/Kagi', () => {
         expect(out.map((b) => b.styleHint?.yang)).toEqual([false, false, true]);
     });
 
+    it('flags HISTORICAL legs too — thickness is the signal, not a live-tail artifact', () => {
+        // 100 → 120 (leg 1, yin: nothing to break yet) → 110 (leg 2, yin: first down leg)
+        // → 130 (leg 3, YANG: carries past the 120 high) → 120 (leg 4, yin: 120 holds
+        // above the 110 low) → the forming leg (YANG: past the 130 high).
+        // `traditional` pins the reversal to 4% of price, so the legs are deterministic
+        // (the ATR method would move the turn points with every Wilder update).
+        const out = kagi(series(100, 120, 110, 130, 120, 140), { ...DEFAULT_KAGI, method: 'traditional', reversalPct: 4 });
+        expect(out.map((b) => b.styleHint?.yang)).toEqual([false, false, true, false, true]);
+        // Every leg still reports a real body — the flag must not disturb the geometry.
+        for (const b of out) expect(b.open).not.toBe(b.close);
+    });
+
     it('never emits an inverted bar', () => {
         for (const b of kagi(series(100, 130, 90, 140, 80), { ...DEFAULT_KAGI, reversalPct: 2 })) {
             expect(b.low).toBeLessThanOrEqual(b.open);
@@ -201,5 +214,28 @@ describe('rebucket/Point & figure', () => {
     it('alternates X and O', () => {
         const marks = pointFigure(series(100, 140, 90, 150, 80), opts).map((b) => b.styleHint?.mark);
         for (let i = 1; i < marks.length; i += 1) expect(marks[i]).not.toBe(marks[i - 1]);
+    });
+});
+
+describe('rebucket/ATR sizing', () => {
+    // The chart types scale their boxes with volatility. That number has to be the ATR the
+    // ATR study prints — this used to be an SMA of true range, ~3% off both the study and
+    // the reference, so every volatility-scaled chart was cut on a slightly different grid.
+    const bars: OHLCV[] = Array.from({ length: 80 }, (_, i) => {
+        const base = 100 + Math.sin(i / 7) * 6 + i * 0.4;
+        return { time: i * 60_000, open: base - 0.8, high: base + 1.6, low: base - 1.9, close: base + 0.3, volume: 10 };
+    });
+
+    it('matches the ATR study (Wilder RMA) bar for bar after the warm-up', () => {
+        const theirs = indicatorAtr(bars, 14);
+        const ours = atrSeries(bars, 14);
+        for (let i = 14; i < bars.length; i += 1) expect(ours[i]!).toBeCloseTo(theirs[i]!, 10);
+    });
+
+    it('is seeded with the SMA of the first window, exactly like the study', () => {
+        const theirs = indicatorAtr(bars, 14);
+        const ours = atrSeries(bars, 14);
+        expect(ours[13]!).toBeCloseTo(theirs[13]!, 10);
+        expect(ours[0]!).toBeGreaterThan(0); // warm-up stays usable (a chart cannot start late)
     });
 });

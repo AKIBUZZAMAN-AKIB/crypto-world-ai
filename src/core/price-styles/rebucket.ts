@@ -79,21 +79,42 @@ export interface RenkoOptions {
 
 export const DEFAULT_RENKO: RenkoOptions = { boxSize: 0, atrLength: 14, atrFactor: 1, source: 'close', wicks: true };
 
-/** Wilder ATR over the raw series (a plain running average of true range). */
-function atrSeries(raw: readonly OHLCV[], length: number): number[] {
-    const out: number[] = [];
-    let sum = 0;
+/**
+ * Wilder's ATR over the raw series — the SAME recursion the ATR study runs
+ * (`rma`, alpha = 1/length, seeded with the SMA of the first full window), so the
+ * box a Renko brick or a Range bar is cut at is the number the ATR pane prints.
+ * This used to be a plain SMA of true range: a ~3% discrepancy from both the ATR
+ * indicator and the reference, which sized every volatility-scaled chart differently.
+ * A chart type cannot start 14 bars late the way a plotted study can, so during the
+ * warm-up window this emits the DEVELOPING average (Σtr / n) and hands over to the exact
+ * Wilder recursion — identical to `rma` — the moment the window fills.
+ */
+export function atrSeries(raw: readonly OHLCV[], length: number): number[] {
+    const out: number[] = new Array(raw.length).fill(0);
+    const len = Math.max(1, Math.round(length));
+    let seed = 0;
+    let prev = Number.NaN;
     for (let i = 0; i < raw.length; i += 1) {
         const b = raw[i]!;
         const prevClose = raw[i - 1]?.close ?? b.open;
         const tr = Math.max(b.high - b.low, Math.abs(b.high - prevClose), Math.abs(b.low - prevClose));
-        sum += tr;
-        if (i >= length) {
-            const old = raw[i - length]!;
-            const oldPrev = raw[i - length - 1]?.close ?? old.open;
-            sum -= Math.max(old.high - old.low, Math.abs(old.high - oldPrev), Math.abs(old.low - oldPrev));
+        if (!Number.isFinite(tr)) {
+            seed = 0;
+            prev = Number.NaN;
+            continue;
         }
-        out.push(sum / Math.min(i + 1, length));
+        if (Number.isFinite(prev)) {
+            prev = (prev * (len - 1) + tr) / len; // Wilder: alpha = 1 / len
+            out[i] = prev;
+        } else {
+            seed += tr;
+            if (i + 1 >= len) {
+                prev = seed / len; // seed = SMA of the first clean window, like `rma`
+                out[i] = prev;
+            } else {
+                out[i] = seed / (i + 1); // warm-up: developing average, never zero
+            }
+        }
     }
     return out;
 }
@@ -373,6 +394,8 @@ interface KagiLeg {
     low: number;
     time: number;
     dir: 1 | -1;
+    /** Carried past the previous extreme in its own direction — drawn thick. */
+    yang?: boolean;
 }
 
 export function kagi(raw: readonly OHLCV[], opts: KagiOptions = DEFAULT_KAGI): OHLCV[] {
@@ -387,13 +410,29 @@ export function kagi(raw: readonly OHLCV[], opts: KagiOptions = DEFAULT_KAGI): O
     let startTime = raw[0]!.time;
     let prevUpExtreme = -Infinity;
     let prevDownExtreme = Infinity;
+    /** A same-direction extreme has been printed before — the first leg has none to break. */
+    let upSeen = false;
+    let downSeen = false;
+
+    /** YANG (thick) when the leg carries past the previous extreme in its own direction.
+     *  Read BEFORE the leg is folded into the running extremes, and recorded on EVERY
+     *  leg — the flag used to be computed only for the forming tail, so a finished Kagi
+     *  chart drew every historical leg thin and the chart's whole signal (thickness)
+     *  lived on whichever leg happened to be last. */
+    const isYang = (d: 1 | -1, at: number): boolean => (d > 0 ? upSeen && at > prevUpExtreme : downSeen && at < prevDownExtreme);
 
     const close = (time: number): void => {
         if (dir === 0 || ext === start) return;
         const d: 1 | -1 = dir as 1 | -1;
-        legs.push({ open: start, close: ext, high: Math.max(start, ext), low: Math.min(start, ext), time, dir: d });
-        if (d > 0) prevUpExtreme = Math.max(prevUpExtreme, ext);
-        else prevDownExtreme = Math.min(prevDownExtreme, ext);
+        const yang = isYang(d, ext);
+        legs.push({ open: start, close: ext, high: Math.max(start, ext), low: Math.min(start, ext), time, dir: d, ...(yang ? { yang: true } : {}) });
+        if (d > 0) {
+            prevUpExtreme = Math.max(prevUpExtreme, ext);
+            upSeen = true;
+        } else {
+            prevDownExtreme = Math.min(prevDownExtreme, ext);
+            downSeen = true;
+        }
     };
 
     for (let i = 0; i < raw.length; i += 1) {
@@ -445,8 +484,8 @@ export function kagi(raw: readonly OHLCV[], opts: KagiOptions = DEFAULT_KAGI): O
     const last = raw[raw.length - 1]!;
     if (dir !== 0 && ext !== start) {
         const d = dir as 1 | -1;
-        const yang = d > 0 ? ext > prevUpExtreme : ext < prevDownExtreme;
-        legs.push({ open: start, close: ext, high: Math.max(start, ext), low: Math.min(start, ext), time: last.time, dir: d, ...(yang ? { yang: true } : {}) } as KagiLeg);
+        const yang = isYang(d, ext);
+        legs.push({ open: start, close: ext, high: Math.max(start, ext), low: Math.min(start, ext), time: last.time, dir: d, ...(yang ? { yang: true } : {}) });
     }
     void startTime;
     return legs.map((l) => ({
@@ -456,7 +495,7 @@ export function kagi(raw: readonly OHLCV[], opts: KagiOptions = DEFAULT_KAGI): O
         low: l.low,
         close: l.close,
         volume: 0,
-        styleHint: { yang: (l as KagiLeg & { yang?: boolean }).yang === true },
+        styleHint: { yang: l.yang === true },
     }));
 }
 

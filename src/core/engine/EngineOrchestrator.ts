@@ -109,12 +109,47 @@ const HEAL_COOLDOWN_MS = 5_000;
  *  ticks are folded into one update rather than painted faster than the screen refreshes. */
 const MIN_TICK_UPDATE_MS = 16;
 
+/** A pending frame: either an rAF id or a timer id — remembered so the right canceller is used. */
+interface FrameHandle {
+    id: number;
+    raf: boolean;
+}
+
+/** Monotonic-ish clock for frame scheduling (perf in browsers, Date in a bare runtime). */
+function nowMs(): number {
+    return typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
+}
+
+/** Run `cb` on the next animation frame; falls back to a timer where there is no rAF
+ *  (jsdom, workers) so the flush is never lost. */
+function scheduleFrame(cb: () => void): FrameHandle {
+    if (typeof requestAnimationFrame === 'function') return { id: requestAnimationFrame(() => cb()), raf: true };
+    return { id: setTimeout(cb, 16) as unknown as number, raf: false };
+}
+
+/** Cancel a handle produced by {@link scheduleFrame}. */
+function clearFrame(handle: FrameHandle): void {
+    if (handle.raf) cancelAnimationFrame(handle.id);
+    else clearTimeout(handle.id);
+}
+
 /**
  * Renderer- and engine-agnostic orchestration: owns market data (via the injected
  * `MarketDataFeed`), runs/streams indicators through registered `ScriptingEngine`s
  * (selected by language), routes panes, and drives the injected `IChartRenderer`.
  * Imports neither a concrete renderer nor a concrete scripting engine.
  */
+/**
+ * Bound a secondary-series request to what a running bar replay has revealed. `to` is
+ * pulled back to the cursor bar, and a `from` that starts after it collapses to an empty
+ * window (the caller then fetches nothing future and filters the payload). Exported so the
+ * rule is unit-testable without standing up a whole engine.
+ */
+export function clampRangeToRevealed<T extends { from?: number; to?: number; limit?: number }>(range: T, revealedEnd: number): T {
+    const to = range.to == null ? revealedEnd : Math.min(range.to, revealedEnd);
+    return { ...range, to, ...(range.from != null && range.from > to ? { from: to } : {}) };
+}
+
 export class EngineOrchestrator implements IndicatorController, PaneController, ReplayController {
     readonly events = new TypedEventBus<VelaEventMap>();
     private readonly registry = new IndicatorRegistry();
@@ -393,8 +428,22 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
     private async fetchSeries(symbol: string, timeframe: string, range: BarRange): Promise<OHLCV[]> {
         const parsed = parseExtendedTicker(symbol);
         const cfg: MarketConfig = { symbol: parsed.symbol, timeframe };
-        const bars = await (this.feed.loadRange ? this.feed.loadRange(cfg, range) : this.feed.load({ ...cfg, bars: range.limit }));
+        // A replay chart must not see the future through a SECOND series either: a Compare
+        // study, `request.security`, or a drawing that reads a lower timeframe all come
+        // through here, and the feed happily serves up to "now". Clamp the request and the
+        // payload to the bar the replay cursor has revealed.
+        const revealed = this.replayRevealedEnd();
+        const bounded = revealed == null ? range : clampRangeToRevealed(range, revealed);
+        const fetched = await (this.feed.loadRange ? this.feed.loadRange(cfg, bounded) : this.feed.load({ ...cfg, bars: bounded.limit }));
+        const bars = revealed == null ? fetched : fetched.filter((b) => b.time <= revealed);
         return parsed.transform ? parsed.transform.full(bars) : bars;
+    }
+
+    /** The last bar time the replay has revealed, or null when no replay is running. */
+    private replayRevealedEnd(): number | null {
+        if (!this.replayQueue) return null;
+        const last = this.rawBars[this.rawBars.length - 1];
+        return last ? last.time : null;
     }
 
     private onViewportChange(range: VisibleRange): void {
@@ -1551,7 +1600,10 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
             timeframe: this.config.market.timeframe ?? '60',
             live: (this.config.live ?? false) && this.replayQueue === null,
             session: this.config.market.session,
-            bars: () => this.bars,
+            bars: () => {
+                this.flushPendingRebucket();
+                return this.bars;
+            },
             data: this.dataControl,
             pushData: (data) => this.renderer.setNativeData?.(id, data),
             pushPending: (ranges) => this.renderer.setNativeData?.(`${id}-pending`, ranges),
@@ -1651,7 +1703,11 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
      * (engines via `getBars`, natives, visible-range presets) reads `this.bars` — the view.
      */
     private setBarSeries(raw: OHLCV[], opts?: { preserveView?: boolean; clearing?: boolean }): void {
+        this.rebucketFrame != null && clearFrame(this.rebucketFrame);
+        this.rebucketFrame = null;
+        this.rebucketPendingNotify = false;
         this.rawBars = raw;
+        this.lastRebucketAt = 0; // a fresh tape rebuilds synchronously on its first tick
         this.bars = this.deriveView(raw);
         this.renderer.setBars(this.bars, { preserveView: opts?.preserveView });
         // The first PAINTED batch ends the loading state — on a deep history that is the quick
@@ -1660,6 +1716,61 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
         // by loadMarket's finally instead (a style re-derivation over empty bars mid-load must
         // not end a load still in flight).
         if (!opts?.clearing && this.bars.length > 0) this.endLoad();
+    }
+
+    // ── rebucket rebuild coalescing (Renko / Range / Kagi / P&F / Line break) ──
+    /** Pending frame for a deferred rebuild; null = nothing scheduled. */
+    private rebucketFrame: FrameHandle | null = null;
+    /** A notification was requested while a rebuild was pending — fold it into that one. */
+    private rebucketPendingNotify = false;
+    /** When the last rebuild actually ran (ms, monotonic-ish) — drives the leading edge. */
+    private lastRebucketAt = 0;
+
+    /** Minimum gap between two rebuilds. One frame: a rebuild is a full re-cut of the view
+     *  plus a full indicator re-run, and doing it faster than the screen can show it is
+     *  pure waste. */
+    private static readonly REBUILD_MIN_GAP_MS = 16;
+
+    /**
+     * Schedule (or run immediately) the rebucket rebuild. Leading edge: if nothing has been
+     * rebuilt in the last frame, rebuild NOW so a lone tick stays synchronous. Otherwise
+     * coalesce into the next frame — the tape is already in `rawBars`, so nothing is lost.
+     */
+    private scheduleRebucketRebuild(notify: boolean): void {
+        const now = nowMs();
+        if (now - this.lastRebucketAt >= EngineOrchestrator.REBUILD_MIN_GAP_MS) {
+            this.flushRebucketRebuild(notify);
+            return;
+        }
+        this.rebucketPendingNotify = this.rebucketPendingNotify || notify;
+        if (this.rebucketFrame != null) return;
+        this.rebucketFrame = scheduleFrame(() => {
+            this.rebucketFrame = null;
+            const pending = this.rebucketPendingNotify;
+            this.rebucketPendingNotify = false;
+            this.flushRebucketRebuild(pending);
+        });
+    }
+
+    /** Re-cut the view from the raw tape and repaint; notify the studies once. */
+    private flushRebucketRebuild(notify: boolean): void {
+        this.lastRebucketAt = nowMs();
+        this.bars = this.deriveView(this.rawBars);
+        this.renderer.setBars(this.bars, { preserveView: true });
+        // Same notification the incremental path sends — every consumer is a bar-count
+        // change away from a full re-run, so the RAW bar is what travels.
+        if (notify) this.notifySessionsBars(this.historyState === 'backfill' ? 'backfill' : undefined);
+    }
+
+    /** Flush a deferred rebuild NOW. Every read of the view (or a teardown) calls this, so a
+     *  caller can never observe a view that is one frame behind the tape it just fed in. */
+    private flushPendingRebucket(): void {
+        if (this.rebucketFrame == null) return;
+        clearFrame(this.rebucketFrame);
+        this.rebucketFrame = null;
+        const pending = this.rebucketPendingNotify;
+        this.rebucketPendingNotify = false;
+        this.flushRebucketRebuild(pending);
     }
 
     /**
@@ -1682,12 +1793,13 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
             else if (!last || bar.time > last.time) this.rawBars.push(bar);
             else return;
             this.barCause = last && bar.time === last.time ? 'tick' : 'bar';
-            this.bars = this.deriveView(this.rawBars);
-            this.renderer.setBars(this.bars, { preserveView: true });
             this.events.emit('bar', bar);
-            // Same notification the incremental path sends — every consumer is a bar-count
-            // change away from a full re-run, so the RAW bar is what travels.
-            if (notify) this.notifySessionsBars(this.historyState === 'backfill' ? 'backfill' : undefined);
+            // The rebuild (a full re-cut + a full re-run of every study) is COALESCED into
+            // one animation frame: a burst of ticks used to re-derive a 5,000-bar series and
+            // re-execute every indicator once PER TICK, which is what made a busy Renko
+            // chart drop frames. The first tick after an idle gap still rebuilds instantly,
+            // so a single-tick chart behaves exactly as before.
+            this.scheduleRebucketRebuild(notify);
             return;
         }
         let viewBar = bar;
@@ -2220,6 +2332,9 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
 
     destroy(): void {
         this.bumpGeneration(); // abandon backfill loops/loads mid-flight + release superseded setMarket awaiters
+        if (this.rebucketFrame != null) clearFrame(this.rebucketFrame);
+        this.rebucketFrame = null;
+        this.rebucketPendingNotify = false;
         this.resolveHistoryComplete(); // never leave historyComplete() awaiters hanging
         this.clearReplayTimer();
         this.replayQueue = null;
@@ -2330,7 +2445,10 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
                 prepared: record.prepared,
                 market: this.market(),
                 bars: this.bars,
-                getBars: () => this.bars,
+                getBars: () => {
+                    this.flushPendingRebucket();
+                    return this.bars;
+                },
                 fetchSeries: (sym, tf, range) => this.fetchSeries(sym, tf, range),
                 inputs: record.inputValues,
                 props: record.propValues,
