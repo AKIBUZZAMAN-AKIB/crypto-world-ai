@@ -54,6 +54,9 @@ describe('drawings/Magnifier', () => {
             'pricerange',
             'daterange',
             'position',
+            'positionforecast',
+            'barspattern',
+            'ghostfeed',
             'magnifier',
         ]);
     });

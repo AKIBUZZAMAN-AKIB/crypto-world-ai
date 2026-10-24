@@ -2,7 +2,7 @@ import { Drawing, type DrawingTypeKey, type SerializedDrawing } from './Drawing'
 import type { DrawingStyle } from './style';
 import { DEFAULT_DRAWING_COLOR } from './style';
 import { svg24 } from '../icons';
-import { ACCENT, BEARISH, BULLISH, INFO, MARKER, NEUTRAL, WARNING } from '../palette';
+import { ACCENT, BEARISH, BULLISH, INFO, MARKER, NEUTRAL, SLATE_DEEP, WARNING } from '../palette';
 import { TrendLine } from './types/TrendLine';
 import { HorizontalLine } from './types/HorizontalLine';
 import { Ray } from './types/Ray';
@@ -1288,7 +1288,7 @@ registerDrawingType({
     group: 'annotations',
     label: 'Table',
     icon: TABLE_ICON,
-    defaultStyle: { lineColor: NEUTRAL, lineWidth: 1, lineStyle: 'solid', fillColor: '#131722cc' },
+    defaultStyle: { lineColor: NEUTRAL, lineWidth: 1, lineStyle: 'solid', fillColor: `${SLATE_DEEP}cc` },
     placementHint: 'Click where the table’s top-left corner goes',
     create: (init) => new TableDrawing(init),
 });
