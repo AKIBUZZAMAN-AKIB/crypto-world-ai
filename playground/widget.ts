@@ -19,11 +19,15 @@ import { BinanceProvider } from '../src/data/providers/binance';
 import { addSampleMarks } from './marks';
 import { DemoEngine, DEMO_SCRIPTS } from './demo-engine';
 import { playgroundStorage } from './persistence';
+import { registerEditorEntry } from './editor-link';
 
 // The playground's CUSTOM persistence (shared with the workspace page): with `persist`
 // on, the shell saves and restores EVERYTHING through this adapter — prefs, renderer
 // config, and user drawings. The key is pinned so this page never collides with the
 // multi-chart page's own document ('vela-workspace') in the same adapter namespace.
+// A topbar entry point to the Pine editor page (desktop tool + phone bottom-bar stop).
+registerEditorEntry();
+
 const storage = playgroundStorage();
 
 const ws = new VelaWorkspace('#chart', {

@@ -13,8 +13,8 @@ import { BinanceProvider } from '../src/data/providers/binance';
 import { PineEngine } from 'vela-pine-libre';
 import type { IndicatorHandle } from '../src/core/IndicatorHandle';
 import { PINE_SCRIPTS } from './pine-scripts';
+import { EDITOR_STORAGE_KEY as STORAGE_KEY } from './editor-shared';
 
-const STORAGE_KEY = 'vela-play:editor-code';
 const DEFAULT_SCRIPT = PINE_SCRIPTS[0]?.script ?? '';
 
 const ws = new VelaWorkspace('#chart', {

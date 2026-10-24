@@ -49,6 +49,38 @@
                 padding: 8px 10px;
                 border-bottom: 1px solid var(--border);
                 flex: none;
+                /* On a phone the four stops do not fit one row: the title gives way first
+                   (it is the only one with a fixed meaning), then Examples shrinks. Run and
+                   Clear must stay reachable — they are the point of the page. */
+                flex-wrap: nowrap;
+                min-width: 0;
+            }
+            #bar .title,
+            #bar select,
+            #bar button {
+                flex: none;
+            }
+            #bar select {
+                min-width: 0;
+                max-width: 180px;
+                text-overflow: ellipsis;
+            }
+            #back {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 26px;
+                height: 26px;
+                border-radius: 6px;
+                color: var(--fg-dim);
+                text-decoration: none;
+                font-size: 15px;
+                flex: none;
+                transition: background 120ms ease, color 120ms ease;
+            }
+            #back:hover {
+                background: var(--panel-2);
+                color: #f0f3fa;
             }
             #bar .title {
                 font-weight: 600;
@@ -175,6 +207,19 @@
                 #app {
                     flex-direction: column;
                 }
+                /* The title is the one stop that can go: the page has a <title>, the tab
+                   and the back arrow already say where you are. Without this the Run
+                   button is pushed off-screen at 390px. */
+                #bar .title {
+                    display: none;
+                }
+                #bar select {
+                    flex: 1 1 auto;
+                    max-width: none;
+                }
+                #bar .spacer {
+                    display: none;
+                }
                 #side {
                     width: 100%;
                     max-width: none;
@@ -195,6 +240,7 @@
         <div id="app">
             <section id="side">
                 <div id="bar">
+                    <a id="back" href="./workspace.html" title="Back to the workspace">&larr;</a>
                     <span class="title">Pine editor</span>
                     <select id="examples" title="Load an example"></select>
                     <span class="spacer"></span>

@@ -15,6 +15,7 @@ import { BinanceProvider } from "../src/data/providers/binance";
 import { PineEngine } from "vela-pine-libre";
 import { DemoEngine } from "./demo-engine";
 import { PINE_SCRIPTS } from "./pine-scripts";
+import { registerEditorEntry } from "./editor-link";
 import { playgroundStorage } from "./persistence";
 import { addSampleMarks } from "./marks";
 
@@ -23,6 +24,9 @@ import { addSampleMarks } from "./marks";
 // window under the container breakpoint. Handy when reviewing the mobile bar on a desktop.
 const shell = new URLSearchParams(location.search).get("layout");
 const forcedShell = shell === "mobile" || shell === "desktop" ? { layoutMode: shell } : {};
+
+// A topbar entry point to the Pine editor page (desktop tool + phone bottom-bar stop).
+registerEditorEntry();
 
 const ws = new VelaWorkspace("#workspace", {
   layout: "4",
