@@ -342,7 +342,10 @@ export class StrategyTester extends SidePanel {
     private resizeObs: ResizeObserver | null = null;
 
     constructor(host: HTMLElement) {
-        super(host, 'Strategy tester', 'vela-st', { resizable: true, width: 380, minWidth: 280, maxWidth: 620, overlay: true, maximizable: true });
+        // Docked, like its siblings (data window, object tree): a report is read BESIDE the
+        // chart, not on top of it. `maximizable` covers the phone case, where the list of
+        // trades wants the whole width.
+        super(host, 'Strategy tester', 'vela-st', { resizable: true, width: 380, minWidth: 280, maxWidth: 620, maximizable: true });
         const doc = host.ownerDocument;
         injectStyles(STYLE_ID, CSS, doc);
         this.tabsEl = doc.createElement('div');
@@ -364,10 +367,17 @@ export class StrategyTester extends SidePanel {
         this.syncTabs();
     }
 
-    /** Remember a strategy run — the shell calls this for every cell, bound or not. */
+    /**
+     * Remember a strategy run — the shell calls this for every cell, bound or not.
+     *
+     * Two paths deliver the same run (the panel's own `script:run` subscription and the
+     * workspace's relay), so an unchanged run is ignored: adopting it again would re-read
+     * the ledger for nothing. Identity is the test — a run object is emitted once.
+     */
     setRun(chart: Vela, run: ScriptRun): void {
         this.runs.set(chart, run);
-        if (chart === this.chart) this.adopt(run);
+        if (chart !== this.chart || run === this.run) return;
+        this.adopt(run);
     }
 
     override toggle(open = !this.open, instant = false): void {

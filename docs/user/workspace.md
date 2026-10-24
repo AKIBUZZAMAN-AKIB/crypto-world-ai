@@ -564,8 +564,21 @@ they work from the very first keystroke, before any click.
 - **Data window** — the other docked panel: the date and time of the bar under the crosshair,
   its OHLCV tinted with the bar's direction, then one section per indicator showing each plot's
   value in its own color. It follows the crosshair and falls back to the latest bar when the
-  pointer leaves the chart. The two panels share the dock, so opening one closes the other.
-- **The dock** — the column both panels live in, and the one plugins extend
+  pointer leaves the chart. The docked panels share the dock, so opening one closes the others.
+- **Strategy tester** — the third docked panel, and the backtest report for whatever strategy
+  is running on the chart. It has the reference platform's four tabs: **Overview** (total P&L
+  with its return on the initial capital, max drawdown, profitable trades, profit factor, and
+  the cumulative-P&L curve), **Performance** (every metric in All / Long / Short columns —
+  gross profit and loss, commission, average trade / win / loss, the win-loss ratio, the
+  largest win and loss, average bars in trade, profit factor), **Trades** (one row per round
+  trip in exit order with a running total — closed trades first, open ones last and excluded
+  from every money column) and **Properties** (what the strategy declared: its capital,
+  commission, and its inputs). `script:run` feeds it: a strategy that computes before the
+  panel is opened still has a report waiting, every cell's runs are remembered while you
+  switch between them, and the first strategy run of a session opens the panel once — never
+  over a panel you already have open. Every figure comes from the engine's own broker state
+  and trade ledger; a metric the data cannot answer reads `—` rather than a fabricated zero.
+- **The dock** — the column the built-in panels live in, and the one plugins extend
   ([`registerSidePanel`](../contributing/plugin-sdk.md#side-panels--registersidepanel)): every
   panel gets a toggle in the topbar's panel group, one panel shows at a time, and a panel that
   declares itself resizable has a drag handle on its inner edge (double-click returns it to its

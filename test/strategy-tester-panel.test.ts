@@ -231,6 +231,28 @@ describe('strategy tester panel', () => {
         expect(openRow!.querySelector('td')!.getAttribute('title')).toBe('Total open trades');
     });
 
+    it('reads the ledger once for a run that arrives twice', async () => {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const panel = new StrategyTester(host);
+        const chart = fakeChart();
+        panel.onChart(chart);
+        panel.toggle(true);
+        let reads = 0;
+        const run = fakeRun({
+            trades: async () => {
+                reads += 1;
+                return TRADES;
+            },
+        });
+        // The panel's own subscription and the workspace's relay both report this run.
+        panel.setRun(chart, run);
+        panel.setRun(chart, run);
+        await flush();
+        expect(reads).toBe(1);
+        expect(texts(host, '.vela-st-stat-value')[0]).toBe('+18.00');
+    });
+
     it('drops a stale ledger answer when a newer run lands', async () => {
         const host = document.createElement('div');
         document.body.appendChild(host);
