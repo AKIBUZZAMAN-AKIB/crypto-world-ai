@@ -72,17 +72,19 @@ const GANN_TYPES: DrawingTypeKey[] = ['gannfan', 'gannbox', 'gannsquare', 'ganns
 const GEOMETRY_TYPES: DrawingTypeKey[] = ['dedekind', 'sonic', 'supersonic', 'goldensonic', 'goldensupersonic'];
 
 const PATTERN_TYPES: DrawingTypeKey[] = ['xabcd', 'abcd', 'trianglepattern', 'threedrives', 'headshoulders'];
+/** Cycle tools — Fibonacci-style time projections (the reference keeps them under patterns). */
+const CYCLE_TYPES: DrawingTypeKey[] = ['cycliclines', 'timecycles', 'sineline'];
 const ELLIOTT_TYPES: DrawingTypeKey[] = ['elliottimpulse', 'elliottcorrection', 'elliotttriangle', 'elliottdoublecombo', 'elliottriplecombo'];
 const HARMONIC_TYPES: DrawingTypeKey[] = ['gartley', 'bat', 'butterfly', 'crab', 'shark', 'cypher'];
 
-const MEASUREMENT_TYPES: DrawingTypeKey[] = ['datepricerange', 'pricerange', 'daterange', 'position', 'magnifier'];
-const VOLUME_TYPES: DrawingTypeKey[] = ['anchoredvwap', 'fixedrangevp'];
+const MEASUREMENT_TYPES: DrawingTypeKey[] = ['datepricerange', 'pricerange', 'daterange', 'position', 'positionforecast', 'barspattern', 'ghostfeed', 'magnifier'];
+const VOLUME_TYPES: DrawingTypeKey[] = ['anchoredvwap', 'fixedrangevp', 'anchoredvp'];
 
 const BRUSH_TYPES: DrawingTypeKey[] = ['freehand', 'highlighter'];
-const ARROW_TYPES: DrawingTypeKey[] = ['arrow', 'arrowmarkup', 'arrowmarkdown'];
-const SHAPE_TYPES: DrawingTypeKey[] = ['box', 'ellipse', 'triangle', 'polyline', 'circle', 'rotatedrect', 'path', 'arc', 'curve', 'doublecurve'];
+const ARROW_TYPES: DrawingTypeKey[] = ['arrow', 'arrowmarkup', 'arrowmarkdown', 'arrowmarkleft', 'arrowmarkright'];
+const SHAPE_TYPES: DrawingTypeKey[] = ['box', 'ellipse', 'triangle', 'polyline', 'circle', 'rotatedrect', 'path', 'arc', 'curve', 'doublecurve', 'sector'];
 
-const TEXT_TYPES: DrawingTypeKey[] = ['text', 'callout', 'note', 'pricenote', 'pin', 'comment', 'pricelabel', 'signpost'];
+const TEXT_TYPES: DrawingTypeKey[] = ['text', 'callout', 'note', 'pricenote', 'pin', 'comment', 'pricelabel', 'signpost', 'table'];
 const ICON_TYPES: DrawingTypeKey[] = ['flagmark', 'iconstamp'];
 
 type SectionSource = { label: string; registryGroup: string } | { label: string; types: readonly DrawingTypeKey[] };
@@ -121,6 +123,7 @@ const TOOLBAR_LAYOUT: readonly ToolbarGroupLayout[] = [
             { label: 'Patterns', types: PATTERN_TYPES },
             { label: 'Elliott Waves', types: ELLIOTT_TYPES },
             { label: 'Harmonics', types: HARMONIC_TYPES },
+            { label: 'Cycles', types: CYCLE_TYPES },
         ],
     },
     {

@@ -539,7 +539,12 @@ describe('buildToolbar grouping', () => {
         ]);
 
         const patternsGroup = definition.groups.find((g) => g.id === 'patterns-waves-harmonics');
-        expect(patternsGroup?.sections?.map((s) => s.label)).toEqual(['Patterns', 'Elliott Waves', 'Harmonics']);
+        expect(patternsGroup?.sections?.map((s) => s.label)).toEqual(['Patterns', 'Elliott Waves', 'Harmonics', 'Cycles']);
+        expect(patternsGroup?.sections?.find((s) => s.label === 'Cycles')?.tools.map((t) => t.type)).toEqual([
+            'cycliclines',
+            'timecycles',
+            'sineline',
+        ]);
         expect(patternsGroup?.sections?.find((s) => s.label === 'Harmonics')?.tools.map((t) => t.type)).toEqual([
             'gartley',
             'bat',
@@ -551,11 +556,14 @@ describe('buildToolbar grouping', () => {
 
         const shapesGroup = definition.groups.find((g) => g.id === 'brushes-arrows-shapes');
         expect(shapesGroup?.sections?.map((s) => s.label)).toEqual(['Brushes', 'Arrows', 'Shapes']);
+        expect(shapesGroup?.sections?.find((s) => s.label === 'Shapes')?.tools.map((t) => t.type)).toContain('sector');
         expect(shapesGroup?.sections?.find((s) => s.label === 'Brushes')?.tools.map((t) => t.type)).toEqual(['freehand', 'highlighter']);
         expect(shapesGroup?.sections?.find((s) => s.label === 'Arrows')?.tools.map((t) => t.type)).toEqual([
             'arrow',
             'arrowmarkup',
             'arrowmarkdown',
+            'arrowmarkleft',
+            'arrowmarkright',
         ]);
 
         const textGroup = definition.groups.find((g) => g.id === 'text');
@@ -568,6 +576,7 @@ describe('buildToolbar grouping', () => {
             'comment',
             'pricelabel',
             'signpost',
+            'table',
         ]);
 
         const iconsGroup = definition.groups.find((g) => g.id === 'icons');
@@ -584,6 +593,9 @@ describe('buildToolbar grouping', () => {
             'pricerange',
             'daterange',
             'position',
+            'positionforecast',
+            'barspattern',
+            'ghostfeed',
             'magnifier',
         ]);
     });

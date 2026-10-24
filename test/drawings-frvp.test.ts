@@ -39,18 +39,33 @@ function fakeProjector(data: FrvpBar[]): Projector {
     };
 }
 
-describe('drawings/frvp math (estimation)', () => {
-    it('adds a bar\'s full volume to every row that contains any OHLC price', () => {
-        // One up bar spanning 100→110: O=100, H=110, L=100, C=110 → hits the edge rows of a 2-row profile.
+describe('drawings/frvp math (proportional)', () => {
+    it('spreads one bar across the rows its range covers, conserving its volume', () => {
+        // One up bar spanning 100→110 over a 2-row grid: each row covers half the range,
+        // so each takes half the volume — the total is exactly the bar's 1000.
         const data: FrvpBar[] = [
             { time: 0, open: 100, high: 110, low: 100, close: 110, volume: 1000 },
         ];
         const p = buildEstimatedProfile(data, 2, 0.7)!;
         expect(p.rows).toHaveLength(2);
-        // Both rows receive the full 1000 (estimation does not conserve volume across rows).
-        expect(p.rows[0]!.up + p.rows[0]!.down).toBeCloseTo(1000, 6);
-        expect(p.rows[1]!.up + p.rows[1]!.down).toBeCloseTo(1000, 6);
-        expect(p.rows[0]!.up).toBeCloseTo(1000, 6); // close >= open → up
+        expect(p.rows[0]!.up).toBeCloseTo(500, 6);
+        expect(p.rows[1]!.up).toBeCloseTo(500, 6);
+        expect(p.rows[0]!.up + p.rows[1]!.up).toBeCloseTo(1000, 6);
+        expect(p.rows[0]!.down + p.rows[1]!.down).toBeCloseTo(0, 6); // close >= open → up
+    });
+
+    it('never leaves a row inside the bar range empty, and never inflates the total', () => {
+        // A wide bar over a 10-row grid must touch every row it spans (no holes) and the
+        // profile's grand total must equal the traded volume.
+        const data: FrvpBar[] = [
+            { time: 0, open: 100, high: 110, low: 100, close: 105, volume: 900 },
+            { time: HR, open: 101, high: 102, low: 101, close: 102, volume: 100 },
+        ];
+        const p = buildEstimatedProfile(data, 10, 0.7)!;
+        const total = p.rows.reduce((s, r) => s + r.up + r.down, 0);
+        expect(total).toBeCloseTo(1000, 6);
+        const spanned = p.rows.filter((r) => r.price >= 100 && r.price < 110);
+        expect(spanned.every((r) => r.up + r.down > 0)).toBe(true);
     });
 
     it('splits up/down volume by bar direction', () => {
@@ -140,12 +155,13 @@ describe('drawings/FixedRangeVolumeProfile', () => {
         expect(d.frvp.developingVaColor).toBe(ACCENT);
     });
 
-    it('appears under the Volume section next to Anchored VWAP', () => {
+    it('appears under the Volume section next to Anchored VWAP and the anchored profile', () => {
         const { definition } = buildToolbar(true);
         const measure = definition.groups.find((g) => g.id === 'measurements');
         expect(measure?.sections?.find((s) => s.label === 'Volume')?.tools.map((t) => t.type)).toEqual([
             'anchoredvwap',
             'fixedrangevp',
+            'anchoredvp',
         ]);
     });
 

@@ -125,7 +125,7 @@ describe('the drawing settings panel', () => {
             s.popup.destroy();
             document.body.replaceChildren();
         }
-    });
+    }, 30_000); // one full toolbar + panel per registered tool: ~100 of them exceed the 5 s default
 
     it('where a label sits along a line is offered only once the label has words', async () => {
         const s = setup(make('trendline'));

@@ -109,3 +109,19 @@ export class ArrowMarkDown extends ArrowMark {
         return 'down';
     }
 }
+
+/** A left-pointing arrow marker — tip on the anchor, body running to the right. */
+export class ArrowMarkLeft extends ArrowMark {
+    readonly type = 'arrowmarkleft' as const;
+    protected dir(): Dir {
+        return 'left';
+    }
+}
+
+/** A right-pointing arrow marker — tip on the anchor, body running to the left. */
+export class ArrowMarkRight extends ArrowMark {
+    readonly type = 'arrowmarkright' as const;
+    protected dir(): Dir {
+        return 'right';
+    }
+}

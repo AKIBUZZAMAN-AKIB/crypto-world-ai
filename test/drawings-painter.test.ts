@@ -21,6 +21,7 @@ function fakeProjector(): Projector {
 function recordingCtx() {
     let arcs = 0;
     let lines = 0;
+    let texts = 0;
     const ctx = {
         globalAlpha: 1,
         setTransform() {},
@@ -44,11 +45,16 @@ function recordingCtx() {
         restore() {},
         translate() {},
         rotate() {},
-        fillText() {},
+        fillText() {
+            texts += 1;
+        },
         strokeText() {},
         measureText: () => ({ width: 0 }),
+        rect() {},
+        clip() {},
+        ellipse() {},
     };
-    return { ctx: ctx as unknown as CanvasRenderingContext2D, arcs: () => arcs, lines: () => lines };
+    return { ctx: ctx as unknown as CanvasRenderingContext2D, arcs: () => arcs, lines: () => lines, texts: () => texts };
 }
 
 const theme = { textColor: '#fff', fontFamily: 'sans-serif' } as unknown as VelaTheme;
@@ -359,5 +365,61 @@ describe('DrawingPainter ArrowMark label layout', () => {
         }
 
         expect(calls()[1]!.y).toBeGreaterThan(calls()[0]!.y);
+    });
+});
+
+describe('DrawingPainter — the round-33 tools paint', () => {
+    /** Bars at x = time in px, so a projection can read real columns back. */
+    const withBars = (): Projector => ({
+        ...fakeProjector(),
+        barsInRange: (from: number, to: number) => {
+            const rows = [10, 20, 30, 40, 50].map((t, i) => ({
+                time: t,
+                open: 90 + i,
+                high: 92 + i,
+                low: 89 + i,
+                close: 91 + i,
+                volume: 100 + i,
+            }));
+            return rows.filter((b) => b.time >= Math.min(from, to) && b.time <= Math.max(from, to));
+        },
+    });
+    const at = (time: number, price: number) => ({ time, price });
+    const CASES: Array<[string, Array<{ time: number; price: number }>]> = [
+        ['cycliclines', [at(40, 90), at(80, 90)]],
+        ['timecycles', [at(60, 80), at(100, 80)]],
+        ['sineline', [at(20, 90), at(60, 70)]],
+        ['sector', [at(60, 80), at(100, 80), at(60, 40)]],
+        ['barspattern', [at(10, 90), at(30, 90), at(70, 90)]],
+        ['ghostfeed', [at(10, 90), at(30, 90)]],
+        ['positionforecast', [at(20, 90), at(60, 70)]],
+        ['table', [at(20, 95)]],
+        ['anchoredvp', [at(10, 90)]],
+        ['arrowmarkleft', [at(60, 80)]],
+        ['arrowmarkright', [at(60, 80)]],
+    ];
+
+    it.each(CASES)('paints %s without throwing', (type, anchors) => {
+        const d = createDrawing(type as never, { id: type, paneId: 'price', anchors })!;
+        const { ctx } = recordingCtx();
+        expect(() => new DrawingPainter().paintAll(ctx, [d], withBars(), theme, { selected: new Set([type]) })).not.toThrow();
+    });
+
+    it('paints the table cell text and the projection columns', () => {
+        const table = createDrawing('table', { id: 't', paneId: 'price', anchors: [at(20, 95)] })!;
+        const { ctx, texts } = recordingCtx();
+        new DrawingPainter().paintAll(ctx, [table], withBars(), theme);
+        expect(texts()).toBeGreaterThan(1); // header + value cells
+
+        const pattern = createDrawing('barspattern', {
+            id: 'p',
+            paneId: 'price',
+            anchors: [at(10, 90), at(30, 90), at(70, 90)],
+        })!;
+        const rec = recordingCtx();
+        new DrawingPainter().paintAll(rec.ctx, [pattern], withBars(), theme);
+        // The copy's bodies are filled rects: the three source bars become three columns whose
+        // wicks each move the pen once.
+        expect(rec.lines()).toBeGreaterThanOrEqual(3);
     });
 });

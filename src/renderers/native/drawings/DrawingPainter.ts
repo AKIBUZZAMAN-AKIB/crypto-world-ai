@@ -1,5 +1,5 @@
 import type { Drawing, Projector, DrawingStyle } from '../../../core/drawings';
-import { SegmentDrawing, TrendLine, FibRatios, RadialFib, FibSpiral, GannSquare, GANN_SQUARE_ARCS, Pin, DedekindTessellation, MachFigure, MeasureBox, PositionTool, PatternDrawing, CalloutBase, Callout, Comment, PriceNote, Signpost, Note, PriceLabel, ArrowMark, GlyphStamp, RegressionChannel, AnchoredVwap, FixedRangeVolumeProfile, Magnifier, PriceActionZone, Liquidity, magnifierTimeframeLabel, lineSegmentIntersection, effectiveFillColor, VALID_FILL, INVALID_FILL, DEFAULT_DRAWING_COLOR } from '../../../core/drawings';
+import { SegmentDrawing, TrendLine, FibRatios, RadialFib, FibSpiral, GannSquare, GANN_SQUARE_ARCS, Pin, DedekindTessellation, MachFigure, MeasureBox, PositionTool, PatternDrawing, CalloutBase, Callout, Comment, PriceNote, Signpost, Note, PriceLabel, ArrowMark, GlyphStamp, RegressionChannel, AnchoredVwap, FixedRangeVolumeProfile, Magnifier, PriceActionZone, Liquidity, BarProjection, TableDrawing, PositionForecast, AnchoredVolumeProfile, magnifierTimeframeLabel, lineSegmentIntersection, effectiveFillColor, VALID_FILL, INVALID_FILL, DEFAULT_DRAWING_COLOR } from '../../../core/drawings';
 import type { VelaTheme } from '../../../core/options';
 import { contrastColor, dashPattern, extendEndpoints, namedFontSize, labelLineHeight, TEXT_FRAME_INSET, TEXT_FRAME_RISE, uprightLineAngle } from '../../shared/drawing-geometry';
 import { BEARISH, BULLISH, NEUTRAL, SLATE, SLATE_DEEP } from '../../../core/palette';
@@ -210,6 +210,25 @@ export class DrawingPainter {
         }
         if (d instanceof ArrowMark) {
             this.paintArrowMark(ctx, d, proj);
+            this.paintLabel(ctx, d, proj, theme);
+            return;
+        }
+        if (d instanceof BarProjection) {
+            this.paintProjection(ctx, d, proj, theme);
+            this.paintLabel(ctx, d, proj, theme);
+            return;
+        }
+        if (d instanceof TableDrawing) {
+            this.paintTable(ctx, d, proj, theme);
+            return;
+        }
+        if (d instanceof PositionForecast) {
+            this.paintForecast(ctx, d, proj, theme);
+            this.paintLabel(ctx, d, proj, theme);
+            return;
+        }
+        if (d instanceof AnchoredVolumeProfile) {
+            this.paintFixedRangeVp(ctx, d, proj, theme);
             this.paintLabel(ctx, d, proj, theme);
             return;
         }
@@ -1180,7 +1199,12 @@ export class DrawingPainter {
     /** Paint a fixed-range volume profile: horizontal histogram rows (up/down split) anchored to
      *  the left or right of the time span, optional VAH / VAL / POC levels across the range, and
      *  optional developing POC / VA polylines. Recomputes from the two anchors on every paint. */
-    private paintFixedRangeVp(ctx: CanvasRenderingContext2D, d: FixedRangeVolumeProfile, proj: Projector, theme: VelaTheme): void {
+    private paintFixedRangeVp(
+        ctx: CanvasRenderingContext2D,
+        d: Pick<FixedRangeVolumeProfile, 'layout' | 'frvp' | 'style'>,
+        proj: Projector,
+        theme: VelaTheme,
+    ): void {
         const L = d.layout(proj);
         if (!L) return;
         const s = d.frvp;
@@ -1377,6 +1401,124 @@ export class DrawingPainter {
     }
 
     /** A Note: free text on a rounded plate anchored at the point (top-left). */
+    /** A bars pattern / ghost feed: the source bars re-drawn at their projected times, as
+     *  bodies + wicks in their own columns. The geometry is the model's (`columns`), so this
+     *  only fills rects — nothing here knows what a bar is. */
+    private paintProjection(ctx: CanvasRenderingContext2D, d: BarProjection, proj: Projector, theme: VelaTheme): void {
+        const cols = d.columns(proj);
+        if (cols.length === 0) return;
+        const st = d.projection;
+        const alpha = Math.min(1, Math.max(0.05, st.opacity));
+        ctx.save();
+        const pane = proj.paneRect?.(d.paneId);
+        if (pane) {
+            ctx.beginPath();
+            ctx.rect(0, pane.top, proj.width, pane.height);
+            ctx.clip();
+        }
+        ctx.globalAlpha = alpha * ctx.globalAlpha;
+        for (const c of cols) {
+            const color = c.up ? theme.upColor : theme.downColor;
+            // Wick first, body over it.
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(Math.round(c.x) + 0.5, c.wickTop);
+            ctx.lineTo(Math.round(c.x) + 0.5, c.wickBottom);
+            ctx.stroke();
+            const w = Math.max(1, c.w);
+            const x = Math.round(c.x - w / 2);
+            const h = Math.max(1, Math.round(c.bodyBottom - c.bodyTop));
+            if (st.filled) {
+                ctx.fillStyle = color;
+                ctx.fillRect(x, Math.round(c.bodyTop), Math.round(w), h);
+            } else {
+                ctx.strokeStyle = d.style.lineColor || color;
+                ctx.lineWidth = Math.max(1, d.style.lineWidth);
+                ctx.strokeRect(x + 0.5, Math.round(c.bodyTop) + 0.5, Math.max(1, Math.round(w) - 1), Math.max(1, h - 1));
+            }
+        }
+        ctx.restore();
+    }
+
+    /** A table: the box + its grid + one text run per cell. The first row reads as a header
+     *  (bold), which is the only typographic liberty the tool takes. */
+    private paintTable(ctx: CanvasRenderingContext2D, d: TableDrawing, proj: Projector, theme: VelaTheme): void {
+        const L = d.layout(proj);
+        if (!L) return;
+        const fill = effectiveFillColor(d, theme);
+        if (fill) {
+            ctx.fillStyle = fill;
+            ctx.fillRect(L.box.x, L.box.y, L.box.w, L.box.h);
+        }
+        this.stroke(ctx, d.style, () => {
+            ctx.rect(L.box.x, L.box.y, L.box.w, L.box.h);
+            for (const [x1, y1, x2, y2] of L.lines) {
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+            }
+        });
+        const text = d.text;
+        const color = text?.color ?? theme.textColor;
+        const italic = text?.italic ? 'italic ' : '';
+        ctx.save();
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        for (const cell of L.cells) {
+            if (!cell.text) continue;
+            ctx.font = `${cell.header ? 'bold ' : ''}${italic}${L.fontSize}px ${theme.fontFamily}`;
+            ctx.fillStyle = color;
+            ctx.fillText(cell.text, cell.x, cell.y);
+        }
+        ctx.restore();
+    }
+
+    /** A position forecast: the projection line, a chip at each end, and the verdict once the
+     *  window has closed. Chips sit on a fixed dark plate so they read over any chart content. */
+    private paintForecast(ctx: CanvasRenderingContext2D, d: PositionForecast, proj: Projector, theme: VelaTheme): void {
+        const L = d.layout(proj);
+        if (!L) return;
+        const a = d.anchors[0];
+        const b = d.anchors[1];
+        const color = d.style.lineColor || theme.upColor;
+        // The line source → target, with the arrowhead pointing at the target.
+        this.stroke(ctx, { lineColor: color, lineWidth: d.style.lineWidth, lineStyle: d.style.lineStyle }, () => {
+            ctx.moveTo(L.x0, L.y0);
+            ctx.lineTo(L.x1, L.y1);
+        });
+        this.paintArrowhead(ctx, [L.x0, L.y0], [L.x1, L.y1], { lineColor: color, lineWidth: d.style.lineWidth, lineStyle: 'solid' });
+        const verdict = L.outcome === 'success' ? 'Success' : L.outcome === 'failure' ? 'Failure' : 'Open';
+        const verdictColor = L.outcome === 'success' ? BULLISH : L.outcome === 'failure' ? BEARISH : NEUTRAL;
+        const chips: Array<{ x: number; y: number; text: string; tint: string }> = [];
+        if (a) chips.push({ x: L.x0, y: L.y0, text: `Source ${formatPriceTag(a.price)}`, tint: color });
+        if (b) chips.push({ x: L.x1, y: L.y1, text: `Target ${formatPriceTag(b.price)}  ${L.movePct >= 0 ? '+' : ''}${L.movePct.toFixed(2)}%`, tint: color });
+        chips.push({ x: (L.x0 + L.x1) / 2, y: (L.y0 + L.y1) / 2, text: verdict, tint: verdictColor });
+        ctx.save();
+        ctx.font = `11px ${theme.fontFamily}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (const chip of chips) {
+            const tw = ctx.measureText(chip.text).width;
+            const pad = 6;
+            const w = tw + pad * 2;
+            const h = 18;
+            const bx = chip.x - w / 2;
+            const by = chip.y - h - 6;
+            ctx.globalAlpha = 0.92 * ctx.globalAlpha;
+            roundRect(ctx, bx, by, w, h, 3);
+            ctx.fillStyle = BADGE_FILL;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = chip.tint;
+            ctx.lineWidth = 1;
+            roundRect(ctx, bx + 0.5, by + 0.5, w - 1, h - 1, 3);
+            ctx.stroke();
+            ctx.fillStyle = theme.textColor;
+            ctx.fillText(chip.text, chip.x, by + h / 2);
+        }
+        ctx.restore();
+    }
+
     private paintNote(ctx: CanvasRenderingContext2D, d: Note, proj: Projector, theme: VelaTheme): void {
         const pts = d.handlePoints(proj);
         if (!pts.length) return;

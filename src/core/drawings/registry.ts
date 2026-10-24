@@ -26,6 +26,14 @@ import { FlatTopBottom } from './types/FlatTopBottom';
 import { RegressionChannel } from './types/RegressionChannel';
 import { AnchoredVwap } from './types/AnchoredVwap';
 import { FixedRangeVolumeProfile } from './types/FixedRangeVolumeProfile';
+import { CyclicLines } from './types/CyclicLines';
+import { TimeCycles } from './types/TimeCycles';
+import { SineLine } from './types/SineLine';
+import { Sector } from './types/Sector';
+import { BarsPattern, GhostFeed } from './types/BarProjection';
+import { AnchoredVolumeProfile } from './types/AnchoredVolumeProfile';
+import { TableDrawing } from './types/TableDrawing';
+import { PositionForecast } from './types/PositionForecast';
 import { Pitchfork } from './types/Pitchfork';
 import { SchiffPitchfork } from './types/SchiffPitchfork';
 import { ModifiedSchiffPitchfork } from './types/ModifiedSchiffPitchfork';
@@ -41,7 +49,7 @@ import { RotatedRect } from './types/RotatedRect';
 import { Path } from './types/Path';
 import { Arc } from './types/Arc';
 import { Curve } from './types/Curve';
-import { ArrowMarkUp, ArrowMarkDown } from './types/ArrowMark';
+import { ArrowMarkUp, ArrowMarkDown, ArrowMarkLeft, ArrowMarkRight } from './types/ArrowMark';
 import { FlagMark, IconStamp } from './types/GlyphStamp';
 import { FibRetracement } from './types/FibRetracement';
 import { FibExtension } from './types/FibExtension';
@@ -1162,4 +1170,135 @@ registerDrawingType({
     defaultStyle: { lineColor: WARNING, lineWidth: 1, lineStyle: 'solid' },
     placementHint: "Click near a candle's high or low",
     create: (init) => new Liquidity(init),
+});
+
+// ── arrow marks (left / right — the family's other two directions) ──
+const ARROW_LEFT_ICON = svg24('<path d="M20 12H5"/><path d="m9 8-4 4 4 4"/>');
+const ARROW_RIGHT_ICON = svg24('<path d="M4 12h15"/><path d="m15 8 4 4-4 4"/>');
+
+registerDrawingType({
+    type: 'arrowmarkleft',
+    group: 'stamps',
+    label: 'Arrow Mark Left',
+    icon: ARROW_LEFT_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 2, lineStyle: 'solid' },
+    placementHint: 'Click where the arrow tip points',
+    create: (init) => new ArrowMarkLeft(init),
+});
+
+registerDrawingType({
+    type: 'arrowmarkright',
+    group: 'stamps',
+    label: 'Arrow Mark Right',
+    icon: ARROW_RIGHT_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 2, lineStyle: 'solid' },
+    placementHint: 'Click where the arrow tip points',
+    create: (init) => new ArrowMarkRight(init),
+});
+
+// ── cycles ──
+const CYCLIC_ICON = svg24('<path d="M4 4v16M9 4v16M14 4v16M19 4v16" stroke-dasharray="0"/>');
+const TIMECYCLES_ICON = svg24('<circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="12" r="6" opacity="0.75"/><circle cx="12" cy="12" r="9.5" opacity="0.5"/>');
+const SINE_ICON = svg24('<path d="M3 12c2.2-5 4.4-5 6.6 0s4.4 5 6.6 0S20.6 7 22 12"/>');
+
+registerDrawingType({
+    type: 'cycliclines',
+    group: 'patterns',
+    label: 'Cyclic Lines',
+    icon: CYCLIC_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'dashed' },
+    placementHint: 'Click the first line, then the spacing',
+    create: (init) => new CyclicLines(init),
+});
+
+registerDrawingType({
+    type: 'timecycles',
+    group: 'patterns',
+    label: 'Time Cycles',
+    icon: TIMECYCLES_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
+    placementHint: 'Click the centre, then the first ring radius',
+    create: (init) => new TimeCycles(init),
+});
+
+registerDrawingType({
+    type: 'sineline',
+    group: 'patterns',
+    label: 'Sine Line',
+    icon: SINE_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 2, lineStyle: 'solid' },
+    placementHint: 'Click a point on the wave, then the first crest',
+    create: (init) => new SineLine(init),
+});
+
+// ── shapes ──
+const SECTOR_ICON = svg24('<path d="M12 12 4.5 8.2A8.5 8.5 0 0 1 19 5.6Z" fill="currentColor" fill-opacity="0.25"/><path d="M12 12h8.5M12 12 19 5.6"/>');
+
+registerDrawingType({
+    type: 'sector',
+    group: 'shapes',
+    label: 'Sector',
+    icon: SECTOR_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid', fillColor: `${DEFAULT_DRAWING_COLOR}26` },
+    placementHint: 'Click the centre, the opening edge, then the closing edge',
+    create: (init) => new Sector(init),
+});
+
+// ── projections ──
+const BARS_PATTERN_ICON = svg24('<path d="M3 9v6M6.5 6v12M10 9v6"/><path d="M15 9v6M18.5 6v12" opacity="0.5"/><path d="M12.5 12h2" stroke-dasharray="1.5 1.5"/>');
+const GHOST_ICON = svg24('<path d="M3 9v6M6.5 6v12M10 9v6" /><path d="M14 9v6M17.5 6v12M21 9v6" opacity="0.45" stroke-dasharray="2.5 2.5"/>');
+
+registerDrawingType({
+    type: 'barspattern',
+    group: 'measure',
+    label: 'Bars Pattern',
+    icon: BARS_PATTERN_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid' },
+    placementHint: 'Select the source range, then click where the copy starts',
+    create: (init) => new BarsPattern(init),
+});
+
+registerDrawingType({
+    type: 'ghostfeed',
+    group: 'measure',
+    label: 'Ghost Feed',
+    icon: GHOST_ICON,
+    defaultStyle: { lineColor: NEUTRAL, lineWidth: 1, lineStyle: 'solid' },
+    placementHint: 'Select the range to project forward',
+    create: (init) => new GhostFeed(init),
+});
+
+// ── forecast + table + anchored profile ──
+const FORECAST_ICON = svg24('<path d="M3 18 21 6"/><path d="m17.5 5.5 3.5.5-.5 3.5"/><circle cx="4" cy="17.5" r="1.6" fill="currentColor"/>');
+const TABLE_ICON = svg24('<rect x="3.5" y="5" width="17" height="14" rx="1.5"/><path d="M3.5 10h17M9.5 5v14"/>');
+const ANCHORED_VP_ICON = svg24('<path d="M5 4v16"/><rect x="5" y="7" width="14" height="2.4" fill="currentColor" fill-opacity="0.55" stroke-width="1.2"/><rect x="5" y="11" width="9" height="2.4" fill="currentColor" fill-opacity="0.55" stroke-width="1.2"/><rect x="5" y="15" width="5" height="2.4" fill="currentColor" fill-opacity="0.55" stroke-width="1.2"/>');
+
+registerDrawingType({
+    type: 'positionforecast',
+    group: 'measure',
+    label: 'Position Forecast',
+    icon: FORECAST_ICON,
+    defaultStyle: { lineColor: BULLISH, lineWidth: 2, lineStyle: 'solid' },
+    placementHint: 'Click the source price, then the target',
+    create: (init) => new PositionForecast(init),
+});
+
+registerDrawingType({
+    type: 'table',
+    group: 'annotations',
+    label: 'Table',
+    icon: TABLE_ICON,
+    defaultStyle: { lineColor: NEUTRAL, lineWidth: 1, lineStyle: 'solid', fillColor: '#131722cc' },
+    placementHint: 'Click where the table’s top-left corner goes',
+    create: (init) => new TableDrawing(init),
+});
+
+registerDrawingType({
+    type: 'anchoredvp',
+    group: 'measure',
+    label: 'Anchored Volume Profile',
+    icon: ANCHORED_VP_ICON,
+    defaultStyle: { lineColor: BULLISH, lineWidth: 1, lineStyle: 'solid' },
+    placementHint: 'Click the bar the profile starts at',
+    create: (init) => new AnchoredVolumeProfile(init),
 });

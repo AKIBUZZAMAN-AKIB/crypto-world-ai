@@ -5781,6 +5781,11 @@ export class VelaWorkspace {
                 if (c.lastCrossTime != null && c.lastCrossPrice != null) c.chart.drawings.add('vline', { anchors: [{ time: c.lastCrossTime, price: c.lastCrossPrice }] });
             },
         });
+        // The rest of the reference's drawing chords: fib (Alt+F), cross (Alt+C) and box
+        // (Alt+Shift+R) — arming, not placing, exactly like Alt+T above.
+        this.keymap.register({ id: 'drawings.fib', keys: 'alt+f', label: 'Arm the Fib retracement tool', category: 'Drawings', run: () => this.active.chart.drawings.setTool('fibretracement') });
+        this.keymap.register({ id: 'drawings.cross', keys: 'alt+c', label: 'Arm the cross line tool', category: 'Drawings', run: () => this.active.chart.drawings.setTool('crossline') });
+        this.keymap.register({ id: 'drawings.box', keys: ['alt+shift+r'], label: 'Arm the rectangle (box) tool', category: 'Drawings', run: () => this.active.chart.drawings.setTool('box') });
         // ── The reference's other muscle-memory chords ────────────────────────────────
         // Chosen to match TradingView's defaults so a user arriving from there keeps their
         // hands: alert, invert, hide-all, copy/paste an object, go to date, layouts, and

@@ -98,7 +98,18 @@ export type DrawingTypeKey =
     | 'cypher'
     | 'fairvaluegap'
     | 'orderblock'
-    | 'liquidity';
+    | 'liquidity'
+    | 'arrowmarkleft'
+    | 'arrowmarkright'
+    | 'cycliclines'
+    | 'timecycles'
+    | 'sineline'
+    | 'sector'
+    | 'barspattern'
+    | 'ghostfeed'
+    | 'positionforecast'
+    | 'anchoredvp'
+    | 'table';
 
 /** One anchor's role + which axes its handle may move along. */
 export interface AnchorSlot {

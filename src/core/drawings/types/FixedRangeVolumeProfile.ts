@@ -85,7 +85,7 @@ const OUTSIDE_DOWN = `${BEARISH}66`;
 const VA_UP = `${BULLISH}BF`;
 const VA_DOWN = `${BEARISH}BF`;
 
-function defaultFrvpStyle(): FrvpStyle {
+export function defaultFrvpStyle(): FrvpStyle {
     return {
         rows: 24,
         valueAreaPct: 70,
@@ -148,17 +148,38 @@ function growValueArea(rows: readonly FrvpRow[], poc: number, valueAreaFrac: num
     return { vaFrom, vaTo };
 }
 
-/** Add one bar's volume into `rows` using the estimation rule (any OHLC in a row → full volume). */
+/** Add one bar's volume into `rows`, split across the rows its high→low range COVERS in
+ *  proportion to the overlap — the same rule the VPVR indicator uses
+ *  (`renderers/native/vpvr/profile.ts`). Volume is conserved: a bar contributes exactly
+ *  `volume` in total, however many rows it spans, so POC / VAH / VAL and the row widths
+ *  are comparable across tools. (The previous rule added the FULL volume to every row
+ *  containing any of O/H/L/C, which inflated totals and left the rows between those four
+ *  prices empty.) */
 function accumulateBar(rows: FrvpRow[], min: number, rowH: number, bar: FrvpBar): void {
     const v = bar.volume;
     if (!(v > 0)) return;
     const n = rows.length;
     const side = bar.close >= bar.open ? 'up' : 'down';
-    const hit = new Set<number>();
-    for (const p of [bar.open, bar.high, bar.low, bar.close]) {
-        hit.add(clampIndex(Math.floor((p - min) / rowH), n));
+    const span = bar.high - bar.low;
+    if (!(span > 0)) {
+        // Point bar (no range): all of it in the row holding its price.
+        rows[clampIndex(Math.floor((bar.low - min) / rowH), n)]![side] += v;
+        return;
     }
-    for (const k of hit) rows[k]![side] += v;
+    const kFirst = clampIndex(Math.floor((bar.low - min) / rowH), n);
+    const kLast = clampIndex(Math.floor((bar.high - min) / rowH - 1e-9), n);
+    let placed = 0;
+    for (let k = kFirst; k <= kLast; k += 1) {
+        const rowBot = min + k * rowH;
+        const overlap = Math.min(bar.high, rowBot + rowH) - Math.max(bar.low, rowBot);
+        if (!(overlap > 0)) continue;
+        const part = (v * overlap) / span;
+        rows[k]![side] += part;
+        placed += part;
+    }
+    // A range that runs outside the grid (a caller passing a foreign min/rowH) would drop
+    // the clipped part; park the remainder in the close's row so the total never drifts.
+    if (placed < v - 1e-9) rows[clampIndex(Math.floor((bar.close - min) / rowH), n)]![side] += v - placed;
 }
 
 /** POC index + max row total, or null when every row is empty. */
@@ -176,11 +197,9 @@ function findPoc(rows: readonly FrvpRow[]): { poc: number; maxTotal: number } | 
 }
 
 /**
- * Estimation-based volume profile: for each bar, the full bar volume is added to every
- * price row that contains **any** of its OHLC prices (open / high / low / close). Volume
- * is split up/down by bar direction (`close >= open`). Unlike a proportional H–L
- * distribution this does not conserve total volume across rows — a wide bar can contribute
- * to several rows. Returns null when the window holds no volume.
+ * Price-by-volume profile over `bars`: each bar's volume is split across the rows its
+ * high→low range covers, in proportion to the overlap (volume conserving), and tagged
+ * up/down by bar direction (`close >= open`). Returns null when the window holds no volume.
  */
 export function buildEstimatedProfile(
     bars: readonly FrvpBar[],
@@ -283,10 +302,11 @@ export interface FrvpLayout {
 
 /**
  * A **fixed-range volume profile**: two time anchors bound a range, and the tool buckets
- * bar volume into equal-height price rows by an estimation rule (a bar contributes its
- * full volume to every row that contains any of its OHLC prices). Histogram width, value
- * area, POC / VAH / VAL lines, and optional developing levels are data-driven — they
- * recompute live as an endpoint is dragged or new bars arrive, via {@link Projector.barsInRange}.
+ * bar volume into equal-height price rows by spreading each bar across the price rows its
+ * high→low range covers (proportional to the overlap, so volume is conserved). Histogram
+ * width, value area, POC / VAH / VAL lines, and optional developing levels are data-driven
+ * — they recompute live as an endpoint is dragged or new bars arrive, via
+ * {@link Projector.barsInRange}.
  */
 export class FixedRangeVolumeProfile extends Drawing {
     readonly type = 'fixedrangevp' as const;
