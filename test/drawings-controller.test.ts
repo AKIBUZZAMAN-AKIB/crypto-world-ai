@@ -571,6 +571,7 @@ describe('buildToolbar grouping', () => {
             'text',
             'callout',
             'note',
+            'pinnednote', // a note that stays put on screen
             'pricenote',
             'pin', // added in round 22
             'comment',

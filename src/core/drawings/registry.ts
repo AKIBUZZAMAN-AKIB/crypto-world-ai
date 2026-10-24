@@ -15,6 +15,7 @@ import { TrendAngle } from './types/TrendAngle';
 import { Box } from './types/Box';
 import { TextLabel } from './types/TextLabel';
 import { Note } from './types/Note';
+import { PinnedNote } from './types/PinnedNote';
 import { PriceLabel } from './types/PriceLabel';
 import { Callout } from './types/Callout';
 import { PriceNote } from './types/PriceNote';
@@ -316,6 +317,18 @@ registerDrawingType({
     icon: NOTE_ICON,
     defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid', fillColor: `${DEFAULT_DRAWING_COLOR}d9` },
     create: (init) => new Note(init),
+});
+
+const PINNED_NOTE_ICON = svg24('<rect x="4" y="4" width="13" height="10" rx="2"/><path d="M8 9h5M8 11.5h3"/><path d="M19 7v9l-3-2h-6"/>');
+
+registerDrawingType({
+    type: 'pinnednote',
+    group: 'annotations',
+    label: 'Pinned Note',
+    icon: PINNED_NOTE_ICON,
+    defaultStyle: { lineColor: DEFAULT_DRAWING_COLOR, lineWidth: 1, lineStyle: 'solid', fillColor: `${DEFAULT_DRAWING_COLOR}d9` },
+    placementHint: 'Click anywhere to pin a note to the screen — it stays put while the chart scrolls',
+    create: (init) => new PinnedNote(init),
 });
 
 registerDrawingType({

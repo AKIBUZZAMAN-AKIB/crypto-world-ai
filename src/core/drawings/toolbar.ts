@@ -84,7 +84,7 @@ const BRUSH_TYPES: DrawingTypeKey[] = ['freehand', 'highlighter'];
 const ARROW_TYPES: DrawingTypeKey[] = ['arrow', 'arrowmarkup', 'arrowmarkdown', 'arrowmarkleft', 'arrowmarkright'];
 const SHAPE_TYPES: DrawingTypeKey[] = ['box', 'ellipse', 'triangle', 'polyline', 'circle', 'rotatedrect', 'path', 'arc', 'curve', 'doublecurve', 'sector'];
 
-const TEXT_TYPES: DrawingTypeKey[] = ['text', 'callout', 'note', 'pricenote', 'pin', 'comment', 'pricelabel', 'signpost', 'table'];
+const TEXT_TYPES: DrawingTypeKey[] = ['text', 'callout', 'note', 'pinnednote', 'pricenote', 'pin', 'comment', 'pricelabel', 'signpost', 'table'];
 const ICON_TYPES: DrawingTypeKey[] = ['flagmark', 'iconstamp'];
 
 type SectionSource = { label: string; registryGroup: string } | { label: string; types: readonly DrawingTypeKey[] };

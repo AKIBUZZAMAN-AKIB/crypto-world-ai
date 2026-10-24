@@ -22,6 +22,7 @@ export type DrawingTypeKey =
     | 'box'
     | 'text'
     | 'note'
+    | 'pinnednote'
     | 'pricenote'
     | 'comment'
     | 'pricelabel'

@@ -18,12 +18,12 @@ function fakeProjector(): Projector {
 describe('drawings/gann fan', () => {
     const proj = fakeProjector();
 
-    it('draws a ray per enabled Gann ratio, labelled 1/8 … 8/1', () => {
+    it('draws a ray per enabled Gann ratio, labelled 1x8 … 8x1', () => {
         const d = createDrawing('gannfan', { paneId: 'price', anchors: [{ time: 0, price: 50 }, { time: 10 * HR, price: 60 }] })! as GannFan;
         expect(d.anchorSchema().min).toBe(2);
         const lines = d.entryLines(proj)!;
         expect(lines.length).toBe(9); // all 9 default ratios enabled
-        expect(lines.map((l) => l.numberText)).toEqual(['1/8', '1/4', '1/3', '1/2', '1/1', '2/1', '3/1', '4/1', '8/1']);
+        expect(lines.map((l) => l.numberText)).toEqual(['1x8', '1x4', '1x3', '1x2', '1x1', '2x1', '3x1', '4x1', '8x1']);
         expect(d.editableLevels()!.length).toBe(9);
     });
 

@@ -14,7 +14,7 @@ import type {
     SnapMode,
     ToolbarDefinition,
 } from '../../../core/drawings';
-import { applyToolDefaults, captureToolDefaults, deserializeDrawing, getDrawingType, resetDrawingSettings, shownOnTimeframe, Callout, Magnifier, TableDrawing, TextLabel } from '../../../core/drawings';
+import { applyToolDefaults, captureToolDefaults, deserializeDrawing, getDrawingType, resetDrawingSettings, shownOnTimeframe, Callout, Magnifier, PinnedNote, TableDrawing, TextLabel } from '../../../core/drawings';
 import type { Unsubscribe } from '../../../core/util/types';
 import { contrastColor, namedFontSize, labelLineHeight, TEXT_FRAME_INSET, TEXT_FRAME_RISE } from '../../shared/drawing-geometry';
 import { withAlpha } from '../core/chartConfig';
@@ -160,6 +160,8 @@ export class UserDrawingController implements IDrawingsRendererPort {
     private textEditor: { el: HTMLTextAreaElement; id: string; initial: string; stored: string } | null = null;
     /** The table cell being typed into (a one-line editor over that cell), if any. */
     private cellEditor: { el: HTMLInputElement; id: string; row: number; col: number; initial: string } | null = null;
+    /** A pinned note being dragged: where on its plate the press landed, in px. */
+    private pinDrag: { id: string; grabX: number; grabY: number } | null = null;
     /** A column separator drag: which table + column, and where it started. */
     private colDrag: { id: string; col: number; startX: number; startW: number } | null = null;
 
@@ -456,6 +458,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
     claim(x: number, y: number): boolean {
         if (this.measureMode || this.eraserMode || this.zoomMode) return true; // these modes capture their clicks (no pan)
         if (this.magnifierChipAt(x, y)) return true; // the chip is a dropdown trigger, never a pan start
+        if (this.pinnedNoteAt(x, y)) return true; // dragging a pinned note, not a pan
         if (this.tableEdgeAt(x, y)) return true; // a column separator drag, not a pan
         return this.interaction.claim(x, y);
     }
@@ -547,6 +550,15 @@ export class UserDrawingController implements IDrawingsRendererPort {
             this.deleteAt(x, y);
             return;
         }
+        const pin = this.pinnedNoteAt(x, y);
+        if (pin) {
+            // A pinned note slides across the panes it was dropped on; its offset from the
+            // press stays fixed, so the plate doesn't jump under the cursor.
+            const b = pin.bounds(this.deps.projector());
+            if (b) this.pinDrag = { id: pin.id, grabX: x - b.x, grabY: y - b.y };
+            this.render();
+            return;
+        }
         const edge = this.tableEdgeAt(x, y);
         if (edge) {
             // Grab the separator: the column takes a width of its own from here on.
@@ -589,6 +601,19 @@ export class UserDrawingController implements IDrawingsRendererPort {
             const g = this.interaction.snapCursor(x, y, snap);
             this.measure.move(g.x, g.y); // click-move-click: the cursor sizes the ruler with no button down
             this.render();
+            return;
+        }
+        if (this.pinDrag) {
+            const d = this.drawings.find((n) => n.id === this.pinDrag!.id);
+            if (d instanceof PinnedNote) {
+                const proj = this.deps.projector();
+                const rect = proj.paneRect?.(d.paneId) ?? null;
+                const top = rect?.top ?? 0;
+                const h = Math.max(1, rect?.height ?? proj.height);
+                const w = Math.max(1, proj.width);
+                d.moveTo((x - this.pinDrag.grabX) / w, (y - this.pinDrag.grabY - top) / h);
+                this.render();
+            }
             return;
         }
         if (this.colDrag) {
@@ -651,6 +676,14 @@ export class UserDrawingController implements IDrawingsRendererPort {
             const g = this.interaction.snapCursor(x, y, snap);
             this.measure.up(x, y, g.x, g.y); // press-drag-release finishes the ruler in one gesture
             if (this.measure.isFinished()) this.withModeIntent(() => this.exitMeasure(false));
+            this.render();
+            return;
+        }
+        if (this.pinDrag) {
+            const drag = this.pinDrag;
+            this.pinDrag = null;
+            const d = this.drawings.find((n) => n.id === drag.id);
+            if (d instanceof PinnedNote) this.emit({ kind: 'edit', doc: d.serialize() });
             this.render();
             return;
         }
@@ -911,6 +944,7 @@ export class UserDrawingController implements IDrawingsRendererPort {
     cursorAt(x: number, y: number): string | null {
         if (this.eraserMode) return 'pointer'; // signal "click to delete" while erasing
         if (this.activeTool == null && this.magnifierChipAt(x, y)) return 'pointer'; // the chip is clickable
+        if (this.activeTool == null && this.pinnedNoteAt(x, y)) return 'move'; // a pinned note drags
         if (this.activeTool == null && this.tableEdgeAt(x, y)) return 'col-resize'; // the column grab
         return this.interaction.cursorAt(x, y);
     }
@@ -942,6 +976,20 @@ export class UserDrawingController implements IDrawingsRendererPort {
     /** Double-click over a drawing opens its full settings panel (a callout or text label edits
      *  its words in place instead) and suppresses the chart's view reset. Returns true only
      *  when a drawing is under the cursor. */
+    /** The pinned note whose plate contains a point (topmost first). */
+    private pinnedNoteAt(x: number, y: number): PinnedNote | null {
+        if (this.activeTool != null) return null;
+        const proj = this.deps.projector();
+        const shown = this.onScreen();
+        for (let i = shown.length - 1; i >= 0; i -= 1) {
+            const d = shown[i]!;
+            if (!(d instanceof PinnedNote) || !d.visible || d.locked) continue;
+            const b = d.bounds(proj);
+            if (b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return d;
+        }
+        return null;
+    }
+
     /** The table column separator under a point (the resize grab), scanning top-down. */
     private tableEdgeAt(x: number, y: number): { d: TableDrawing; col: number; width: number } | null {
         if (this.activeTool != null) return null;

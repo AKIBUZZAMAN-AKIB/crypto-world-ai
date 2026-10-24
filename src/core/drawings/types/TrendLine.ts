@@ -1,7 +1,7 @@
 import { Drawing, type AnchorSlot } from '../Drawing';
 import type { Projector } from '../geometry';
 import type { SettingsSchema } from '../schema';
-import { LINE_FIELDS, TEXT_FIELDS } from '../schema';
+import { ARROW_FIELDS, LINE_FIELDS, MIDDLE_POINT_FIELD, TEXT_FIELDS } from '../schema';
 import { distToSegment, extendRay, handleAt } from '../hittest';
 
 /** A two-point trend line. Both endpoints move freely on time + price; either end can run on
@@ -64,7 +64,8 @@ export class TrendLine extends Drawing {
         return {
             fields: [
                 ...LINE_FIELDS,
-                { path: 'style.arrowRight', label: 'Arrow', kind: 'boolean', group: 'line' },
+                ...ARROW_FIELDS,
+                MIDDLE_POINT_FIELD,
                 { path: 'style.extendLeft', label: 'Extend left', kind: 'boolean', group: 'line' },
                 { path: 'style.extendRight', label: 'Extend right', kind: 'boolean', group: 'line' },
                 ...TEXT_FIELDS,

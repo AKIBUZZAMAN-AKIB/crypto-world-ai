@@ -1,5 +1,5 @@
 import type { Drawing, Projector, DrawingStyle } from '../../../core/drawings';
-import { SegmentDrawing, TrendLine, FibRatios, RadialFib, FibSpiral, GannSquare, GANN_SQUARE_ARCS, Pin, DedekindTessellation, MachFigure, MeasureBox, PositionTool, PatternDrawing, CalloutBase, Callout, Comment, PriceNote, Signpost, Note, PriceLabel, ArrowMark, GlyphStamp, RegressionChannel, AnchoredVwap, FixedRangeVolumeProfile, Magnifier, PriceActionZone, Liquidity, BarProjection, TableDrawing, PositionForecast, AnchoredVolumeProfile, openVerdictStyle, magnifierTimeframeLabel, lineSegmentIntersection, effectiveFillColor, VALID_FILL, INVALID_FILL, DEFAULT_DRAWING_COLOR, computeDrawingStats, statsEnabled, formatDuration } from '../../../core/drawings';
+import { SegmentDrawing, TrendLine, FibRatios, RadialFib, FibSpiral, GannSquare, GANN_SQUARE_ARCS, Pin, PinnedNote, DedekindTessellation, MachFigure, MeasureBox, PositionTool, PatternDrawing, CalloutBase, Callout, Comment, PriceNote, Signpost, Note, PriceLabel, ArrowMark, GlyphStamp, RegressionChannel, AnchoredVwap, FixedRangeVolumeProfile, Magnifier, PriceActionZone, Liquidity, BarProjection, TableDrawing, PositionForecast, AnchoredVolumeProfile, openVerdictStyle, magnifierTimeframeLabel, lineSegmentIntersection, effectiveFillColor, VALID_FILL, INVALID_FILL, DEFAULT_DRAWING_COLOR, computeDrawingStats, statsEnabled, formatDuration } from '../../../core/drawings';
 import type { VelaTheme } from '../../../core/options';
 import { contrastColor, dashPattern, extendEndpoints, namedFontSize, labelLineHeight, TEXT_FRAME_INSET, TEXT_FRAME_RISE, uprightLineAngle } from '../../shared/drawing-geometry';
 import { BEARISH, BULLISH, NEUTRAL, SLATE, SLATE_DEEP } from '../../../core/palette';
@@ -85,6 +85,13 @@ export class DrawingPainter {
             this.paintClipped(ctx, d, proj, () => this.paintOne(ctx, d, proj, theme));
         }
         this.targets = {};
+        // The "middle point" grip of a two-point line: the reference's switch that turns the
+        // segment's centre into a drag handle (grabbing it moves the line, like the body does).
+        for (const d of drawings) {
+            if (!d.visible || !d.style.middlePoint || d.anchors.length !== 2) continue;
+            const pts = d.handlePoints(proj);
+            if (pts.length === 2) this.paintMiddleGrip(ctx, d, pts[0]!, pts[1]!);
+        }
         // Stats plates sit above every body (they are readouts ABOUT the drawing, so a
         // neighbouring body must not clip them) and below the handles.
         for (const d of drawings) {
@@ -193,6 +200,27 @@ export class DrawingPainter {
         ctx.rect(0, rect.top, proj.width, rect.height);
         ctx.clip();
         paint();
+        ctx.restore();
+    }
+
+    /** The midpoint grip: a small rotated square in the line's own color, so it reads as part
+     *  of the line rather than another anchor. */
+    private paintMiddleGrip(ctx: CanvasRenderingContext2D, d: Drawing, a: readonly [number, number], b: readonly [number, number]): void {
+        const cx = (a[0] + b[0]) / 2;
+        const cy = (a[1] + b[1]) / 2;
+        const r = 4;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - r);
+        ctx.lineTo(cx + r, cy);
+        ctx.lineTo(cx, cy + r);
+        ctx.lineTo(cx - r, cy);
+        ctx.closePath();
+        ctx.fillStyle = d.style.lineColor || DEFAULT_DRAWING_COLOR;
+        ctx.fill();
+        ctx.strokeStyle = HANDLE_BORDER;
+        ctx.lineWidth = 1;
+        ctx.stroke();
         ctx.restore();
     }
 
@@ -415,7 +443,7 @@ export class DrawingPainter {
             this.paintCallout(ctx, d, proj, theme);
             return;
         }
-        if (d instanceof Note) {
+        if (d instanceof PinnedNote || d instanceof Note) {
             this.paintNote(ctx, d, proj, theme);
             return;
         }
@@ -478,6 +506,9 @@ export class DrawingPainter {
                     ctx.moveTo(ex1, ey1);
                     ctx.lineTo(ex2, ey2);
                 });
+                // A ray has two ends the eye can follow: where it starts and where it runs out.
+                if (d.style.arrowRight) this.paintArrowhead(ctx, [ex1, ey1], [ex2, ey2], d.style);
+                if (d.style.arrowLeft) this.paintArrowhead(ctx, [ex2, ey2], [ex1, ey1], d.style);
                 break;
             }
             case 'extendedline': {
@@ -488,6 +519,10 @@ export class DrawingPainter {
                     ctx.moveTo(ex1, ey1);
                     ctx.lineTo(ex2, ey2);
                 });
+                // The ends sit on the chart edges while the line runs on; the reference's own
+                // note is that you switch the extension off to see an arrow end in place.
+                if (d.style.arrowLeft) this.paintArrowhead(ctx, [ex2, ey2], [ex1, ey1], d.style);
+                if (d.style.arrowRight) this.paintArrowhead(ctx, [ex1, ey1], [ex2, ey2], d.style);
                 break;
             }
             case 'vline': {
@@ -1683,7 +1718,7 @@ export class DrawingPainter {
         ctx.restore();
     }
 
-    private paintNote(ctx: CanvasRenderingContext2D, d: Note, proj: Projector, theme: VelaTheme): void {
+    private paintNote(ctx: CanvasRenderingContext2D, d: Drawing, proj: Projector, theme: VelaTheme): void {
         const pts = d.handlePoints(proj);
         if (!pts.length) return;
         const [ax, ay] = pts[0]!;
@@ -1980,6 +2015,8 @@ export class DrawingPainter {
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
         });
+        if (d.style.arrowLeft) this.paintArrowhead(ctx, [x2, y2], [x1, y1], d.style);
+        if (d.style.arrowRight) this.paintArrowhead(ctx, [x1, y1], [x2, y2], d.style);
         const a = d.anchors[0];
         const b = d.anchors[1];
         if (!a || !b) return;
@@ -2022,6 +2059,8 @@ export class DrawingPainter {
             ctx.moveTo(x1, y1);
             ctx.lineTo(x2, y2);
         });
+        if (d.style.arrowLeft) this.paintArrowhead(ctx, [x2, y2], [x1, y1], d.style);
+        if (d.style.arrowRight) this.paintArrowhead(ctx, [x1, y1], [x2, y2], d.style);
         const dx = x2 - x1;
         const dy = y2 - y1;
         const angleRad = Math.atan2(-dy, dx); // screen Y is inverted → negate for a natural angle

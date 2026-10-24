@@ -35,6 +35,7 @@ export { Box } from './types/Box';
 export { PinnedLabel } from './types/PinnedLabel';
 export { TextLabel } from './types/TextLabel';
 export { Note } from './types/Note';
+export { PinnedNote } from './types/PinnedNote';
 export { PriceLabel } from './types/PriceLabel';
 export { SegmentDrawing } from './types/SegmentDrawing';
 export { ParallelChannel } from './types/ParallelChannel';

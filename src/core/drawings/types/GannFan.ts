@@ -8,15 +8,17 @@ import { fibLevels, LEVEL_AMBER, LEVEL_AQUA, LEVEL_BLUE, LEVEL_GREEN, LEVEL_ORAN
  * anchor). A ratio > 1 is steeper (more price per unit time), < 1 shallower.
  */
 const GANN_FAN_LEVELS = fibLevels([
-    { ratio: 0.125, color: LEVEL_RED, label: '1/8' },
-    { ratio: 0.25, color: LEVEL_ORANGE, label: '1/4' },
-    { ratio: 0.333, color: LEVEL_AMBER, label: '1/3' },
-    { ratio: 0.5, color: LEVEL_GREEN, label: '1/2' },
-    { ratio: 1, color: LEVEL_UNITY, label: '1/1' },
-    { ratio: 2, color: LEVEL_TEAL, label: '2/1' },
-    { ratio: 3, color: LEVEL_BLUE, label: '3/1' },
-    { ratio: 4, color: LEVEL_AQUA, label: '4/1' },
-    { ratio: 8, color: LEVEL_PURPLE, label: '8/1' },
+    // The reference names the angles price×time ("2x1" = 2 units of price per 1 of time), which
+    // is the opposite order to the ratio below: ratio 2 (steeper than the 1x1) prints "2x1".
+    { ratio: 0.125, color: LEVEL_RED, label: '1x8' },
+    { ratio: 0.25, color: LEVEL_ORANGE, label: '1x4' },
+    { ratio: 0.333, color: LEVEL_AMBER, label: '1x3' },
+    { ratio: 0.5, color: LEVEL_GREEN, label: '1x2' },
+    { ratio: 1, color: LEVEL_UNITY, label: '1x1' },
+    { ratio: 2, color: LEVEL_TEAL, label: '2x1' },
+    { ratio: 3, color: LEVEL_BLUE, label: '3x1' },
+    { ratio: 4, color: LEVEL_AQUA, label: '4x1' },
+    { ratio: 8, color: LEVEL_PURPLE, label: '8x1' },
 ]);
 
 /**

@@ -1,7 +1,7 @@
 import { Drawing, type AnchorSlot } from '../Drawing';
 import type { Projector } from '../geometry';
 import type { SettingsSchema } from '../schema';
-import { LINE_FIELDS, TEXT_FIELDS } from '../schema';
+import { ARROW_FIELDS, LINE_FIELDS, MIDDLE_POINT_FIELD, TEXT_FIELDS } from '../schema';
 import { distToSegment, handleAt } from '../hittest';
 
 /**
@@ -52,7 +52,9 @@ export abstract class TwoPointLine extends Drawing {
         return { min: Math.min(a.price, b.price), max: Math.max(a.price, b.price) };
     }
 
+    /** Every two-point line carries the arrow-end pair: the reference sets an arrow-shaped end
+     *  on either side (an extended line shows them once its extension is switched off). */
     schema(): SettingsSchema {
-        return { fields: [...LINE_FIELDS, ...TEXT_FIELDS] };
+        return { fields: [...LINE_FIELDS, ...ARROW_FIELDS, MIDDLE_POINT_FIELD, ...TEXT_FIELDS] };
     }
 }

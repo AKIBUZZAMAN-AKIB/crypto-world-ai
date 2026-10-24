@@ -1,7 +1,7 @@
 import { Drawing, type AnchorSlot } from '../Drawing';
 import type { Projector } from '../geometry';
 import type { SettingsSchema } from '../schema';
-import { LINE_FIELDS, TEXT_FIELDS } from '../schema';
+import { LINE_FIELDS, MIDDLE_POINT_FIELD, TEXT_FIELDS } from '../schema';
 import { distToSegment, handleAt } from '../hittest';
 
 /** A two-point arrow — a line with an arrowhead (at the end by default; start optional). */
@@ -55,6 +55,7 @@ export class Arrow extends Drawing {
                 ...LINE_FIELDS,
                 { path: 'style.arrowRight', label: 'Head (end)', kind: 'boolean', group: 'line' },
                 { path: 'style.arrowLeft', label: 'Head (start)', kind: 'boolean', group: 'line' },
+                MIDDLE_POINT_FIELD,
                 ...TEXT_FIELDS,
             ],
         };

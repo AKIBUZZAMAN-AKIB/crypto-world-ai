@@ -1,7 +1,7 @@
 import { Drawing, type AnchorSlot } from '../Drawing';
 import type { Projector } from '../geometry';
 import type { SettingsSchema } from '../schema';
-import { LINE_FIELDS, TEXT_FIELDS } from '../schema';
+import { ARROW_FIELDS, LINE_FIELDS, TEXT_FIELDS } from '../schema';
 import { distToSegment, extendRay, handleAt } from '../hittest';
 
 /** A ray: a line through two anchors that extends to the right chart edge. */
@@ -52,6 +52,6 @@ export class Ray extends Drawing {
     }
 
     schema(): SettingsSchema {
-        return { fields: [...LINE_FIELDS, ...TEXT_FIELDS] };
+        return { fields: [...LINE_FIELDS, ...ARROW_FIELDS, ...TEXT_FIELDS] };
     }
 }

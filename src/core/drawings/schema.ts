@@ -49,6 +49,17 @@ export const LINE_FIELDS: SettingsField[] = [
     { path: 'style.lineStyle', label: 'Line style', kind: 'lineStyle', options: LINE_STYLE_OPTIONS, group: 'line' },
 ];
 
+/** Arrow ends for the line family: the reference lets either end of a line be drawn with an
+ *  arrowhead, so a ray can point where it runs and an extended line can mark the ends it
+ *  would otherwise run past (switch its extension off to see them). */
+export const ARROW_FIELDS: SettingsField[] = [
+    { path: 'style.arrowLeft', label: 'Arrow left', kind: 'boolean', group: 'line' },
+    { path: 'style.arrowRight', label: 'Arrow right', kind: 'boolean', group: 'line' },
+];
+
+/** The reference's "Middle point" switch: a grip halfway along a two-point line. */
+export const MIDDLE_POINT_FIELD: SettingsField = { path: 'style.middlePoint', label: 'Middle point', kind: 'boolean', group: 'line' };
+
 /** Reusable fill fields shared by filled shapes (channels, boxes). The fill's opacity lives in
  *  the fill color's own alpha (the color picker controls it) — no separate opacity field. */
 export const FILL_FIELDS: SettingsField[] = [{ path: 'style.fillColor', label: 'Fill color', kind: 'color', group: 'fill' }];
