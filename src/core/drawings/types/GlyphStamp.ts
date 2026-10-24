@@ -4,8 +4,16 @@ import type { SettingsSchema } from '../schema';
 import { TEXT_FIELDS } from '../schema';
 import { handleAt } from '../hittest';
 
-/** The selectable glyph set (monochrome symbols tint with the stamp color). */
-export const GLYPH_OPTIONS = ['★', '☆', '●', '◆', '▲', '▼', '➤', '⚑', '✚', '✕', '❤', '♦'] as const;
+/**
+ * The selectable glyph set. The first group is monochrome geometry (it tints with the stamp
+ * color); the second is the sticker/emoji set the reference offers — those paint in their own
+ * colors, so a stamp reads as a sticker rather than as a tinted symbol.
+ */
+export const GLYPH_OPTIONS = [
+    '★', '☆', '●', '◆', '▲', '▼', '➤', '⚑', '✚', '✕', '❤', '♦',
+    '🚀', '🌙', '🔥', '💎', '🐂', '🐻', '📈', '📉', '💰', '🎯',
+    '😀', '😎', '🤔', '😱', '✅', '❌', '⚠', '🎉',
+] as const;
 
 /** Named stamp sizes + their on-screen px (constant — the stamp never scales with zoom). */
 export const STAMP_SIZE_OPTIONS = ['small', 'normal', 'large', 'huge'] as const;

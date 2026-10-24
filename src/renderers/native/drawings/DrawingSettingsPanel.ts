@@ -20,6 +20,8 @@ import {
     templateColor,
     templateMatches,
     timeframeBandOf,
+    hasStats,
+    statsEnabled,
 } from '../../../core/drawings';
 import { applyChromeTokens } from '../../shared/theme-tokens';
 import { Dialog } from '../../../ui/components/dialog';
@@ -322,6 +324,8 @@ export class DrawingSettingsPanel {
         const style = this.styleBlock(b, fields, has);
         if (style) out.push(style);
         if (d.editableLevels()) out.push(this.levelsBlock(b));
+        const stats = this.statsFold(b);
+        if (stats) out.push(stats);
         if (d instanceof PositionTool) out.push(this.richBlock('Position', (grid) => buildPositionSection(grid, d, b.actions, this.theme)));
         if (d instanceof FixedRangeVolumeProfile) out.push(this.richBlock('Profile', (grid) => buildProfileSection(grid, d, b.actions, this.theme)));
         const own = this.optionsBlock(b, fields, d);
@@ -720,6 +724,32 @@ export class DrawingSettingsPanel {
 
     /** The timeframes the drawing shows on: one line while it's every timeframe, the band
      *  picker only once the user goes custom. */
+    /** The "Stats" fold: the reference's own readout toggles for a two-point drawing. Only
+     *  offered where a measurement exists (two or more anchors), so a stamp never shows a
+     *  section that could only ever say "nothing". */
+    private statsFold(b: Build): HTMLElement | null {
+        if (!hasStats(b.live())) return null;
+        const on = (k: 'range' | 'percent' | 'bars' | 'time' | 'angle' | 'always'): boolean => !!b.live().style.stats?.[k];
+        const chip = (k: 'range' | 'percent' | 'bars' | 'time' | 'angle', label: string, title: string): HTMLElement =>
+            this.chip(b, label, () => on(k), (v) => b.edit({ [`style.stats.${k}`]: v }), title);
+        const summary = (): string => {
+            if (!statsEnabled(b.live().style.stats)) return 'Off';
+            const names = [on('range') && 'range', on('percent') && '%', on('bars') && 'bars', on('time') && 'time', on('angle') && 'angle'].filter(Boolean);
+            return `${names.join(' · ')}${on('always') ? ' · always' : ''}`;
+        };
+        return this.fold(b, 'stats', 'Stats', summary, () => [
+            row(
+                'Show',
+                chip('range', 'Range', 'Price range between the two points'),
+                chip('percent', '%', 'Percent change from the first point'),
+                chip('bars', 'Bars', 'Number of bars between the points'),
+                chip('time', 'Time', 'Date/time range between the points'),
+                chip('angle', 'Angle', 'Inclination of the line, in degrees'),
+            ),
+            row('When', this.chip(b, 'Always show stats', () => on('always'), (v) => b.edit({ 'style.stats.always': v }), 'Show the readout even when the drawing is not selected')),
+        ]);
+    }
+
     private showOnFold(b: Build): HTMLElement {
         const bands = (): readonly string[] | undefined => b.live().showOn;
         // Read from the drawing on every refresh, so an undo or a change elsewhere shows; "Custom"

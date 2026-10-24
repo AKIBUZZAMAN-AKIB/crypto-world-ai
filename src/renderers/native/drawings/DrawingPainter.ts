@@ -1,5 +1,5 @@
 import type { Drawing, Projector, DrawingStyle } from '../../../core/drawings';
-import { SegmentDrawing, TrendLine, FibRatios, RadialFib, FibSpiral, GannSquare, GANN_SQUARE_ARCS, Pin, DedekindTessellation, MachFigure, MeasureBox, PositionTool, PatternDrawing, CalloutBase, Callout, Comment, PriceNote, Signpost, Note, PriceLabel, ArrowMark, GlyphStamp, RegressionChannel, AnchoredVwap, FixedRangeVolumeProfile, Magnifier, PriceActionZone, Liquidity, BarProjection, TableDrawing, PositionForecast, AnchoredVolumeProfile, magnifierTimeframeLabel, lineSegmentIntersection, effectiveFillColor, VALID_FILL, INVALID_FILL, DEFAULT_DRAWING_COLOR } from '../../../core/drawings';
+import { SegmentDrawing, TrendLine, FibRatios, RadialFib, FibSpiral, GannSquare, GANN_SQUARE_ARCS, Pin, DedekindTessellation, MachFigure, MeasureBox, PositionTool, PatternDrawing, CalloutBase, Callout, Comment, PriceNote, Signpost, Note, PriceLabel, ArrowMark, GlyphStamp, RegressionChannel, AnchoredVwap, FixedRangeVolumeProfile, Magnifier, PriceActionZone, Liquidity, BarProjection, TableDrawing, PositionForecast, AnchoredVolumeProfile, magnifierTimeframeLabel, lineSegmentIntersection, effectiveFillColor, VALID_FILL, INVALID_FILL, DEFAULT_DRAWING_COLOR, computeDrawingStats, statsEnabled, formatDuration } from '../../../core/drawings';
 import type { VelaTheme } from '../../../core/options';
 import { contrastColor, dashPattern, extendEndpoints, namedFontSize, labelLineHeight, TEXT_FRAME_INSET, TEXT_FRAME_RISE, uprightLineAngle } from '../../shared/drawing-geometry';
 import { BEARISH, BULLISH, NEUTRAL, SLATE, SLATE_DEEP } from '../../../core/palette';
@@ -82,6 +82,16 @@ export class DrawingPainter {
             this.paintClipped(ctx, d, proj, () => this.paintOne(ctx, d, proj, theme));
         }
         this.targets = {};
+        // Stats plates sit above every body (they are readouts ABOUT the drawing, so a
+        // neighbouring body must not clip them) and below the handles.
+        for (const d of drawings) {
+            if (!d.visible) continue;
+            const st = d.style.stats;
+            if (!statsEnabled(st)) continue;
+            const selected = targets.selected?.has(d.id) ?? false;
+            if (!st!.always && !selected && targets.hovered !== d.id) continue;
+            this.paintStats(ctx, d, proj, theme);
+        }
         this.paintHighlights(ctx, drawings, proj, handleIdsFor(targets));
     }
 
@@ -1401,6 +1411,52 @@ export class DrawingPainter {
     }
 
     /** A Note: free text on a rounded plate anchored at the point (top-left). */
+    /** The "Stats" plate: the readout the reference prints beside a drawing (range, percent,
+     *  bars, time and angle — whichever the user switched on). Sits outside the drawing's
+     *  bounding box on the right, flipping left when the plot runs out, and only paints for a
+     *  selected/hovered drawing unless "Always show stats" is on. */
+    private paintStats(ctx: CanvasRenderingContext2D, d: Drawing, proj: Projector, theme: VelaTheme): void {
+        const st = d.style.stats;
+        const stats = computeDrawingStats(d, proj);
+        if (!st || !stats) return;
+        const rows: string[] = [];
+        const decimals = Math.min(8, valueDecimals(stats.priceRange || 1));
+        if (st.range) rows.push(`Range ${stats.priceRange.toFixed(decimals)}`);
+        if (st.percent) rows.push(`${stats.percent >= 0 ? '+' : ''}${stats.percent.toFixed(2)}%`);
+        if (st.bars) rows.push(`${stats.bars} bar${stats.bars === 1 ? '' : 's'}`);
+        if (st.time) rows.push(formatDuration(stats.timeMs));
+        if (st.angle) rows.push(`${stats.angle.toFixed(1)}°`);
+        if (rows.length === 0) return;
+        const b = d.bounds(proj);
+        if (!b) return;
+        ctx.save();
+        ctx.font = `11px ${theme.fontFamily}`;
+        const tw = Math.max(...rows.map((r) => ctx.measureText(r).width));
+        const lineH = 14;
+        const padX = 6;
+        const padY = 5;
+        const w = tw + padX * 2;
+        const h = rows.length * lineH + padY * 2 - (lineH - 11);
+        const gap = 8;
+        const x = b.x + b.w + gap + w <= proj.width ? b.x + b.w + gap : Math.max(0, b.x - gap - w);
+        const y = Math.min(Math.max(0, b.y + b.h / 2 - h / 2), proj.height - h);
+        ctx.globalAlpha = 0.92 * ctx.globalAlpha;
+        roundRect(ctx, x, y, w, h, 3);
+        ctx.fillStyle = BADGE_FILL;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = d.style.lineColor || BADGE_STROKE;
+        ctx.lineWidth = 1;
+        roundRect(ctx, x + 0.5, y + 0.5, w - 1, h - 1, 3);
+        ctx.stroke();
+        ctx.fillStyle = theme.textColor;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        rows.forEach((r, i) => ctx.fillText(r, x + padX, y + padY + lineH / 2 + i * lineH));
+        ctx.textBaseline = 'alphabetic';
+        ctx.restore();
+    }
+
     /** A bars pattern / ghost feed: the source bars re-drawn at their projected times, as
      *  bodies + wicks in their own columns. The geometry is the model's (`columns`), so this
      *  only fills rects — nothing here knows what a bar is. */

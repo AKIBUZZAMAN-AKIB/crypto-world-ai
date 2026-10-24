@@ -1,3 +1,5 @@
+import type { DrawingStatsStyle } from './stats';
+
 import type { LineStyle } from '../model/series';
 import { ACCENT_BRIGHT } from '../palette';
 
@@ -20,6 +22,8 @@ export interface DrawingStyle {
     extendLeft?: boolean;
     /** Run the line past its second anchor to the chart edge (trend line). */
     extendRight?: boolean;
+    /** The "Stats" readout beside a two-point drawing (see `stats.ts`). */
+    stats?: DrawingStatsStyle;
 }
 
 /** A drawing's editable text/annotation block. */

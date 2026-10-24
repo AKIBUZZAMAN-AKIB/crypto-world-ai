@@ -57,6 +57,12 @@ export interface SettingsActions {
     /** Rebuild the floating bar from the live drawings (after a template lands, so its
      *  swatches show the new look instead of the one it replaced). */
     refreshBar?(): void;
+    /** Remember this drawing's look (the reference's "Copy style"). */
+    copyStyle?(): void;
+    /** Apply the remembered look to the selection ("Paste style"). */
+    pasteStyle?(): void;
+    /** Whether a look has been copied this session — the menu hides Paste style until then. */
+    hasCopiedStyle?(): boolean;
 }
 
 /** The value of a control whose drawings disagree — the bar shows it as "mixed" and the first
@@ -812,6 +818,12 @@ export class DrawingSettingsPopup {
             }
             this.openActionMenu(b, [
                 { icon: CLONE_ICON, label: 'Duplicate', onClick: () => actions.duplicate() },
+                { icon: STYLE_COPY_ICON, label: 'Copy style', onClick: () => actions.copyStyle?.() },
+                // Only offered once something has been copied: an always-present row that
+                // sometimes does nothing reads as a broken button.
+                ...(actions.hasCopiedStyle?.()
+                    ? [{ icon: STYLE_PASTE_ICON, label: 'Paste style', onClick: () => { actions.pasteStyle?.(); actions.refreshBar?.(); } }]
+                    : []),
                 { icon: FRONT_ICON, label: 'Bring to front', onClick: () => actions.reorder('front') },
                 { icon: BACK_ICON, label: 'Send to back', onClick: () => actions.reorder('back') },
                 { icon: RESET_ICON, label: 'Reset settings', onClick: () => actions.resetSettings() },
@@ -1242,6 +1254,8 @@ const ITALIC_ICON = icon('italic');
 const GRIP_ICON = icon('grip');
 const KEBAB_ICON = icon('kebab');
 const CLONE_ICON = icon('clone');
+const STYLE_COPY_ICON = icon('style-copy');
+const STYLE_PASTE_ICON = icon('style-paste');
 const RESET_ICON = icon('reset');
 const GEAR_ICON = icon('gear');
 const TEMPLATE_ICON = icon('templates');

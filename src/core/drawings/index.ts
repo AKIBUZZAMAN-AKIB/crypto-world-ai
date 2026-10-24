@@ -148,6 +148,7 @@ export { ThreeDrives } from './types/ThreeDrives';
 export { ElliottCorrection } from './types/ElliottCorrection';
 export { HeadShoulders } from './types/HeadShoulders';
 export { MeasureBox, formatDuration } from './types/MeasureBox';
+export { computeDrawingStats, hasStats, statsEnabled, type DrawingStats, type DrawingStatsStyle } from './stats';
 export { DatePriceRange } from './types/DatePriceRange';
 export { PositionTool, DIRECTION_OPTIONS, type PositionLevelMode } from './types/PositionTool';
 export { FairValueGap } from './types/FairValueGap';

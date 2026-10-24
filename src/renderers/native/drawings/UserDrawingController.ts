@@ -1221,6 +1221,30 @@ export class UserDrawingController implements IDrawingsRendererPort {
         else if (docs.length > 1) this.emit({ kind: 'edit-many', docs });
     }
 
+    /** The look standing behind "Paste style" — the reference's copy/paste-style pair. Style
+     *  only: anchors, text and visibility stay with the object, because they describe WHERE it
+     *  is and WHAT it says, not how it looks. */
+    private copiedStyle: Drawing['style'] | null = null;
+
+    /** Remember the selection's look (the first drawing's, for a mixed selection). */
+    private copyStyleOf(ds: readonly Drawing[]): void {
+        const d = ds[0];
+        if (!d) return;
+        this.copiedStyle = { ...d.style, stats: d.style.stats ? { ...d.style.stats } : undefined };
+    }
+
+    /** Push the remembered look onto every drawing in `ds`. Nested bags are cloned so the
+     *  copies cannot alias each other's `stats`. */
+    private pasteStyleOnto(ds: readonly Drawing[]): void {
+        const look = this.copiedStyle;
+        if (!look || ds.length === 0) return;
+        for (const d of ds) {
+            d.style = { ...d.style, ...look, stats: look.stats ? { ...look.stats } : undefined };
+        }
+        this.render();
+        this.emitEdits(ds);
+    }
+
     /** The one bar for a multi-selection: it shows the controls all of its drawings share and
      *  every action applies to all of them. Floats clear of their combined bounds. */
     private openSettingsForSelection(ids: readonly string[]): void {
@@ -1274,6 +1298,9 @@ export class UserDrawingController implements IDrawingsRendererPort {
             // A multi-selection can carry a template too — as long as every member IS that
             // tool (a trendline look on a rectangle would overwrite the wrong fields).
             refreshBar: () => this.openSettingsForSelection(ids),
+            copyStyle: () => this.copyStyleOf(live()),
+            pasteStyle: () => this.pasteStyleOnto(live()),
+            hasCopiedStyle: () => this.copiedStyle != null,
             templates: () => {
                 const first = live()[0];
                 return first && live().every((d) => d.type === first.type) ? (this.toolTemplates[first.type] ?? []) : [];
@@ -1362,6 +1389,15 @@ export class UserDrawingController implements IDrawingsRendererPort {
             },
             templates: () => this.toolTemplates[drawing.type] ?? [],
             refreshBar: () => this.openSettingsById(id, 0, 0),
+            copyStyle: () => {
+                const d = live();
+                if (d) this.copyStyleOf([d]);
+            },
+            pasteStyle: () => {
+                const d = live();
+                if (d) this.pasteStyleOnto([d]);
+            },
+            hasCopiedStyle: () => this.copiedStyle != null,
             saveTemplate: (name) => {
                 const d = live();
                 if (d) this.emit({ kind: 'template-save', type: d.type, name, settings: captureToolDefaults(d) });

@@ -216,6 +216,10 @@ registerIcon('grip', S('<circle cx="6" cy="3.5" r="1"/><circle cx="10" cy="3.5" 
 // A saved LOOK (a drawing template): a swatch card with a folded corner — the same
 // picture the reference puts beside its Templates menu.
 registerIcon('templates', S('<path d="M3 3.2h6.2L13 7v5.8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4.2a1 1 0 0 1 1-1Z"/><path d="M9.2 3.2V7H13"/><path d="M4.6 10.4h4.4"/>'));
+// "Copy style" / "Paste style": a filled swatch (the look being carried) beside a second
+// swatch — solid when copying it out, dashed when it is being applied.
+registerIcon('style-copy', S('<rect x="1.8" y="1.8" width="7.4" height="7.4" rx="1.2" fill="currentColor" fill-opacity="0.35"/><rect x="6.8" y="6.8" width="7.4" height="7.4" rx="1.2"/>'));
+registerIcon('style-paste', S('<rect x="1.8" y="1.8" width="7.4" height="7.4" rx="1.2" fill="currentColor" fill-opacity="0.35"/><rect x="6.8" y="6.8" width="7.4" height="7.4" rx="1.2" stroke-dasharray="2 1.6"/>'));
 registerIcon('kebab', S('<circle cx="8" cy="3.2" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="8" cy="12.8" r="1.2"/>', 'fill="currentColor" stroke="none"'));
 registerIcon('burger', S('<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>'));
 // The ⓘ hint glyph: an "i" drawn as geometry (dot + stem) so it centers exactly in its

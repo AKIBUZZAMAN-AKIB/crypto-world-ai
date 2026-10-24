@@ -289,7 +289,7 @@ export abstract class Drawing {
             type: this.type,
             paneId: this.paneId,
             anchors: this.anchors.map((p) => ({ time: p.time, price: p.price })),
-            style: { ...this.style },
+            style: { ...this.style, stats: this.style.stats ? { ...this.style.stats } : undefined },
             text: this.text ? { ...this.text } : undefined,
             locked: this.locked,
             visible: this.visible,
