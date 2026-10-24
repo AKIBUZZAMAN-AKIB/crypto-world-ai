@@ -105,7 +105,7 @@ describe('strategy report — statistics', () => {
         expect(s.commission).toBe(3.5);
     });
 
-    it('measures bar counts close-to-close only when the timeframe is known', () => {
+    it('measures bars HELD in a trade only when the timeframe is known', () => {
         const t = trade({ id: 'a', entry: { id: 'E', time: 0, price: 100 }, exit: { id: 'X', time: 5 * HR, price: 110 } });
         near(statsFor([t], HR).avgBars, 5);
         expect(statsFor([t]).avgBars).toBeNull();

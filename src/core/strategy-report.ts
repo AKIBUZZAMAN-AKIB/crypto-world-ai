@@ -31,7 +31,7 @@ export interface TradeReportRow {
     /** Favorable / adverse excursion for this trade (positive magnitudes), when reported. */
     runup: number | null;
     drawdown: number | null;
-    /** Close-to-close bar count — null when the timeframe is unknown or the trade is open. */
+    /** Bars the trade was held (entry to exit) — null when the timeframe is unknown or the trade is open. */
     bars: number | null;
     open: boolean;
 }
@@ -69,7 +69,7 @@ export interface ReportStats {
     largestLoss: number | null;
     /** `grossProfit / grossLoss`; null when the loss side is zero. */
     profitFactor: number | null;
-    /** Average close-to-close bar count over the closed trades; null without a timeframe. */
+    /** Average number of bars a closed trade was HELD (entry bar to exit bar); null without a timeframe. */
     avgBars: number | null;
 }
 
@@ -171,6 +171,7 @@ export function statsFor(trades: readonly StrategyTrade[], barMs?: number | null
             even += 1;
         }
         const exit = t.exit;
+        // Entry bar → exit bar, the reference's "bars in trade" (not the candle-to-candle span of the data).
         if (barMs && barMs > 0 && exit) {
             const bars = Math.max(0, Math.round((exit.time - t.entry.time) / barMs));
             barsSum += bars;
