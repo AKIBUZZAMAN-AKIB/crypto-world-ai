@@ -1,13 +1,14 @@
 import { Drawing, type AnchorSlot, type SerializedDrawing } from '../Drawing';
 import type { Projector } from '../geometry';
 import type { SettingsSchema } from '../schema';
-import { LINE_FIELDS } from '../schema';
 import { handleAt } from '../hittest';
 import {
     computeFixedRangeProfile,
     defaultFrvpStyle,
+    FRVP_FIELDS,
     type FrvpBar,
     type FrvpCompute,
+    type FrvpDevelopingPoint,
     type FrvpLayout,
     type FrvpStyle,
 } from './FixedRangeVolumeProfile';
@@ -62,6 +63,11 @@ export class AnchoredVolumeProfile extends Drawing {
         const lastX = proj.xOf(profileLastBarTime(proj, a.time));
         const spanW = Math.max(1, Math.abs(lastX - x0));
         const maxW = Math.max(1, (Math.min(100, Math.max(0, this.frvp.widthPct)) / 100) * spanW);
+        // The histogram hangs off one side of the window, like the fixed-range tool: "left"
+        // grows right from the anchor, "right" grows left from the live edge.
+        const growRight = this.frvp.anchor === 'left';
+        const anchorX = growRight ? Math.min(x0, lastX) : Math.max(x0, lastX);
+        const grow: 1 | -1 = growRight ? 1 : -1;
         const yEdges: number[] = [];
         for (let k = 0; k <= profile.rows.length; k += 1) {
             const y = proj.yOf(profile.min + k * profile.rowH, this.paneId);
@@ -69,20 +75,31 @@ export class AnchoredVolumeProfile extends Drawing {
             yEdges.push(y);
         }
         const yAt = (price: number): number | null => proj.yOf(price, this.paneId);
+        const toPoly = (pts: readonly FrvpDevelopingPoint[]): Array<[number, number]> => {
+            const out: Array<[number, number]> = [];
+            for (const p of pts) {
+                const y = yAt(p.price);
+                if (y == null) continue;
+                out.push([proj.xOf(p.time), y]);
+            }
+            return out;
+        };
         return {
             x0: Math.min(x0, lastX),
             x1: Math.max(x0, lastX),
-            anchorX: x0,
+            anchorX,
             maxW,
-            grow: 1,
+            grow,
             profile,
             yEdges,
             vahY: yAt(profile.rows[profile.vaTo]!.price + profile.rowH),
             valY: yAt(profile.rows[profile.vaFrom]!.price),
             pocY: yAt(profile.rows[profile.poc]!.price + profile.rowH / 2),
-            developingPoc: [],
-            developingVaHigh: [],
-            developingVaLow: [],
+            // A live window can show how the levels DEVELOPED bar by bar, exactly like the
+            // fixed-range tool — the same arrays, computed in the same pass.
+            developingPoc: toPoly(computed.developingPoc),
+            developingVaHigh: toPoly(computed.developingVaHigh),
+            developingVaLow: toPoly(computed.developingVaLow),
         };
     }
 
@@ -123,8 +140,18 @@ export class AnchoredVolumeProfile extends Drawing {
     /** Price span of the last computed profile (kept so autoscale has something to read). */
     private cachedRange: { min: number; max: number } | null = null;
 
+    /** The same controls the fixed-range profile offers — one list, shared, so the two tools
+     *  cannot drift apart (rows / value area / width / anchor / colours / POC-VA-developing). */
     schema(): SettingsSchema {
-        return { fields: [...LINE_FIELDS] };
+        return { fields: [...FRVP_FIELDS] };
+    }
+
+    protected override writeProps(): Record<string, unknown> {
+        return { ...this.frvp };
+    }
+
+    protected override readProps(props: Record<string, unknown>): void {
+        this.frvp = { ...defaultFrvpStyle(), ...(props as Partial<FrvpStyle>) };
     }
 }
 

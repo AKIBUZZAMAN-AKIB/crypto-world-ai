@@ -7,6 +7,7 @@ import {
     buildEstimatedProfile,
     computeFixedRangeProfile,
     FixedRangeVolumeProfile,
+    AnchoredVolumeProfile,
     type Projector,
     type FrvpBar,
 } from '../src/core/drawings';
@@ -223,5 +224,69 @@ describe('drawings/FixedRangeVolumeProfile', () => {
         expect(paths).toContain('frvp.showPoc');
         expect(paths).toContain('frvp.showDevelopingVa');
         expect(d.editableLevels()).toBeNull();
+    });
+});
+
+describe('anchored volume profile — the live window on the same engine', () => {
+    // Five bars: the anchor at bar 2 leaves a three-bar window, so every expectation below
+    // is about the window as much as the profile.
+    const data = bars([[100, 500], [101, 300], [102, 200], [101, 400], [100, 100]]);
+
+    function anchored(settings: Record<string, unknown> = {}): AnchoredVolumeProfile {
+        const d = createDrawing('anchoredvp', {
+            id: 'a',
+            paneId: 'price',
+            anchors: [{ time: 2 * HR, price: 100 }],
+        }) as AnchoredVolumeProfile;
+        if (Object.keys(settings).length > 0) d.applySettings(settings);
+        return d;
+    }
+
+    it('runs from the anchor to the live edge', () => {
+        const L = anchored().layout(fakeProjector(data))!;
+        expect(L.x0).toBeCloseTo(2, 9); // the anchor's own bar
+        expect(L.x1).toBeCloseTo(4, 9); // the newest bar
+    });
+
+    it('hangs off the anchor side the settings ask for', () => {
+        const left = anchored().layout(fakeProjector(data))!;
+        expect(left.grow).toBe(1);
+        expect(left.anchorX).toBeCloseTo(2, 9);
+        const right = anchored({ 'frvp.anchor': 'right' }).layout(fakeProjector(data))!;
+        expect(right.grow).toBe(-1);
+        expect(right.anchorX).toBeCloseTo(4, 9); // grows left from the live edge
+    });
+
+    it('reports the developing POC / VA series only when asked', () => {
+        const off = anchored().layout(fakeProjector(data))!;
+        expect(off.developingPoc).toEqual([]);
+        const on = anchored({ 'frvp.showDevelopingPoc': true, 'frvp.showDevelopingVa': true }).layout(fakeProjector(data))!;
+        expect(on.developingPoc).toHaveLength(3); // one point per bar in the window
+        expect(on.developingVaHigh).toHaveLength(3);
+        expect(on.developingVaLow).toHaveLength(3);
+        // Every point sits inside the window's x range and carries a real y.
+        for (const [x, y] of on.developingPoc) {
+            expect(x).toBeGreaterThanOrEqual(on.x0);
+            expect(x).toBeLessThanOrEqual(on.x1);
+            expect(Number.isFinite(y)).toBe(true);
+        }
+    });
+
+    it('keeps its settings across a save/load (they used to be dropped)', () => {
+        const d = anchored({ 'frvp.rows': 40, 'frvp.valueAreaPct': 80, 'frvp.anchor': 'right' });
+        const back = deserializeDrawing(d.serialize()) as AnchoredVolumeProfile;
+        expect(back.frvp.rows).toBe(40);
+        expect(back.frvp.valueAreaPct).toBe(80);
+        expect(back.frvp.anchor).toBe('right');
+    });
+
+    it('offers exactly the fixed-range tool’s controls — one shared list', () => {
+        const paths = (t: 'anchoredvp' | 'fixedrangevp') =>
+            createDrawing(t, { id: 'x', paneId: 'price', anchors: [{ time: 0, price: 1 }, { time: HR, price: 2 }] })!
+                .schema()
+                .fields.map((f) => f.path)
+                .sort();
+        expect(paths('anchoredvp')).toEqual(paths('fixedrangevp'));
+        expect(paths('anchoredvp')).toContain('frvp.showDevelopingPoc');
     });
 });

@@ -1,7 +1,7 @@
 import { Drawing, type AnchorSlot, type SerializedDrawing } from '../Drawing';
 import type { LineStyle } from '../../model/series';
 import type { Projector } from '../geometry';
-import type { SettingsSchema } from '../schema';
+import type { SettingsField, SettingsSchema } from '../schema';
 import { LINE_STYLE_OPTIONS } from '../schema';
 import { pointInPolygon, handleAt, distToSegment } from '../hittest';
 import { ACCENT, BEARISH, BULLISH, NEUTRAL } from '../../palette';
@@ -486,10 +486,23 @@ export class FixedRangeVolumeProfile extends Drawing {
     }
 
     schema(): SettingsSchema {
-        // All FRVP controls live in the gear panel — the schema paths gate that UI branch.
-        return {
-            fields: [
-                { path: 'frvp.rows', label: 'Rows', kind: 'number', min: 1, max: 500, step: 1, group: 'behavior' },
+        return { fields: [...FRVP_FIELDS] };
+    }
+
+    protected override writeProps(): Record<string, unknown> {
+        return { ...this.frvp };
+    }
+
+    protected override readProps(props: Record<string, unknown>): void {
+        this.frvp = { ...defaultFrvpStyle(), ...(props as Partial<FrvpStyle>) };
+    }
+}
+
+/** The profile controls, shared by BOTH profile tools (a fixed range and an anchor-to-live
+ *  window are the same object with a different window) — one list, so the two panels can
+ *  never drift apart. */
+export const FRVP_FIELDS: SettingsField[] = [
+    { path: 'frvp.rows', label: 'Rows', kind: 'number', min: 1, max: 500, step: 1, group: 'behavior' },
                 { path: 'frvp.valueAreaPct', label: 'Value Area', kind: 'number', min: 0, max: 100, step: 1, group: 'behavior' },
                 { path: 'frvp.widthPct', label: 'Width %', kind: 'number', min: 0, max: 100, step: 1, group: 'behavior' },
                 {
@@ -521,15 +534,5 @@ export class FixedRangeVolumeProfile extends Drawing {
                 { path: 'frvp.showDevelopingVa', label: 'Developing VA', kind: 'boolean', group: 'line' },
                 { path: 'frvp.developingVaColor', label: 'Developing VA color', kind: 'color', group: 'line' },
                 { path: 'frvp.developingVaStyle', label: 'Developing VA style', kind: 'lineStyle', options: LINE_STYLE_OPTIONS, group: 'line' },
-            ],
-        };
-    }
+];
 
-    protected override writeProps(): Record<string, unknown> {
-        return { ...this.frvp };
-    }
-
-    protected override readProps(props: Record<string, unknown>): void {
-        this.frvp = { ...defaultFrvpStyle(), ...(props as Partial<FrvpStyle>) };
-    }
-}
