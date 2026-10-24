@@ -121,6 +121,10 @@ registerIcon(
     S('<rect x="2.2" y="3.2" width="11.6" height="10.6" rx="1.4"/><path d="M5.2 1.8v2.8M10.8 1.8v2.8M2.2 6.8h11.6"/>'),
 );
 registerIcon('datawindow', S('<rect x="1.8" y="2.5" width="12.4" height="11" rx="1.5"/><path d="M4.5 5.5h4M4.5 8h7M4.5 10.5h5.5"/>'));
+registerIcon(
+    'tester',
+    S('<path d="M2.2 12.4h11.6"/><path d="M2.6 9.6 6 6.4l3 2.6 4.4-5"/><circle cx="13.4" cy="4" r="1.3"/>'),
+);
 registerIcon('camera', S('<path d="M5.5 4 6.5 2.5h3L10.5 4h3A1 1 0 0 1 14.5 5v7.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><circle cx="8" cy="8.5" r="2.6"/>'));
 registerIcon(
     'gear',

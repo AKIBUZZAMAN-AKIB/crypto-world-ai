@@ -30,6 +30,7 @@ import { Bottombar, RANGE_PRESETS } from '../widget/bottombar';
 import { SecondClock } from '../core/util/wall-clock';
 import { ObjectTree } from '../widget/object-tree';
 import { DataWindow } from '../widget/data-window';
+import { StrategyTester } from '../widget/strategy-tester';
 import type { ScriptRun } from '../core/script-run';
 import { PanelDock } from '../widget/panel-dock';
 import { SymbolPicker } from '../widget/symbol-picker';
@@ -453,6 +454,10 @@ export class VelaWorkspace {
     private readonly bottombar: Bottombar | null;
     private readonly objectTree: ObjectTree;
     private readonly dataWindow: DataWindow;
+    /** The backtest report of the strategy running on the active cell — empty until one does. */
+    private readonly strategyTester: StrategyTester;
+    /** The tester opened itself once already — after that it is the user's column to open. */
+    private testerAnnounced = false;
     /** The side-panel column, shared by the whole grid. */
     private readonly dock: PanelDock;
     private readonly symbolPicker: SymbolPicker;
@@ -1041,8 +1046,10 @@ export class VelaWorkspace {
         });
         this.objectTree = new ObjectTree(main, (sym) => this.feed.symbolIcon(sym));
         this.dataWindow = new DataWindow(main);
+        this.strategyTester = new StrategyTester(main);
         this.dock.addBuiltIn({ id: 'dataWindow', title: 'Data window', icon: 'datawindow', order: 10, panel: this.dataWindow, onChart: (c) => this.dataWindow.onChart(c) });
         this.dock.addBuiltIn({ id: 'objects', title: 'Object tree', icon: 'objects', order: 20, panel: this.objectTree, onChart: (c) => this.objectTree.onChart(c) });
+        this.dock.addBuiltIn({ id: 'strategyTester', title: 'Strategy tester', icon: 'tester', order: 30, panel: this.strategyTester, onChart: (c) => this.strategyTester.onChart(c) });
         this.dock.refresh();
         // The dock's own slice of the boot document (open panel, dragged widths, pinned
         // placements) — the sync-storage twin of what `applyState` does for a late document.
@@ -2671,6 +2678,18 @@ export class VelaWorkspace {
         if (open && this.groupTip) this.dismissGroupTip(true);
     }
 
+    /**
+     * Hand a strategy run to the tester panel and — the FIRST time any strategy reports —
+     * open it, the way the reference platform surfaces a backtest. An open panel always
+     * wins: the user's column is never replaced by an unsolicited one.
+     */
+    private announceStrategyRun(chart: Vela, run: ScriptRun): void {
+        this.strategyTester.setRun(chart, run);
+        if (this.testerAnnounced) return;
+        this.testerAnnounced = true;
+        if (!this.dock.openId) this.dock.toggle('strategyTester', true);
+    }
+
     /** Per-cell chart subscriptions (trigger ② — the chart instance is stable for the
      *  cell's whole life, so these live and die with the cell). */
     private wireCell(cell: ChartCell): void {
@@ -2679,7 +2698,13 @@ export class VelaWorkspace {
         // Script runs relay up with the cell they came from, so ONE subscription on the
         // workspace covers a grid whose cells come and go. Each cell runs its own engine
         // session, so the `cell` field is what tells two identical scripts apart.
-        chart.on('script:run', (run) => this.events.emit('script:run', { ...run, cell: cell.id }));
+        chart.on('script:run', (run) => {
+            this.events.emit('script:run', { ...run, cell: cell.id });
+            // A strategy's report belongs to the cell that ran it, so the tester hears every
+            // cell — a run that lands while another cell is active is still waiting when the
+            // user switches back. The first one opens the panel (never over another panel).
+            if (run.kind === 'strategy') this.announceStrategyRun(chart, run);
+        });
         chart.on('priceStyle:change', ({ from, to }) => this.events.emit('cell:priceStyle', { id: cell.id, from, to }));
         // Price alerts are evaluated on the same print the chart draws — one tick per bar
         // update, so "crossed 143.50" fires on the bar where the line visibly crossed.

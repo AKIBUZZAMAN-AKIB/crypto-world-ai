@@ -23,7 +23,9 @@ export const FIELD_FOCUS_RING =
 export function injectStyles(id: string, css: string, root: Document | ShadowRoot = document): void {
     if (typeof document === 'undefined') return;
     const host = root instanceof Document ? root.head : root;
-    if (root.getElementById?.(id) ?? host.querySelector(`#${CSS.escape(id)}`)) return;
+    // An ATTRIBUTE selector, not `#id`: it needs no `CSS.escape` (absent in some DOM
+    // implementations) and an id with a dot or a colon still resolves.
+    if (host.querySelector(`style[id="${id}"]`)) return;
     const s = document.createElement('style');
     s.id = id;
     s.textContent = css;
