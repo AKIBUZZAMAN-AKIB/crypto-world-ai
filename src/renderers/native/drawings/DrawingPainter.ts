@@ -89,6 +89,8 @@ export class DrawingPainter {
         // segment's centre into a drag handle (grabbing it moves the line, like the body does).
         for (const d of drawings) {
             if (!d.visible || !d.style.middlePoint || d.anchors.length !== 2) continue;
+            const rect = proj.paneRect ? proj.paneRect(d.paneId) : null;
+            if (proj.paneRect && (!rect || rect.height <= 0)) continue; // a collapsed pane shows nothing
             const pts = d.handlePoints(proj);
             if (pts.length === 2) this.paintMiddleGrip(ctx, d, pts[0]!, pts[1]!);
         }
@@ -1666,6 +1668,21 @@ export class DrawingPainter {
         });
         this.paintArrowhead(ctx, [L.x0, L.y0], [L.x1, L.y1], { lineColor: color, lineWidth: d.style.lineWidth, lineStyle: 'solid' });
         const verdict = L.outcome === 'success' ? 'Success' : L.outcome === 'failure' ? 'Failure' : 'Open';
+        // The forecast BOX: the trade's own area, tinted by how it has played out (green once
+        // price delivered, red once the window closed without it, the line's own color while
+        // the idea is still live). The reference shades this area; the line and its labels sit
+        // on top.
+        const tint = L.outcome === 'success' ? BULLISH : L.outcome === 'failure' ? BEARISH : color;
+        const bx = Math.min(L.x0, L.x1);
+        const by = Math.min(L.y0, L.y1);
+        const bw = Math.abs(L.x1 - L.x0);
+        const bh = Math.abs(L.y1 - L.y0);
+        if (bw > 0 && bh > 0) {
+            ctx.save();
+            ctx.fillStyle = withAlpha(tint, 0.12);
+            ctx.fillRect(bx, by, bw, bh);
+            ctx.restore();
+        }
         // The reference's own blocks: Source/Target labels wear the label palette (text, background,
         // border), and the result box switches between the success and failure pairs. While the
         // window is still open there is no verdict to color, so it holds a neutral plate.
