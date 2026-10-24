@@ -107,6 +107,30 @@ Installing the addon brings the AGPL obligations into *your* deployment — deci
 deliberately. If you cannot take them on, write an engine for the language you need
 against the port instead.
 
+## Pine Script without the AGPL addon (`vela-pine-libre`)
+
+The playground in this repo registers **`vela-pine-libre`** — an independently written,
+MIT-licensed, dependency-free engine that implements this same port. It runs real Pine
+v1–v6 (including `strategy()`, so the Strategy tester fills with a live broker ledger),
+in-process (`PineEngine`) or in a worker (`PineWorkerEngine`). It is installed here as a
+local file dependency (`file:../pine-alpha`).
+
+```ts
+import { PineEngine } from 'vela-pine-libre';
+chart.registerEngine('pine', new PineEngine());
+```
+
+`playground/workspace.ts` registers it as the `pine` engine and passes
+`defaultLanguage: 'pine'`; `playground/pine-scripts.ts` is the script **manifest** the
+Indicators dialog lists under a `Pine Script` category, and
+`test/pine-integration.test.ts` runs those exact strings through the engine so the page
+cannot drift from what the engine executes.
+
+Use this instead of `@luxalgo/vela-pinets` when the AGPL-3.0 licence of that addon (and of
+the `pinets` runtime it executes) is not acceptable for how you ship. It is a smaller
+language surface than PineTS — see the engine's own `docs/known-limitations.md` — and it
+is not a drop-in replacement for every script.
+
 ## Writing your own engine
 
 The port is small — `prepare()` (parse a script: inputs + declaration metadata, no market

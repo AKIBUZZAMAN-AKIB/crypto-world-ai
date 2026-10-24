@@ -3,13 +3,18 @@
 // style / LAYOUT dropdowns, indicator picker, alerts, screenshot, object tree, settings),
 // bottombar (range chips, clock, timezone), one keymap. Served straight from src/ (HMR).
 //
-// Vela ships no scripting engine — `demo-engine.ts` is the page's own, written against
-// the public port (see widget.ts's header). For Pine Script:
-// `npm i @luxalgo/vela-pinets pinets` and `engines: { pine: () => new PineWorkerEngine() }`.
+// Vela ships no scripting engine. This page registers TWO, both written against the
+// public port and both installed locally:
+//   • `pine` — vela-pine-libre (MIT, clean-room, no runtime deps): real Pine v1–v6,
+//     including `strategy()` so the Strategy tester fills with a live backtest ledger.
+//   • `demo` — `demo-engine.ts`, the page's own toy language, kept for the port example.
+// Swap `new PineEngine()` for `new PineWorkerEngine()` to move Pine off the main thread.
 import type { Vela } from "../src";
 import { VelaWorkspace } from "../src/workspace";
 import { BinanceProvider } from "../src/data/providers/binance";
+import { PineEngine } from "vela-pine-libre";
 import { DemoEngine } from "./demo-engine";
+import { PINE_SCRIPTS } from "./pine-scripts";
 import { playgroundStorage } from "./persistence";
 import { addSampleMarks } from "./marks";
 
@@ -35,9 +40,12 @@ const ws = new VelaWorkspace("#workspace", {
     bnb: { symbol: "BNBUSDT", timeframe: "D" },
   },
   providers: { binance: () => new BinanceProvider() },
-  engines: { demo: () => new DemoEngine() }, // ONE instance per cell (a worker engine would get a thread each)
-  defaultLanguage: "demo", // scripts added without a `language` run on the engine above
-  // No script manifest: the indicators dialog lists the built-in catalog only.
+  engines: { pine: () => new PineEngine(), demo: () => new DemoEngine() }, // ONE instance per cell (a worker engine would get a thread each)
+  defaultLanguage: "pine", // scripts added without a `language` run on the engine above
+  // A script MANIFEST: the rows the Indicators dialog lists next to the built-in catalog.
+  // These four are real Pine v6 (see pine-scripts.ts); the two `strategy()` scripts fill
+  // the Strategy tester with their broker ledger when added to a cell.
+  indicators: PINE_SCRIPTS,
   live: true,
   theme: "dark",
   autofocus: true, // the workspace IS the page — shortcuts work from the first keystroke
