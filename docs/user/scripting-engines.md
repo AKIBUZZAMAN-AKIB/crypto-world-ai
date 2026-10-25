@@ -69,6 +69,72 @@ new VelaWorkspace('#app', {
 The `engines` factories are instantiated once per chart (each workspace cell gets its
 own — a worker engine per chart). See [the workspace](./workspace.md).
 
+### The script editor
+
+Configure an engine and the shells grow a **script editor**, docked as a side panel — the
+shape TradingView moved to in August 2025. It is a working surface, not a demo: scripts are
+created from a template, edited with syntax colouring and an 80-character ruler, versioned,
+and rendered **on the chart** they belong to.
+
+```ts
+new VelaWorkspace('#app', {
+    engines: { pine: () => new PineWorkerEngine() },
+    // editor: false,   // ← remove the panel, its entries and the legend chip
+});
+```
+
+| Where | Entry point |
+| --- | --- |
+| Desktop | the **`<>` panel toggle** in the topbar (with the other panels), or a script row's **Source code** chip |
+| Phone | the **`<>` stop on the bottom bar** — the same panel, as a bottom sheet |
+| Code | `ws.openEditor()` / `ws.openEditor(source, title)`, and `ws.hasEditor` |
+
+**The flow** (TradingView's, deliberately):
+
+- **Create new** — the script's name opens the library: every script, an inline rename
+  field, and *New indicator* / *New strategy*. Templates compile as they are.
+- **Add to chart** — runs the script and, on success, puts it on the chart. A failure
+  leaves nothing behind: the error lands in the console (red, with a **clickable line
+  number**) and the offending gutter line is marked.
+- **Update on chart** — the same button once the script is live. It re-runs the code **in
+  place**, keeps the trader's input values, and bumps only the **minor** version
+  (`1.0 → 1.1`). Your *Settings* survive an update; that is the point of the split.
+- **Save** (or `Ctrl/⌘+S`, or ⋯ → *Save version*) — commits the draft as a new **major**
+  version (`1.1 → 2.0`) in the version history.
+- **Version history** (⋯ → *Version history*) — every version with its time and whether it
+  came from a save or from a chart update. Restoring one loads it as a **draft**; Save
+  turns it into a new version, so history is append-only.
+- **Source code** — every legend row backed by a *script* carries a code chip on hover; it
+  opens that source in the editor. Native indicators have no source, so the chip never
+  appears on their rows (`registerLegendAction` with `when: (ind) => ind.source !== undefined`).
+
+**Editor settings** (⋯ → *Editor settings*, the same block TradingView keeps there):
+suggestions as you type, the **minimap** (a click jumps), the **line-length guide** at the
+80-character mark, font size and tab size. They persist per device, and `Ctrl+Space`
+always offers completions whatever the suggestion toggle says.
+
+**Shortcuts**, matching the editor TradingView ships:
+
+| Keys | Action |
+| --- | --- |
+| `Ctrl/⌘ + Enter` | Add to chart / Update on chart |
+| `Ctrl/⌘ + S` | Save version |
+| `Ctrl/⌘ + I` · `Ctrl/⌘ + O` | New script · open the script list |
+| `Ctrl/⌘ + /` | Comment / uncomment the selected lines |
+| `Ctrl/⌘ + D` · `Ctrl/⌘ + Shift + D` | Remove line · duplicate line |
+| `Alt + ↑/↓` · `Alt + Shift + ↑/↓` | Move lines · copy lines |
+| `Tab` · `Shift + Tab` | Indent / outdent (the selection, or the caret line) |
+| Ctrl/⌘ + backtick | Toggle the console |
+| `Ctrl/⌘ + Space` | Suggestions |
+
+The console groups its messages by level (info / warning / error chips with counts), and
+an error's line number is a link that selects that line in the source.
+
+The panel is docked and resizable (drag the inner edge, double-click to reset), maximizable,
+and the open/closed state rides the shell's saved document. The script library itself lives
+in `localStorage` under `vela-pine-library` — a script written in the panel is the script
+the standalone `editor.html` deep link opens.
+
 ### Registering it once, app-wide
 
 `registerDefaultEngine` (from `@luxalgo/vela/plugin`) installs a language for **every**

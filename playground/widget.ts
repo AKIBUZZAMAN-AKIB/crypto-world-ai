@@ -1,32 +1,24 @@
 // The bare playground page: a SINGLE-CHART workspace (topbar + chart, `layout: false`)
-// with the Binance provider (public API, no key, no server needed), the page's own demo
-// scripting engine, and an inline indicator manifest — the OSS integration surface
-// exercised end to end.
+// with the Binance provider (public API, no key, no server needed), the vendored Pine
+// engine, and the in-chart script editor — the OSS integration surface exercised end to
+// end.
 //
-// Vela SHIPS NO SCRIPTING ENGINE. `demo-engine.ts` (next to this file) is a ~300-line
-// engine written against the public `ScriptingEngine` port purely so this page can
-// exercise the indicator path with zero dependencies — it is the runnable companion to
-// docs/contributing/adding-an-engine.md, not a product. For Pine Script, install the
-// addon and swap one line:
-//
-//     npm i @luxalgo/vela-pinets pinets
-//     import { PineWorkerEngine } from '@luxalgo/vela-pinets';
-//     engines: { pine: () => new PineWorkerEngine() }
-//
-// …which is exactly what the addon's own playground does (repos/Vela-pinets, port 5192).
+// Vela SHIPS NO SCRIPTING ENGINE; this page registers one itself (vela-pine-libre, MIT,
+// vendored under playground/vendor so a plain checkout runs with no sibling repo). With
+// an engine present the shell offers its Pine editor panel — write, version, "Add to
+// chart"/"Update on chart" — and every script row's legend grows a "Source code" chip.
+// `demo-engine.ts` stays next to this file as the runnable companion to
+// docs/contributing/adding-an-engine.md (see playground/workspace.ts for it live).
 import { VelaWorkspace } from '../src/workspace';
 import { BinanceProvider } from '../src/data/providers/binance';
 import { addSampleMarks } from './marks';
-import { DemoEngine, DEMO_SCRIPTS } from './demo-engine';
+import { PineEngine } from './vendor/pine-libre/index.js';
 import { playgroundStorage } from './persistence';
-import { registerEditorEntry } from './editor-link';
 
 // The playground's CUSTOM persistence (shared with the workspace page): with `persist`
 // on, the shell saves and restores EVERYTHING through this adapter — prefs, renderer
 // config, and user drawings. The key is pinned so this page never collides with the
 // multi-chart page's own document ('vela-workspace') in the same adapter namespace.
-// A topbar entry point to the Pine editor page (desktop tool + phone bottom-bar stop).
-registerEditorEntry();
 
 const storage = playgroundStorage();
 
@@ -40,8 +32,8 @@ const ws = new VelaWorkspace('#chart', {
     persist: 'vela-widget', // → 'vela-play:vela-widget' in devtools (the page's historical key)
     storage,
     providers: { binance: () => new BinanceProvider() },
-    engines: { demo: () => new DemoEngine() }, // swap for `pine: () => new PineWorkerEngine()` (see the header)
-    defaultLanguage: 'demo', // scripts added without a `language` run on the engine above
+    engines: { pine: () => new PineEngine() }, // the vendored engine (swap for a worker build to move Off-main-thread)
+    defaultLanguage: 'pine', // scripts added without a `language` run on the engine above
     // No script manifest: the indicators dialog lists the built-in catalog only. Scripts
     // reach the chart through the Code panel below (or an `indicators` manifest — see the
     // commented option further down).
@@ -135,69 +127,10 @@ ws.chart.on('theme:changed', (t) => {
 // }, 5000);
 
 
-// ── "Code" topbar entry — paste a script, Run it, injected on success (SDK showcase:
-// contributed action + kit Dialog + chart.runIndicator; errors surface inline). ──
-import { registerWidgetAction, registerIcon, type WidgetContext } from '../src/plugin';
-import { Dialog } from '../src/ui';
-
-registerIcon('code', '<svg viewBox="0 0 16 16" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="m5.5 4.5-4 3.5 4 3.5M10.5 4.5l4 3.5-4 3.5"/></svg>');
-
-// Lazy UI singletons — DOM state only (the edited script survives reopen). The
-// WidgetContext is NEVER stored: `run(ctx)` rebinds the Run button's handler on every
-// invocation, so the ctx lives in that closure alone and always belongs to the
-// invoking shell (the pattern that keeps working in a multi-chart grid).
-let codeDialog: Dialog | null = null;
-let codeArea: HTMLTextAreaElement | null = null;
-let codeStatus: HTMLElement | null = null;
-let codeRun: HTMLButtonElement | null = null;
-
-registerWidgetAction({
-    id: 'dev.code',
-    target: 'topbar',
-    label: 'Code',
-    icon: 'code',
-    run: (ctx) => {
-        if (!codeDialog) {
-            codeArea = document.createElement('textarea');
-            codeArea.value = DEMO_SCRIPTS.bands;
-            codeArea.spellcheck = false;
-            codeArea.style.cssText =
-                'width:520px;max-width:80vw;height:220px;resize:vertical;background:var(--vela-surface-overlay);color:var(--vela-fg);border:1px solid var(--vela-border-soft);border-radius:var(--vela-radius-md);padding:10px;font:12px/1.5 ui-monospace,Consolas,monospace;outline:none;';
-            codeRun = document.createElement('button');
-            codeRun.textContent = 'Run';
-            codeRun.style.cssText =
-                'all:unset;margin-top:8px;padding:6px 18px;border-radius:var(--vela-radius-sm);background:var(--vela-accent);color:#0b0e14;font-weight:600;cursor:pointer;';
-            codeStatus = document.createElement('div');
-            codeStatus.style.cssText = 'margin-top:8px;min-height:1.3em;font-size:var(--vela-font-size-md);white-space:pre-wrap;';
-            codeDialog = new Dialog({
-                title: 'Run an indicator',
-                host: ctx.host, // first invoker's root hosts the singleton (fine for the one-chart demo)
-                closeOnInteractOutside: true,
-                content: (body) => body.append(codeArea!, codeRun!, codeStatus!),
-            });
-        }
-        // Rebind per invocation — `ctx` stays in this closure, no module-level context.
-        codeRun!.onclick = () => void runCode(ctx);
-        codeStatus!.textContent = '';
-        codeDialog.show();
-        setTimeout(() => codeArea?.focus(), 0);
-    },
-});
-
-async function runCode(ctx: WidgetContext): Promise<void> {
-    if (!codeArea || !codeStatus) return;
-    codeStatus.style.color = 'var(--vela-fg-muted)';
-    codeStatus.textContent = 'Running…';
-    const r = await ctx.chart.runIndicator(codeArea.value);
-    if (r.ok) {
-        codeStatus.style.color = 'var(--vela-accent)';
-        codeStatus.textContent = `✓ ${r.handle!.title || 'Indicator'} added to the chart`;
-    } else {
-        codeStatus.style.color = 'var(--vela-danger)';
-        codeStatus.textContent = `✗ ${r.error!.message}`;
-    }
-}
-
+// One re-projection of the chrome after the contributed actions above were registered
+// (a plugin's, the editor button's). The editor PANEL needs no such call: the shell owns
+// it, so it is in the topbar's panel group, the ⋯ drawer, and every script row's
+// "Source code" chip from the moment the workspace exists.
 ws.refreshActions();
 
 // ── Execution-context listener demo — how host code intercepts Vela's engine context.

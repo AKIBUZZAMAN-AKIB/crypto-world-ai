@@ -130,6 +130,10 @@ export interface MobileBarOptions {
     onIndicatorsClick?: () => void;
     /** Omitted ⇒ no drawings stop (the shell disabled user drawings — `drawings: false`). */
     onDrawingsClick?: () => void;
+    /** Omitted ⇒ no script-editor stop (the shell has no scripting engine, so no editor).
+     *  Sits between the indicators and the drawings stops: the phone's way into the
+     *  editor pane, one tap and no drawer, exactly where a desktop's panel toggle is. */
+    onEditorClick?: () => void;
     /**
      * The CHART-TYPE stop. It replaces the old layout-count stop: its glyph is the price
      * style currently on the active chart and tapping it raises the style sheet, because
@@ -243,6 +247,10 @@ export class MobileBar {
         this.actionsHost = doc.createElement('span');
         this.actionsHost.className = 'vela-mb-actions';
 
+        // ── the script editor (a pane on the phone, not a page) ──
+        const onEditor = opts.onEditorClick;
+        const editor = onEditor ? item('vela-mb-editor', 'Pine editor', onEditor, 'code') : null;
+
         // ── drawings (glyph = armed tool) ──
         const onDrawings = opts.onDrawingsClick;
         if (onDrawings) {
@@ -273,6 +281,7 @@ export class MobileBar {
             this.tfEl,
             ...(this.styleEl ? [this.styleEl] : []),
             ...(indicators ? [indicators] : []),
+            ...(editor ? [editor] : []),
             this.actionsHost,
             ...(this.drawingEl ? [this.drawingEl] : []),
             ...(this.maxEl ? [this.maxEl] : []),

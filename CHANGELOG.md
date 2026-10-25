@@ -6,6 +6,29 @@ All notable changes to Vela, newest first.
 
 ### Added
 
+- **A real script editor, in the side panel.** TradingView moved its Pine editor into
+  the side panel in August 2025; the shells now do the same. When a scripting engine is
+  registered the dock grows a **Pine editor** panel (topbar toggle, phone bottom-bar
+  stop, or `ws.openEditor()`), and every legend row backed by a *script* grows a
+  **Source code** chip that opens its source there. The flows are TV's: *Create new*
+  from an indicator/strategy template, **Add to chart** (a failed run leaves nothing
+  behind — the console line is red and clickable, the gutter marks the line),
+  **Update on chart** (re-runs in place, **keeps the trader's input values**, bumps only
+  the minor version), **Save**/`Ctrl+S` (a major version), a **version history** where
+  restoring a version loads it as a draft, and an inline rename. On a phone the panel is
+  a **bottom sheet**: drag the grip to resize, tap it to snap between the two useful
+  heights, and the chart stays visible above it. Syntax colours follow the chart's
+  theme. Native indicators have no source, so the chip never appears on their rows.
+  `editor: false` removes the surface; with no engine there is nothing to show.
+- **The editor's own settings and shortcuts.** ⋯ → *Editor settings* carries what
+  TradingView's does — suggestions as you type, the **minimap** (condensed code overview,
+  click to jump, viewport boxed), the **line-length guide**, font size and tab size,
+  persisted per device — and the editor speaks TV's editing language: `Ctrl+/` comment,
+  `Ctrl+D` remove line, `Ctrl+Shift+D` duplicate, `Alt+↑↓` move, `Alt+Shift+↑↓` copy,
+  `Tab`/`Shift+Tab` indent the selection, Ctrl+backtick toggles the console, `Ctrl+I`/`Ctrl+O`
+  new/open, `Ctrl+Space` (or typing) offers completions drawn from Pine's vocabulary plus
+  the script's own variables. The console gains level chips with counts and a Clear.
+
 - **Bar replay has its controls.** The workspace now ships the replay UI the API was
   already waiting for: a `'replay'` topbar slot whose menu starts a session from a bar
   (click any chart), a date, or a random bar; a floating transport bar with play/pause,

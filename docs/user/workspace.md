@@ -739,7 +739,9 @@ What changes on mobile:
   (full-screen symbol search), the timeframe button (a bottom sheet with the date-range
   presets on top and the timeframe grid below), indicators (the full-screen picker),
   drawings (a bottom sheet with a search bar, the tool groups as scrollable tabs, and
-  favorite stars), a three-dots sheet (undo/redo, screenshot, chart type, the side
+  favorite stars), **the script editor** (when a scripting engine is configured — the
+  panel rises as a draggable bottom sheet, see
+  [scripting engines](./scripting-engines.md#the-script-editor)), a three-dots sheet (undo/redo, screenshot, chart type, the side
   panels, time zone, alerts, contributed topbar actions and — multi-chart grids only —
   a **Layout** entry with the same tap-to-apply grid canvas as the desktop dropdown,
   the sync switches below it), and chart settings.
@@ -751,7 +753,10 @@ What changes on mobile:
   and chart settings, where the section rail sits behind a burger button, a section's
   group list becomes scrollable tabs at the top, and instance strips scroll sideways.
 - **Side panels** (data window, object tree, contributed) open over the chart instead
-  of docking a column beside it.
+  of docking a column beside it — except the **script editor**, which is a bottom
+  SHEET: drag its grip to resize it (a tap snaps it between the two useful heights) and
+  the chart stays visible above it, because an editor on a phone must be usable
+  *without* leaving the chart.
 - **The indicator legend starts collapsed** behind its count chip — tapping it opens
   the **object tree**, whose per-indicator action menu carries an "Indicator settings"
   entry, so everything the legend rows offered stays one tap away.

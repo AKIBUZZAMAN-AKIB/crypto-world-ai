@@ -1929,6 +1929,20 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
         this.engines.set(language, engine);
     }
 
+    /**
+     * Whether a scripting engine is registered for `language` (default: the chart's own
+     * default language). The shell's editor asks this before it offers to open: with no
+     * engine a script cannot run, and an editor that cannot run is a dead end.
+     */
+    hasEngine(language?: string): boolean {
+        return this.engines.has(language ?? this.defaultLanguage);
+    }
+
+    /** The language `addIndicator` uses when `options.language` is omitted. */
+    get defaultLanguageId(): string {
+        return this.defaultLanguage;
+    }
+
     addIndicator(source: string, options: AddIndicatorOptions = {}): IndicatorHandle {
         const id = this.claimIndicatorId(options.id);
         const title = options.title ?? 'Indicator';

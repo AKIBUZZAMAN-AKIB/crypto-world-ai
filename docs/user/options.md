@@ -65,6 +65,7 @@ chart.data.registerProvider('binance', new BinanceProvider());
 | `upColor` | string | `#089981` (green) | Bullish candle color (native renderer). |
 | `downColor` | string | `#f23645` (red) | Bearish candle color (native renderer). |
 | `priceStyle` | `'candles' \| 'bars' \| 'line' \| 'area' \| 'baseline'` | `'candles'` | How the base price series is drawn (native renderer). |
+| `editor` | boolean | on when an engine is registered | The script editor side panel (and its legend *Source code* action). `false` removes it from every surface; there is nothing to show when no scripting engine is configured. See [the script editor](./scripting-engines.md#the-script-editor). |
 | `drawings` | `boolean \| { toolbar?, tools?, groups? }` | **toolbar shown** | Interactive [drawing tools](./drawing-tools.md). `true`/omitted ⇒ toolbar visible; `false` ⇒ toolbar hidden (the `chart.drawings` API still works headlessly); object customizes it (see below). Capability-gated (native renderer only). |
 | `settings` | `{ hidden?: string[] }` | **all visible** | Chart-settings dialog visibility policy: setting ids to hide — a whole tab, a group, or a single row (see below). |
 | `priceAxis` | `{ ticks?: (ctx) => PriceAxisTick[] \| null }` | built-in ticks | Your own price-axis ladder (native renderer): `ticks` returns each pane's ticks, and the axis labels and horizontal gridlines both follow them (see below). |

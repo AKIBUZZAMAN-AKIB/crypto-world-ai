@@ -31,6 +31,7 @@ import { SecondClock } from '../core/util/wall-clock';
 import { ObjectTree } from '../widget/object-tree';
 import { DataWindow } from '../widget/data-window';
 import { StrategyTester } from '../widget/strategy-tester';
+import { PineEditor } from '../widget/pine-editor';
 import type { ScriptRun } from '../core/script-run';
 import { PanelDock } from '../widget/panel-dock';
 import { SymbolPicker } from '../widget/symbol-picker';
@@ -50,7 +51,18 @@ import { Toast } from '../widget/toast';
 import { recordRecent, recentOf } from '../widget/favorites';
 import { Glider, ZOOM_IN, ZOOM_OUT, PAN_FAST } from '../widget/glide';
 import { toolShortcutHints } from '../widget/tool-shortcuts';
-import { legendActionsProviderFor, legendCalloutsProviderFor, mobilePlacement, statePersistenceHandlers, topbarActionOverride, widgetActions, widgetAttachments, type WidgetActionDescriptor } from '../widget/contributions';
+import {
+    legendActionsProviderFor,
+    legendCalloutsProviderFor,
+    mobilePlacement,
+    registerLegendAction,
+    resolveEngines,
+    statePersistenceHandlers,
+    topbarActionOverride,
+    widgetActions,
+    widgetAttachments,
+    type WidgetActionDescriptor,
+} from '../widget/contributions';
 import { resolveTopbarComposition, topbarHas, TOPBAR_BUILTIN_IDS, type ResolvedTopbarComposition } from '../widget/topbar-composition';
 import { LayoutModeController, type LayoutMode } from '../widget/layout-mode';
 import { MobileBar } from '../widget/mobile-bar';
@@ -458,6 +470,10 @@ export class VelaWorkspace {
     private readonly strategyTester: StrategyTester;
     /** The tester opened itself once already — after that it is the user's column to open. */
     private testerAnnounced = false;
+    /** The script editor's panel — null when the host has no engine (nothing to run). */
+    private readonly pineEditor: PineEditor | null;
+    /** Unregisters the editor's "Source code" legend action. */
+    private readonly editorLegendOff: (() => void) | null;
     /** The side-panel column, shared by the whole grid. */
     private readonly dock: PanelDock;
     private readonly symbolPicker: SymbolPicker;
@@ -1050,6 +1066,44 @@ export class VelaWorkspace {
         this.dock.addBuiltIn({ id: 'dataWindow', title: 'Data window', icon: 'datawindow', order: 10, panel: this.dataWindow, onChart: (c) => this.dataWindow.onChart(c) });
         this.dock.addBuiltIn({ id: 'objects', title: 'Object tree', icon: 'objects', order: 20, panel: this.objectTree, onChart: (c) => this.objectTree.onChart(c) });
         this.dock.addBuiltIn({ id: 'strategyTester', title: 'Strategy tester', icon: 'tester', order: 30, panel: this.strategyTester, onChart: (c) => this.strategyTester.onChart(c) });
+        // The script editor, in the SIDE PANEL rather than on its own page — the shape
+        // TradingView settled on. Offered only when a scripting engine is configured:
+        // an editor with nothing to run is a dead end, and the shell stays engine-free.
+        const hasEngine = Object.keys(resolveEngines(this.opts.engines)).length > 0;
+        this.pineEditor = this.opts.editor === false || !hasEngine ? null : new PineEditor(main);
+        if (this.pineEditor) {
+            this.dock.addBuiltIn({
+                id: 'pineEditor',
+                title: 'Pine editor',
+                icon: 'code',
+                order: 5, // first in the group: it is the working surface, not a report
+                panel: this.pineEditor,
+                onChart: (c) => this.pineEditor?.onChart(c),
+            });
+            // Multi-chart only: the editor's "Apply to entire layout" (TV's own row). The
+            // replication helper already carries a script's inputs and props across.
+            if (this.def.cells.length > 1) {
+                this.pineEditor.onApplyToLayout = () => {
+                    const id = this.pineEditor?.liveHandleId;
+                    const from = this.activeId;
+                    if (!id || !from) return 0;
+                    const others = [...this.cellsById.keys()].filter((cellId) => cellId !== from);
+                    return this.replicateIndicator(from, id, others);
+                };
+            }
+            // A row that HAS source (a script indicator) gets a "Source code" chip; a
+            // native indicator has no text to show, so the action never appears there.
+            this.editorLegendOff = registerLegendAction({
+                id: 'pine.source',
+                icon: 'code',
+                tooltip: 'Source code',
+                order: -10,
+                when: (ind) => ind.source !== undefined,
+                run: (_ctx, ind) => this.openEditor(ind.source, ind.title),
+            });
+        } else {
+            this.editorLegendOff = null;
+        }
         this.dock.refresh();
         // The dock's own slice of the boot document (open panel, dragged widths, pinned
         // placements) — the sync-storage twin of what `applyState` does for a late document.
@@ -1218,6 +1272,9 @@ export class VelaWorkspace {
                           ? { onIndicatorsClick: this.indicatorsOverride ? () => this.runOverride(this.indicatorsOverride!) : () => picker!.open() }
                           : {}),
                       getContext: () => this.context(),
+                      // The editor's phone door — the same panel, dragged up from the
+                      // bottom as a sheet (see the panel's mobile rules).
+                      ...(this.pineEditor ? { onEditorClick: () => this.openEditor() } : {}),
                       ...(this.drawingsEnabled ? { onDrawingsClick: () => this.openDrawingsDrawer() } : {}),
                       // Multi-chart only: the stop that isolates the ACTIVE chart (the
                       // per-cell hover cluster has no cursor to reveal it on mobile).
@@ -1450,6 +1507,24 @@ export class VelaWorkspace {
             stateDirty: () => this.markStateDirty(),
             replay: this.replay,
         });
+    }
+
+    /**
+     * Open the script editor. With a `source`, that script is loaded into the editor (the
+     * legend's "Source code" action, or a host deep-linking a script); without one it opens
+     * on whatever the trader last had. Resolves false when the shell has no editor — no
+     * scripting engine was configured, so there is nothing to run.
+     */
+    openEditor(source?: string, title?: string): boolean {
+        if (!this.pineEditor) return false;
+        if (source !== undefined) this.pineEditor.openSource(source, title);
+        this.dock.toggle('pineEditor', true);
+        return true;
+    }
+
+    /** Whether this shell has the script editor (i.e. an engine was configured). */
+    get hasEditor(): boolean {
+        return this.pineEditor !== null;
     }
 
     /** Re-project contributed topbar actions + side panels, and mount late-registered attachments. */
@@ -2159,6 +2234,8 @@ export class VelaWorkspace {
         this.timezoneDrawer?.destroy();
         this.priceScaleDrawer?.destroy();
         this.layoutCtl.destroy();
+        this.editorLegendOff?.();
+        this.pineEditor?.destroy();
         this.dock.destroy(); // contributed panels; the two built-ins are ours to drop
         this.objectTree.destroy();
         this.dataWindow.destroy();
@@ -3014,7 +3091,9 @@ export class VelaWorkspace {
             if (!cell) continue;
             try {
                 const copy = handle.source !== undefined
-                    ? cell.chart.addIndicator(handle.source, { inputs, props })
+                    // Keep the source row's NAME on the copies: a grid of "Indicator" rows
+                    // tells the trader nothing about which script it is.
+                    ? cell.chart.addIndicator(handle.source, { inputs, props, title: handle.title })
                     : handle.nativeType
                       ? cell.chart.addNativeIndicator(handle.nativeType, { inputs })
                       : null;

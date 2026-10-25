@@ -148,6 +148,20 @@ export class Vela {
         return this;
     }
 
+    /**
+     * Whether a scripting engine is registered for `language` (default: the chart's own
+     * default language). The editor surfaces gate on this — no engine means no editor,
+     * which is how the shell stays engine-agnostic while still shipping a real one.
+     */
+    hasEngine(language?: string): boolean {
+        return this.orchestrator.hasEngine(language);
+    }
+
+    /** The language `addIndicator` uses when `options.language` is omitted. */
+    get defaultLanguage(): string {
+        return this.orchestrator.defaultLanguageId;
+    }
+
     /** Run an indicator script on the chart's market data and render it. */
     addIndicator(source: string, options?: AddIndicatorOptions): IndicatorHandle {
         return this.orchestrator.addIndicator(source, options);

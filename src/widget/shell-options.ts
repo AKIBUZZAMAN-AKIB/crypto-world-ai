@@ -24,6 +24,11 @@ export interface VelaShellOptions {
      *  engine for everything. Merged OVER the app-level `registerDefaultEngine`
      *  registry — an instance factory wins for its language. */
     engines?: Record<string, () => ScriptingEngine>;
+    /** The Pine-style script editor's side panel (default: on when the chart has a
+     *  scripting engine, off otherwise — an editor that cannot run a script is a dead
+     *  end). `false` removes the panel, its topbar/drawer entries and the legend's
+     *  "Source code" action from every surface. */
+    editor?: boolean;
     /** Indicator manifest: inline, a URL returning it, or an ASYNC LOADER function
      *  (`() => Promise<manifest>` — filesystem reads, authenticated APIs, dynamic
      *  imports). Resolved ONCE; entries with `enabled: true` auto-add to every FRESH

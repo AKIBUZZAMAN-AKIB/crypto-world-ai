@@ -13,6 +13,7 @@ import { BinanceProvider } from '../src/data/providers/binance';
 import type { IndicatorHandle } from '../src/core/IndicatorHandle';
 import { PINE_SCRIPTS } from './pine-scripts';
 import { EDITOR_STORAGE_KEY as STORAGE_KEY } from './editor-shared';
+import { createScript, editCode, loadLibrary, saveLibrary, type PineScript } from '../src/widget/pine-editor-store';
 import { PineEngine } from './vendor/pine-libre/index.js';
 
 const DEFAULT_SCRIPT = PINE_SCRIPTS[0]?.script ?? '';
@@ -104,19 +105,47 @@ function setStatus(text: string, kind: 'idle' | 'ok' | 'err' = 'idle'): void {
 }
 
 // ── persistence ────────────────────────────────────────────────────────────────
-function save(): void {
+// The page and the in-chart PANEL are two views of ONE document: the panel keeps a
+// script LIBRARY (`vela-pine-library`), and this page edits the library's active script.
+// The old single-key draft stays written too, so a bookmark made against the earlier
+// page keeps opening what the trader left there.
+function read(key: string): string | null {
     try {
-        localStorage.setItem(STORAGE_KEY, code.value);
+        return localStorage.getItem(key);
+    } catch {
+        return null;
+    }
+}
+function write(key: string, value: string): void {
+    try {
+        localStorage.setItem(key, value);
     } catch {
         // Private mode / storage disabled: the editor still works, it just forgets.
     }
 }
-function restore(): string {
-    try {
-        return localStorage.getItem(STORAGE_KEY) ?? '';
-    } catch {
-        return '';
+// First save on a fresh browser ADOPTS the draft as the library's first script, so a
+// script written here is in the panel's library the next time the chart is opened.
+function seed(source: string): PineScript {
+    const created = createScript('indicator', 'My script');
+    return { ...created, code: source, versions: [{ ...created.versions[0]!, code: source }] };
+}
+function save(): void {
+    write(STORAGE_KEY, code.value);
+    const library = loadLibrary(read);
+    if (!library) {
+        const first = seed(code.value);
+        saveLibrary(write, { scripts: [first], activeId: first.id });
+        return;
     }
+    const active = library.scripts.find((s) => s.id === library.activeId) ?? library.scripts[0];
+    if (!active) return;
+    const next = editCode(active, code.value);
+    saveLibrary(write, { ...library, scripts: library.scripts.map((s) => (s.id === next.id ? next : s)) });
+}
+function restore(): string {
+    const library = loadLibrary(read);
+    const active = library?.scripts.find((s) => s.id === library.activeId) ?? library?.scripts[0];
+    return active?.code ?? read(STORAGE_KEY) ?? '';
 }
 
 // ── run ────────────────────────────────────────────────────────────────────────
