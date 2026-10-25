@@ -118,6 +118,23 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **The click no longer pays for what it opens.** Lazy chrome moved the build to the first
+  open — correct for what a page costs at rest, but it put the whole list in the click for
+  the heavy surfaces. A trigger now warms its surface on INTENT: a pointer resting on it
+  for 120 ms, focus, a press or the click's own capture phase builds the rows *before* they
+  are needed, so the click only opens something that already exists (a pointer passing over
+  the bar still builds nothing, and a page at rest still carries no rows). `Menu` grew a
+  public `prewarm(deep?)` for hosts that know a menu is coming, and `Menu.open()` /
+  `openAt()` build first, so a menu opened from code has its rows in the same tick.
+- **The symbol picker streams its list.** A hundred-symbol page is ~1,100 nodes and the
+  search rebuilds on every keystroke; the first screenful now paints in the opening frame
+  and the rest appends over the next few (6 ms slices), with the arrow keys able to force
+  the remainder. Row icons are `loading="lazy"`, so a hundred coin logos are not fetched or
+  decoded inside the click. Measured: dialog up in ~20 ms and fully populated in 50–90 ms,
+  where it used to block for ~300 ms; a keystroke in its search box costs ~7 ms.
+  Held by `test/browser/sync-interaction-latency.mjs`, which clicks the real topbar
+  controls from a cold page and fails if any surface takes more than 120 ms to appear.
+
 - **Chrome that is closed is no longer built.** A DOM audit of a four-chart desktop
   workspace found 2,302 elements and 1,886 listeners at boot, and **74% of that tree was
   invisible**: twelve closed menus held 372 rows, each cell mounted a full 157-node drawing

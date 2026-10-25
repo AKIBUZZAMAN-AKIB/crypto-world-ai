@@ -34,6 +34,7 @@ describe('Menu iconBadges', () => {
     it('wraps each icon in a badge and reserves an empty badge on icon-less rows', () => {
         const h = host();
         const menu = new Menu({ host: h, items: MIXED, iconBadges: true });
+        menu.prewarm(true); // the row structure is what these tests are about — build it
         const list = h.querySelector('.vela-menu')!;
         expect(list.getAttribute('data-badges')).toBe('1');
         expect(rows(list)).toEqual([
@@ -50,6 +51,7 @@ describe('Menu iconBadges', () => {
     it('keeps the natural left edge on a level with no icon', () => {
         const h = host();
         const menu = new Menu({ host: h, items: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], iconBadges: true });
+        menu.prewarm(true); // the row structure is what these tests are about — build it
         const list = h.querySelector('.vela-menu')!;
         expect(list.hasAttribute('data-badges')).toBe(false);
         expect(list.querySelector('.vela-menu-badge')).toBeNull();
@@ -60,6 +62,7 @@ describe('Menu iconBadges', () => {
     it('leaves menus that do not opt in with bare icons', () => {
         const h = host();
         const menu = new Menu({ host: h, items: MIXED });
+        menu.prewarm(true); // the row structure is what these tests are about — build it
         const list = h.querySelector('.vela-menu')!;
         expect(list.hasAttribute('data-badges')).toBe(false);
         expect(list.querySelector('.vela-menu-badge')).toBeNull();
@@ -72,6 +75,7 @@ describe('Menu iconBadges', () => {
     it('re-decides the column when the items change', () => {
         const h = host();
         const menu = new Menu({ host: h, items: MIXED, iconBadges: true });
+        menu.prewarm(true); // the row structure is what these tests are about — build it
         const list = h.querySelector('.vela-menu')!;
         menu.setItems([{ id: 'a', label: 'A' }]);
         expect(list.hasAttribute('data-badges')).toBe(false);
@@ -94,6 +98,7 @@ describe('Menu iconBadges', () => {
                 { id: 'act', label: 'Action', icon: 'camera' },
             ],
         });
+        menu.prewarm(true); // the row structure is what these tests are about — build it
         const list = h.querySelector('.vela-menu')!;
         expect(rows(list)).toEqual([
             ['vela-menu-mark', 'vela-menu-badge', 'vela-menu-label'],
@@ -118,6 +123,7 @@ describe('Menu iconBadges', () => {
                 { id: 'more', label: 'More', submenu: [{ id: 'shot', label: 'Screenshot', icon: 'camera' }, { id: 'x', label: 'X' }] },
             ],
         });
+        menu.prewarm(true); // the row structure is what these tests are about — build it
         const [root, sub] = [...h.querySelectorAll('.vela-menu')];
         expect(root!.hasAttribute('data-badges')).toBe(false);
         expect(sub!.getAttribute('data-badges')).toBe('1');

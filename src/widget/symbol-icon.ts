@@ -41,6 +41,11 @@ export function tickerIconEl(doc: Document, base: string, name: string, classNam
     // logo out. If a provider resolves to a CDN without CORS, the load errors into the
     // initials badge — which exports fine — instead of silently poisoning screenshots.
     img.crossOrigin = 'anonymous';
+    // Decorative, and there is a badge behind every one of them: a search list opens
+    // with a hundred of these, so the ones below the fold must not be fetched (or
+    // decoded) inside the click that opened the dialog.
+    img.loading = 'lazy';
+    img.decoding = 'async';
     img.src = iconUrl;
     img.style.cssText = 'width:100%;height:100%;border-radius:50%;display:block;object-fit:cover;';
     img.addEventListener(

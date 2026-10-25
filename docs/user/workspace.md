@@ -657,6 +657,19 @@ desktop workspace costs ~1.3k nodes rather than ~2.3k, and a phone ~1.2k:
 Nothing about this is visible in the UI: every control, panel, menu and dialog still
 appears complete the first time you reach for it. It only changes what a boot costs.
 
+**…and the click never pays for it.** Waiting until the click to build would trade boot
+weight for a stall at exactly the wrong moment, so the shell spends the *intent* instead:
+resting the pointer on a trigger for a beat (or focusing it, or pressing on it) builds that
+menu's rows before the click lands, and the click itself only opens them. A pointer merely
+passing over the bar builds nothing, so a page at rest still carries no rows.
+
+Long lists stream instead of landing in one lump. The symbol picker's page of a hundred
+symbols paints its first screenful in the frame the dialog opens and appends the rest over
+the next few frames (a keystroke in its search box costs one short frame, not a hundred
+rows), and its row icons are lazy — a hundred coin logos are fetched and decoded as they
+come into view, never inside the click. Measured on this machine: the picker is fully
+populated 50–90 ms after the click, where it used to block for 300 ms.
+
 ### Chart templates
 
 A **template** is a chart's *indicators, settings included* — not the chart: no drawings,

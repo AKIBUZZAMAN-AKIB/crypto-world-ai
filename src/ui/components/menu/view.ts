@@ -8,6 +8,7 @@ import { injectStyles } from '../../styles';
 import { floatingLayerHost } from '../../tokens';
 import { iconEl } from '../../icons';
 import { announceSurface } from '../../surface-events';
+import { warmOnIntent } from '../../warm';
 import { holdForExit, type SurfaceExit } from '../../surface-exit';
 import { menuController, type MenuControllerOptions, type MenuItemDescriptor } from './controller';
 import { MENU_CSS, MENU_STYLE_ID } from './styles';
@@ -79,6 +80,9 @@ class Surface {
      *  them before anyone had opened one. Rows are built the moment the level opens
      *  (and kept while it is open), so a menu costs its items only when it is used. */
     private built = false;
+    /** Is this level open right now? `setItems` must rebuild for an OPEN level even when
+     *  nothing has opened it before (a menu whose descriptors arrive with its first open). */
+    private openState = false;
     /** Branch item id → the surface it opens. */
     private readonly subs = new Map<string, Surface>();
     /** Trigger rect captured when this level opened — the list stays put if the
@@ -89,6 +93,8 @@ class Surface {
     /** The list's exit animation after a close; a reopen cancels it. */
     private exit: SurfaceExit | null = null;
     private readonly opener: HTMLElement | null;
+    /** Detaches the intent warm-up wired to this level's trigger (see {@link armWarm}). */
+    private unwarm: (() => void) | null = null;
 
     constructor(doc: Document, opts: SurfaceOptions) {
         this.doc = doc;
@@ -127,6 +133,7 @@ class Surface {
         });
         this.mid = String(this.ctrl.props.id);
         if (opts.triggerId && trigger) trigger.id = opts.triggerId;
+        this.armWarm();
         this.handle = runMachine(this.ctrl.machine, this.ctrl.props, (service) => {
             const api = this.ctrl.connect(service);
             // Close announces while the list still shows, open once it does.
@@ -136,20 +143,46 @@ class Surface {
                 this.exit.cancel();
                 this.exit = null;
             }
+            this.openState = api.open;
             if (trigger) spreadProps(trigger, api.getTriggerProps(), this.mid);
             spreadProps(this.positioner, api.getPositionerProps(), this.mid);
             spreadProps(this.list, api.getContentProps(), this.mid);
             // First open builds the rows synchronously, before anything is projected onto
             // them — a closed menu holds no rows at all.
-            if (api.open && !this.built) {
-                this.built = true;
-                this.build();
-                this.registerSubs();
-            }
+            if (api.open) this.warm();
             this.project(api);
             if (closing) this.holdExit();
             if (api.open && !this.shown) this.announce(true);
         });
+    }
+
+    /**
+     * Build this level's rows while the pointer is still on its way to the click.
+     *
+     * Construction used to happen inside `open` — correct for what a page costs at rest
+     * (twelve closed menus weighed 372 rows), but it puts the whole list inside the click
+     * for a level with a lot of rows. Hovering a trigger for a beat is intent enough: the
+     * warm-up builds the SAME rows `open` would have built, just before it needs them, so
+     * opening is a projection and nothing else. A pass-through hover builds nothing.
+     */
+    private armWarm(): void {
+        const trigger = this.opener;
+        if (!trigger || this.unwarm) return;
+        this.unwarm = warmOnIntent(trigger, () => this.warm());
+    }
+
+    /** Build this level (and, when `deep`, every branch it owns) without opening it. */
+    prewarm(deep = false): void {
+        this.warm();
+        if (deep) for (const sub of this.subs.values()) sub.prewarm(true);
+    }
+
+    /** Build the rows if they are not built yet — idempotent, cheap when already done. */
+    private warm(): void {
+        if (this.built || this.items.length === 0) return;
+        this.built = true;
+        this.build();
+        this.registerSubs();
     }
 
     /** Keep the just-closed list up through its exit animation. `spreadProps` re-applies
@@ -176,7 +209,7 @@ class Surface {
         this.items = items;
         for (const sub of this.subs.values()) sub.destroy();
         this.subs.clear();
-        if (!this.built) return; // closed and never opened: the descriptors wait for the first open
+        if (!this.built && !this.openState) return; // closed and never opened: the descriptors wait for the first open
         this.build();
         this.registerSubs();
     }
@@ -197,6 +230,8 @@ class Surface {
     }
 
     destroy(): void {
+        this.unwarm?.();
+        this.unwarm = null;
         for (const sub of this.subs.values()) sub.destroy();
         this.subs.clear();
         this.exit?.finish();
@@ -372,11 +407,15 @@ export class Menu {
     }
 
     open(): void {
+        // Rows first: an open that has to build paints its first frame empty, and code that
+        // opens a menu and then reads it (context menus, tests) expects the rows to exist.
+        this.root.prewarm();
         this.api.setOpen(true);
     }
 
     /** Open anchored to a viewport point (context menus). */
     openAt(clientX: number, clientY: number): void {
+        this.root.prewarm();
         const api = this.api;
         api.setOpen(true);
         api.reposition({ getAnchorRect: () => ({ x: clientX, y: clientY, width: 0, height: 0 }) });
@@ -384,6 +423,15 @@ export class Menu {
 
     close(): void {
         this.api.setOpen(false);
+    }
+
+    /**
+     * Build the rows now, without opening: what hovering a trigger does after a beat.
+     * `deep` also builds the menu's submenus (their rows are usually built when the
+     * branch opens — there is a whole hover and a click of lead time).
+     */
+    prewarm(deep = false): void {
+        this.root.prewarm(deep);
     }
 
     /** Swap the item descriptors (e.g. checked states) and re-project. */

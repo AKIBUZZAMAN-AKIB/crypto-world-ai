@@ -107,6 +107,9 @@ describe('the pills', () => {
 
     it('the speed menu lists the nine paces, with the current one checked', () => {
         const { host, bar } = mount();
+        // The rows are built when the menu opens, not when the bar is constructed (a closed
+        // menu carries nothing) — so the list is opened the way a trader opens it.
+        host.querySelector<HTMLButtonElement>('.vela-replay-speed')!.click();
         // The list portals to the floating layer (the document body here, with no
         // `.vela-ui` wrapper), so it is found from the document, not from the mount.
         const rows = [...document.querySelectorAll('.vela-menu .vela-menu-item')];

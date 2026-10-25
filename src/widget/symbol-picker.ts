@@ -289,6 +289,11 @@ export interface SymbolPickerOptions {
  *  bottom, so a 13k-symbol venue browses whole without ever rendering 13k rows up front. */
 const PAGE = 100;
 
+/** Rows appended in the frame a list is (re)built in — the rest stream in over the next
+ *  frames. A hundred-row page is ~1,100 nodes, and a search rebuilds on every keystroke:
+ *  building all of it inside the click/keypress is what makes a picker feel stuck. */
+const FIRST_PAINT_ROWS = 16;
+
 export class SymbolPicker {
     private readonly dialog: Dialog;
     private readonly input: HTMLInputElement;
@@ -297,6 +302,8 @@ export class SymbolPicker {
     /** The header the dialog was built with — restored after a titled opening. */
     private readonly baseTitle: string;
     private rows: SymbolDescriptor[] = [];
+    /** Bumped on every fill so a superseded one (a newer keystroke) stops appending. */
+    private fillToken = 0;
     private highlighted = 0;
     private seed = '';
     private activeTab = 'All';
@@ -466,7 +473,7 @@ export class SymbolPicker {
         const focus = this.rows[this.highlighted];
         this.rows = this.computeRows();
         this.list.replaceChildren();
-        this.rows.forEach((r, i) => this.list.appendChild(this.rowEl(r, i)));
+        this.fill();
         const at = focus ? this.rows.indexOf(focus) : -1;
         this.highlighted = at >= 0 ? at : Math.min(this.highlighted, Math.max(0, this.rows.length - 1));
         this.renderHighlight();
@@ -485,7 +492,43 @@ export class SymbolPicker {
     private moveHighlight(delta: number): void {
         if (!this.rows.length) return;
         this.highlighted = Math.min(this.rows.length - 1, Math.max(0, this.highlighted + delta));
+        // The arrow keys can outrun the streaming fill; the row it moves to must exist.
+        if (!this.list.querySelector(`[data-i="${this.highlighted}"]`)) this.fillNow();
         this.renderHighlight();
+    }
+
+    /**
+     * Append the rows: the first screenful in this frame, the rest over the next few.
+     * The list is in scroll order, so rows land exactly where the finished list would
+     * have put them; only the paint is spread out. `rows` never changes under a running
+     * fill (a new query bumps {@link fillToken} and the stale pass drops out).
+     */
+    private fill(): void {
+        const gen = ++this.fillToken;
+        const win = this.list.ownerDocument.defaultView;
+        const from = this.list.children.length;
+        let i = from;
+        const step = (first: boolean): void => {
+            if (gen !== this.fillToken) return;
+            const started = performance.now();
+            while (i < this.rows.length && (first ? i < from + FIRST_PAINT_ROWS : performance.now() - started < 6)) {
+                this.list.appendChild(this.rowEl(this.rows[i]!, i));
+                i++;
+            }
+            if (first) this.renderHighlight();
+            if (i >= this.rows.length) {
+                if (!first) this.renderHighlight();
+                return;
+            }
+            win?.requestAnimationFrame(() => step(false));
+        };
+        step(true);
+    }
+
+    /** Finish the fill now — the keyboard is moving to a row that has not been appended. */
+    private fillNow(): void {
+        this.fillToken++;
+        for (let i = this.list.children.length; i < this.rows.length; i++) this.list.appendChild(this.rowEl(this.rows[i]!, i));
     }
 
     private renderHighlight(): void {
@@ -573,8 +616,7 @@ export class SymbolPicker {
             this.list.appendChild(empty);
             return;
         }
-        this.rows.forEach((s, i) => this.list.appendChild(this.rowEl(s, i)));
-        this.renderHighlight();
+        this.fill();
     }
 
     /** Append the page the grown `visible` just uncovered — rows already on screen stay put. */
