@@ -1002,6 +1002,10 @@ export class VelaWorkspace {
             onRedoClick: () => this.active.history.redo(),
             onScreenshotClick: () => this.downloadScreenshot(),
             onAlertsClick: (anchor) => this.openAlertsMenu(anchor),
+            // TradingView's "Compare" tool, in the top toolbar: a second series on the
+            // active chart. The button is a STATE — it lights up and names the symbol
+            // while a comparison is on screen.
+            compare: { symbol: () => this.compareLabel(), onClick: () => this.openCompare() },
             // The replay slot exists only when the chrome does — a shell with
             // `replay: false` never renders a dead button.
             ...(opts.replay === false ? {} : { onReplayClick: (anchor: HTMLElement) => this.openReplayMenu(anchor) }),
@@ -2373,6 +2377,7 @@ export class VelaWorkspace {
         this.historyUnsub = cell.history.onChange(pushHistory);
         pushHistory();
         this.objectTree.setSymbol(cell.symbol);
+        this.topbar.setCompareSymbol(this.compareLabel());
         this.dock.onChart(cell.chart); // every docked panel follows the active cell
         this.bottombar?.setActiveRange(cell.activeRangeId);
         this.bottombar?.setSession({ session: cell.session, enabled: cell.sessionAvailable });
@@ -5717,6 +5722,14 @@ export class VelaWorkspace {
         return handle ? this.compareSymbols.get(`${cell!.id}:${handle.id}`) ?? null : null;
     }
 
+    /** The ticker the ACTIVE chart compares with (null = nothing compared) — the toolbar
+     *  chip's text, and what its tooltip names. */
+    private compareLabel(): string | null {
+        const raw = this.compareSymbolOf(this.activeCell());
+        if (!raw) return null;
+        return this.feed.resolveSymbol(raw)?.ticker ?? raw.split(':').pop() ?? raw;
+    }
+
     /** The compare study's display mode on a cell (the reference default: Same % scale). */
     private compareDisplayOf(cell: ChartCell | null): CompareDisplay {
         const handle = cell?.chart.indicators().find((h) => h.nativeType === 'compare');
@@ -5747,6 +5760,7 @@ export class VelaWorkspace {
             // the host asked for a non-default mode).
             this.applyCompareDisplay(cell, handle.id, display);
         }
+        this.topbar.setCompareSymbol(this.compareLabel());
         this.toast(`Comparing with ${parseSymbol(symbol).ticker || symbol}`, 'info', 2200);
         this.compareSheet?.refresh();
         this.markStateDirty();
@@ -5779,6 +5793,7 @@ export class VelaWorkspace {
         this.compareDisplays.delete(key);
         this.restoreCompareAxis(cell);
         this.compareSheet?.refresh();
+        this.topbar.setCompareSymbol(this.compareLabel());
         this.markStateDirty();
     }
 

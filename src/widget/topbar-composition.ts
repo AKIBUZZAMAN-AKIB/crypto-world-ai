@@ -30,13 +30,13 @@ export interface TopbarComposition {
  *  indicator surface exists — the built-in picker (the deprecated `indicatorPicker:
  *  false` still removes it) or a slot OVERRIDE replacing it — so listing them is
  *  necessary but not sufficient. */
-export const TOPBAR_BUILTIN_IDS = ['symbol', 'timeframes', 'style', 'layout', 'layouts', 'indicators', 'templates', 'actions', 'undo-redo', 'replay', 'alerts', 'panels', 'screenshot'] as const;
+export const TOPBAR_BUILTIN_IDS = ['symbol', 'timeframes', 'style', 'layout', 'layouts', 'indicators', 'templates', 'actions', 'undo-redo', 'compare', 'replay', 'alerts', 'panels', 'screenshot'] as const;
 
 /** The default left side — the current shell composition, verbatim. */
 export const TOPBAR_DEFAULT_LEFT: readonly string[] = ['symbol', 'timeframes', 'style', 'layout', 'indicators', 'templates', 'actions', 'undo-redo', 'layouts'];
 
 /** The default right side (the `margin-left: auto` cluster). */
-export const TOPBAR_DEFAULT_RIGHT: readonly string[] = ['actions', 'replay', 'alerts', 'panels', 'screenshot'];
+export const TOPBAR_DEFAULT_RIGHT: readonly string[] = ['actions', 'compare', 'replay', 'alerts', 'panels', 'screenshot'];
 
 /** A composition with both sides resolved (defaults applied, duplicates dropped). */
 export interface ResolvedTopbarComposition {

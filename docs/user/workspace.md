@@ -531,7 +531,7 @@ they work from the very first keystroke, before any click.
   Indicators picker and the chart-templates dropdown beside it (see
   [Chart templates](#chart-templates)), undo/redo (same history as Ctrl+Z / Ctrl+Y),
   the saved-layout chip and its Save button (see [The layout menu](#the-layout-menu)),
-  alerts bell,
+  compare (it lights up while the active chart carries a second series), alerts bell,
   data-window and object-tree panel toggles, then any
   [contributed actions](../contributing/plugin-sdk.md#widget-actions--registerwidgetaction)
   in the right-hand cluster. The whole bar is composable — see
@@ -818,6 +818,7 @@ Entries come from one shared vocabulary:
 | `'templates'` | The chart-templates dropdown, drawn beside `'indicators'` (the two share one hairline, as in TradingView; a single-chart shell has it too). |
 | `'indicators'` | The Indicators slot — the built-in button, or a plugin's [slot override](../contributing/plugin-sdk.md#replacing-a-built-in-button--slot-overrides). Omitting it removes the button, the mobile stop, the `/` shortcut, and skips the picker dialog. |
 | `'undo-redo'` | The undo/redo pair. |
+| `'compare'` | The Compare tool — opens the compare sheet for the active chart (symbol, and the three display modes). The glyph takes the accent and its tooltip names the compared ticker while that chart carries a second series; `'compare'` renders only when the shell offers the feature. |
 | `'replay'` | The bar-replay button — opens the replay menu (Select bar / Select date / Random bar). Renders only when the shell runs the replay chrome (`replay: false` removes it, and the mobile bar has no counterpart). |
 | `'alerts'` | The alerts bell (badge included). |
 | `'panels'` | The side-panel toggle group (object tree, data window, contributed panels). |

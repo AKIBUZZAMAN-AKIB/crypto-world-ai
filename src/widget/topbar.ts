@@ -198,6 +198,9 @@ const CSS = `
 .vela-widget-templates { width: auto; font-size: 13px; }
 .vela-widget-tplcaret { display: inline-flex; align-items: center; margin-left: -2px; opacity: 0.8; }
 .vela-widget-tplcaret .vela-icon, .vela-widget-templates > .vela-icon { width: 14px; height: 14px; }
+/* Compare is a STATE while a second series is on the chart: the glyph takes the accent
+   (the tooltip names the symbol), so the toolbar reads like the chart it describes. */
+.vela-widget-compare[data-active='1'] { color: var(--vela-accent); background: var(--vela-hover); }
 @media (max-width: 900px) {
     /* Glyph only: the fixed 32px tile, exactly like the icon tools around it. */
     .vela-widget-templates .vela-widget-btnlabel { display: none; }
@@ -383,6 +386,12 @@ export interface TopbarOptions {
     onRedoClick?: () => void;
     onScreenshotClick?: () => void;
     onAlertsClick?: (anchor: HTMLElement) => void;
+    /**
+     * Compare — TradingView's second-series control in the top toolbar. `symbol()` reads
+     * the ACTIVE chart's comparison (null when it compares nothing); clicking opens the
+     * compare sheet. Omitted ⇒ the slot renders nothing.
+     */
+    compare?: { symbol: () => string | null; onClick: () => void };
     /** Bar-replay entry (the `'replay'` slot) — the shell opens its replay menu anchored
      *  on the button. Omitted ⇒ the slot renders nothing (a shell with no replay API
      *  never shows a dead button). */
@@ -418,6 +427,8 @@ export class Topbar {
     private layoutMenu: LayoutMenu | null = null;
     /** The templates dropdown, beside Indicators (see templates-menu.ts). */
     private templatesBtn: HTMLButtonElement | null = null;
+    /** Compare — the second-series tool (lights up while a chart compares). */
+    private compareBtn!: HTMLButtonElement;
     private templatesMenu: TemplatesMenu | null = null;
     private layoutsGroup: HTMLElement | null = null;
     private readonly tfMenu: Menu;
@@ -593,6 +604,14 @@ export class Topbar {
             const open = opts.onReplayClick;
             this.replayBtn.addEventListener('click', () => open(this.replayBtn!));
         }
+        // Compare sits beside Replay in TradingView's right cluster. It is a STATE, not
+        // just a verb: the glyph lights up while the active chart carries a second series,
+        // so the toolbar says what the chart is doing.
+        this.compareBtn =
+            vis('compare') && opts.compare
+                ? tool('vela-widget-compare', 'bands', 'Compare symbol', opts.compare.onClick)
+                : doc.createElement('button');
+        this.setCompareSymbol(vis('compare') && opts.compare ? opts.compare.symbol() : null);
         this.alertsBtn = vis('alerts') ? tool('vela-widget-alerts', 'bell', 'Alerts') : doc.createElement('button');
         this.alertsBtn.style.position = 'relative';
         if (opts.onAlertsClick) this.alertsBtn.addEventListener('click', () => opts.onAlertsClick!(this.alertsBtn));
@@ -706,6 +725,8 @@ export class Topbar {
                     return [this.undoBtn, this.redoBtn];
                 case 'layouts':
                     return this.layoutsGroup ? [this.layoutsGroup] : [];
+                case 'compare':
+                    return this.compareBtn.classList.contains('vela-widget-compare') ? [this.compareBtn] : [];
                 case 'replay':
                     return this.replayBtn ? [this.replayBtn] : [];
                 case 'alerts':
@@ -729,6 +750,7 @@ export class Topbar {
                 case 'indicators': return !!topbarActionOverride(id) || !!indicatorsBtn;
                 case 'templates': return !!this.templatesBtn;
                 case 'layouts': return !!this.layoutsGroup;
+                case 'compare': return this.compareBtn.classList.contains('vela-widget-compare');
                 case 'replay': return !!this.replayBtn;
                 case 'screenshot': return !!topbarActionOverride(id) || !!screenshotBtn;
                 case 'undo-redo': return !!this.undoBtn;
@@ -1068,6 +1090,18 @@ export class Topbar {
     setAlertCount(n: number): void {
         this.alertsBadge.textContent = n > 9 ? '9+' : String(n);
         this.alertsBadge.style.display = n > 0 ? '' : 'none';
+    }
+
+    /** Light the compare control: `label` is the second series' ticker, null when the
+     *  active chart compares nothing. A safe no-op on a composition without the slot. */
+    setCompareSymbol(label: string | null): void {
+        const btn = this.compareBtn;
+        if (!btn || !btn.classList.contains('vela-widget-compare')) return;
+        btn.dataset.active = label ? '1' : '0';
+        const tip = label ? `Comparing with ${label} — click to change` : 'Compare symbol';
+        btn.title = tip;
+        btn.setAttribute('aria-label', tip);
+        btn.setAttribute('aria-pressed', label ? 'true' : 'false');
     }
 
     /**

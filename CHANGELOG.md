@@ -6,6 +6,20 @@ All notable changes to Vela, newest first.
 
 ### Added
 
+- **Compare in the top toolbar — TradingView's second-series tool, where a desktop can
+  reach it.** The compare flow already existed but had exactly one door: the phone's More
+  drawer, so on a desktop the feature was invisible. `'compare'` is now a built-in topbar
+  slot (right cluster, beside replay, default on): clicking it opens the compare sheet
+  (symbol + Same % scale / New price scale / Left axis), and the control is a **state** —
+  while the active chart carries a comparison the glyph takes the accent, its tooltip reads
+  *Comparing with ETHUSDT — click to change* and `aria-pressed` is true; removing the study
+  puts it back to idle. The phone keeps its 48px drawer row and hides the toolbar control.
+  Omitting `'compare'` from a composition removes the button with the rest of the slot.
+- **The Templates dropdown is labelled, as TradingView's is.** It was a bare 32px glyph
+  beside Indicators — identical to undo/redo, with its name only in a tooltip — so the one
+  door to saved indicator sets and the built-in presets was easy to read as missing. It now
+  carries the word (and a caret) at 968px and up, keeps the glyph tile below 900px, and
+  shares the Indicators chip's height, padding and hover.
 - **Chart-settings templates — TradingView's other template, in the chart-settings
   footer.** The settings dialog now opens with a **Templates** control where TV puts it
   (left of Cancel/Ok, its text = the template the chart wears, or *Templates*): a row
