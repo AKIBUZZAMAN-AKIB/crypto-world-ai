@@ -74,6 +74,11 @@ class Surface {
     private readonly checkmarks: boolean;
     private readonly iconBadges: boolean;
     private items: readonly MenuItemDescriptor[] = [];
+    /** Have this level's ROWS been built? A closed menu is a machine and an empty list —
+     *  the twelve menus a workspace constructs at boot used to carry 372 rows between
+     *  them before anyone had opened one. Rows are built the moment the level opens
+     *  (and kept while it is open), so a menu costs its items only when it is used. */
+    private built = false;
     /** Branch item id → the surface it opens. */
     private readonly subs = new Map<string, Surface>();
     /** Trigger rect captured when this level opened — the list stays put if the
@@ -134,6 +139,13 @@ class Surface {
             if (trigger) spreadProps(trigger, api.getTriggerProps(), this.mid);
             spreadProps(this.positioner, api.getPositionerProps(), this.mid);
             spreadProps(this.list, api.getContentProps(), this.mid);
+            // First open builds the rows synchronously, before anything is projected onto
+            // them — a closed menu holds no rows at all.
+            if (api.open && !this.built) {
+                this.built = true;
+                this.build();
+                this.registerSubs();
+            }
             this.project(api);
             if (closing) this.holdExit();
             if (api.open && !this.shown) this.announce(true);
@@ -164,7 +176,14 @@ class Surface {
         this.items = items;
         for (const sub of this.subs.values()) sub.destroy();
         this.subs.clear();
+        if (!this.built) return; // closed and never opened: the descriptors wait for the first open
         this.build();
+        this.registerSubs();
+    }
+
+    /** Wire the freshly built branch surfaces into the machine (queued sends, then a
+     *  re-project once the queue has drained). */
+    private registerSubs(): void {
         const api = this.api;
         for (const sub of this.subs.values()) {
             api.setChild(sub.handle.service);

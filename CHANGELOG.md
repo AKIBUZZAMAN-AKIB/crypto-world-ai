@@ -118,6 +118,19 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **Chrome that is closed is no longer built.** A DOM audit of a four-chart desktop
+  workspace found 2,302 elements and 1,886 listeners at boot, and **74% of that tree was
+  invisible**: twelve closed menus held 372 rows, each cell mounted a full 157-node drawing
+  rail it never showed (the grid's shared rail is the one on screen), and the phone shell
+  stayed built under a desktop layout. Three lazy-mounts remove that weight — the menu
+  `Surface` projects its rows on the first `open`, `DrawingToolbar` builds behind
+  `ensureBuilt()` the first time it is shown, and its state setters keep working while
+  unbuilt so a late show paints the right tool. A 1440×900 workspace is now **1,306
+  elements / 1,095 listeners** and a phone **1,242 / 1,115**, with **no** feature, control or
+  menu row missing: the timeframe menu still opens nine rows under its caret and the rail
+  still holds all 170 of its nodes when it is on screen. Held by
+  `test/browser/sync-dom-budget.mjs`.
+
 - **The desktop topbar scrolls instead of losing its last tools.** A window narrower
   than the chrome (many starred intervals, a long layout name, every panel toggle
   docked) used to push the trailing tools — and the page — off the right edge, with

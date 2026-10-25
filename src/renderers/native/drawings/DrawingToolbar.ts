@@ -121,6 +121,11 @@ export class DrawingToolbar {
     private collapseBtn: HTMLButtonElement | null = null;
     private collapsed = false;
     private visible = false;
+    /** Has the BAR been built (its ~157 nodes) yet? A bar that is never shown — the
+     *  per-cell bar of every non-standalone chart, a mobile layout, a toolbar the host
+     *  keeps hidden — costs one element instead of a full rail. Every setter above still
+     *  records state, so the first show builds exactly what the state asks for. */
+    private built = false;
     private readonly tipText = new WeakMap<HTMLElement, string>(); // per-anchor tooltip text (magnet's changes with mode)
     /** Chrome-tooltip disposers — flushed whenever the cells are recreated (rebuild/destroy). */
     private tipDisposers: Array<() => void> = [];
@@ -230,6 +235,14 @@ export class DrawingToolbar {
     setVisible(visible: boolean): void {
         this.visible = visible;
         this.root.style.display = visible ? 'flex' : 'none';
+        if (visible) this.ensureBuilt();
+    }
+
+    /** Build the rail ON DEMAND — the first time it is really shown. */
+    private ensureBuilt(): void {
+        if (this.built) return;
+        this.built = true;
+        this.rebuild();
     }
 
     setActiveTool(type: DrawingTypeKey | null): void {
@@ -260,6 +273,7 @@ export class DrawingToolbar {
 
     // ── internals ──
     private rebuild(): void {
+        if (!this.built) return; // nothing on screen yet — the recorded state builds it on first show
         for (const dispose of this.tipDisposers.splice(0)) dispose(); // the cells are recreated below
         this.root.replaceChildren();
         this.groupCells.clear();

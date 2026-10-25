@@ -636,6 +636,27 @@ they work from the very first keystroke, before any click.
   before the settings entry at the bottom of the menu (see [Right-click menu
   actions](../contributing/plugin-sdk.md#right-click-menu-actions)).
 
+### What is built, and when
+
+The shell is a workspace, not a page: nearly everything it can show starts **closed**, and
+closed chrome is built the first moment it is opened, not at boot. That is why a four-chart
+desktop workspace costs ~1.3k nodes rather than ~2.3k, and a phone ~1.2k:
+
+- **Menus carry no rows until they open.** All twelve `.vela-menu` surfaces exist as empty
+  layers; the row list is projected from the menu's descriptors on the first `open` (and
+  again only when the items or the state change). A closed menu is a `<div>` and nothing
+  else, so a timeframe caret costs nothing until it is clicked — the first click builds the
+  nine rows and opens them in the same frame.
+- **One drawing rail per workspace, and only when shown.** Each chart *can* own a rail
+  (that is what a standalone chart sees), but in a grid the shared bar on the left of the
+  grid is the one on screen. A cell's own rail is therefore left unbuilt — 157 nodes per
+  cell did nothing but sit at `display:none` — and it is constructed the first time
+  something asks to show it. Its state (selection, magnet, lock) is still tracked while
+  unbuilt, so a rail that appears later shows the right tool lit.
+
+Nothing about this is visible in the UI: every control, panel, menu and dialog still
+appears complete the first time you reach for it. It only changes what a boot costs.
+
 ### Chart templates
 
 A **template** is a chart's *indicators, settings included* — not the chart: no drawings,
