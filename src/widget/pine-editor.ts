@@ -1457,7 +1457,10 @@ export class PineEditor extends SidePanel {
         this.nameLabel.textContent = builtin ? builtin.title : this.active.name;
         this.versionTag.textContent = builtin ? 'built-in' : versionLabel(this.active);
         this.dirtyDot.hidden = builtin ? true : !isDirty(this.active);
+        // A built-in has ONE call to action — the banner's "Make a copy", the way
+        // TradingView puts it. Two identical buttons in one header just split the eye.
         this.primary.textContent = builtin ? 'Make a copy' : this.live ? 'Update on chart' : 'Add to chart';
+        this.primary.hidden = builtin !== null;
         const code = builtin ? builtin.source : this.active.code;
         if (this.input.value !== code) this.input.value = code;
         this.builtinBar.hidden = !builtin;

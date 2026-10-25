@@ -173,8 +173,16 @@ const CSS = `
     align-items: center;
     gap: 7px;
     min-width: 0;
+    margin: 0 -4px;
+    padding: 0 4px;
     font-size: 11.5px;
     line-height: 1.5;
+    border-radius: 4px;
+}
+/* Desktop affordance only: a line lights up under the pointer. Never on touch, where a
+   hover state sticks to the last-tapped line. */
+@media (hover: hover) {
+    .vela-ot-vrow:hover { background: var(--vela-hover); }
 }
 .vela-ot-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--vela-fg-muted); }
 .vela-ot-vlabel {
@@ -825,6 +833,7 @@ export class ObjectTree extends SidePanel {
                       more: true,
                       disclosure: {
                           open: this.openValues.has(row.id),
+                          controls: `vela-ot-values-${row.id}`,
                           title: this.openValues.has(row.id) ? 'Hide all values' : `Show all ${readoutRows.length} values`,
                           run: () => {
                               if (this.openValues.has(row.id)) this.openValues.delete(row.id);
@@ -856,12 +865,17 @@ export class ObjectTree extends SidePanel {
         const block = doc.createElement('div');
         block.className = 'vela-ot-values';
         block.dataset.pane = pane.id;
+        // A named group, announced as one thing: "BB values, 3 items".
+        block.id = `vela-ot-values-${row.id}`;
+        block.setAttribute('role', 'group');
+        block.setAttribute('aria-label', `${row.label} values`);
         const spans: HTMLElement[] = [];
         for (const readoutRow of readoutRows) {
             const line = doc.createElement('div');
             line.className = 'vela-ot-vrow';
             const dot = doc.createElement('span');
             dot.className = 'vela-ot-dot';
+            dot.setAttribute('aria-hidden', 'true');
             if (readoutRow.color) dot.style.background = readoutRow.color;
             const label = doc.createElement('span');
             label.className = 'vela-ot-vlabel';
@@ -1038,7 +1052,7 @@ export class ObjectTree extends SidePanel {
         visible: boolean,
         actions: readonly RowAction[],
         tag?: string,
-        extra: { value?: string; more?: boolean; disclosure?: { open: boolean; title: string; run: () => void } } = {},
+        extra: { value?: string; more?: boolean; disclosure?: { open: boolean; title: string; controls?: string; run: () => void } } = {},
     ): HTMLElement {
         const doc = this.el.ownerDocument;
         const el = doc.createElement('div');
@@ -1052,6 +1066,7 @@ export class ObjectTree extends SidePanel {
             fold.title = extra.disclosure.title;
             fold.setAttribute('aria-label', extra.disclosure.title);
             fold.setAttribute('aria-expanded', extra.disclosure.open ? 'true' : 'false');
+            if (extra.disclosure.controls) fold.setAttribute('aria-controls', extra.disclosure.controls);
             fold.appendChild(iconEl(extra.disclosure.open ? 'chevron-down' : 'chevron-right', el.ownerDocument));
             fold.addEventListener('click', (event) => {
                 event.stopPropagation();

@@ -85,7 +85,30 @@ assert(
     { before, after },
 );
 
+// ── the row menu's "Source code": the legend's { } chip, reachable without the legend ──
+await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.vela-ot-row[data-row-kind="indicator"]')].find(
+        (r) => (r.querySelector('.vela-ot-name')?.textContent || '') === 'BB',
+    );
+    row?.querySelector('.vela-ot-btn[data-icon="more"]')?.click();
+});
+await page.waitForTimeout(600);
+const menuItems = await page.evaluate(() =>
+    [...document.querySelectorAll('.vela-menu .vela-menu-item')].filter((i) => i.offsetParent !== null).map((i) => (i.textContent || '').trim()),
+);
+assert(menuItems.some((t) => /^Source code/.test(t)), "the indicator menu offers Source code", menuItems);
+await page.locator('.vela-menu-item:visible', { hasText: 'Source code' }).first().click({ timeout: 5000 });
+await page.waitForTimeout(1500);
+const source = await page.evaluate(() => {
+    const ta = document.querySelector('.vela-pe-input');
+    return { text: (ta?.value || '').slice(0, 120), readOnly: ta?.readOnly ?? null, banner: !!document.querySelector('.vela-pe-builtin:not([hidden])') };
+});
+assert(/indicator\(\s*"Bollinger Bands"/.test(source.text), "Source code opens the built-in's own Pine text", source.text.slice(0, 80));
+assert(source.readOnly === true, 'a built-in opens read-only', source.readOnly);
+assert(source.banner === true, 'the read-only banner is shown', source.banner);
+
 const facts = {
+    menu: menuItems.filter((t) => /Source code/.test(t)),
     rows: rows.map((r) => `${r.name}=${r.value}`),
     blocks: blocks.map((lines) => lines.map((l) => `${l.label}=${l.value}`)),
     followed: JSON.stringify(before) !== JSON.stringify(after),
