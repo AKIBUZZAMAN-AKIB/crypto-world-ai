@@ -502,7 +502,11 @@ export class ObjectTree extends SidePanel {
         this.unsubs.push(chart.on('bar', () => this.refreshValues()));
         // …and it follows the CROSSHAIR: scrubbing the chart reads every study's value at
         // that bar here, which is the phone's only readout (the legend is folded away).
-        this.unsubs.push(chart.renderer.onCrosshairMove(() => this.refreshValues()));
+        // Not every renderer speaks crosshair (test doubles, exotic backends) — the tree
+        // must still mount there, it just won't follow a cursor it never sees.
+        if (typeof chart.renderer.onCrosshairMove === 'function') {
+            this.unsubs.push(chart.renderer.onCrosshairMove(() => this.refreshValues()));
+        }
         // Selection both stores and repaints, in that order: a refresh triggered before the id
         // is recorded would paint the previous selection and never come back to fix it.
         this.unsubs.push(
