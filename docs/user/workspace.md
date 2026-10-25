@@ -561,8 +561,17 @@ they work from the very first keystroke, before any click.
   colour and its value, updating in place as the crosshair moves or a bar closes. On a phone
   that list is the readout — the legend is folded away there — so the tree is where a study's
   numbers are read. Right-clicking an indicator also offers **Source code** (the legend's `{ }`
-  chip by another route): a built-in opens read-only, a script editable. Drawings can be multi-selected
-  (Ctrl/Cmd-click) and bundled into a named group that hides, locks, deletes and drags as one
+  chip by another route): a built-in opens read-only, a script editable. Double-clicking a
+  study's row opens its settings.
+  The tree multi-selects the way TradingView's does — **Ctrl/Cmd-click** extends the pick,
+  **Shift-click** takes the range, **Ctrl/Cmd+A** takes every row, **Delete/Backspace** removes
+  the pick and **Esc** lets go without closing the panel. A pick can hold studies and drawings
+  at once; a sticky bar then carries the verbs that make sense for it (**eye** hides or shows
+  the lot, **bin** removes it, **gear** when it is exactly one study, **group** and **duplicate**
+  when it is drawings). Right-clicking inside a pick acts on the whole pick rather than on the
+  single row under the pointer, and a phone starts a pick with a **long-press** (a plain tap
+  stays a tap; the next tap extends it).
+  Drawings inside a group travel together: the group hides, locks, deletes and drags as one
   block; groups live for as long as the chart and are not persisted. Kept in sync with the
   chart's events — a selection made on the chart (Ctrl/Cmd-click, a marquee) lights up every
   row it covers, and a pick made in the panel selects the same drawings on the chart.

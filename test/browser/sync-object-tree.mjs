@@ -85,6 +85,48 @@ assert(
     { before, after },
 );
 
+// ── multi-select: Ctrl-click, the bar, and Esc ───────────────────────────────────────
+const rowPoint = async (name) =>
+    page.evaluate((n) => {
+        const r = [...document.querySelectorAll('.vela-ot-row[data-row-kind="indicator"]')].find(
+            (x) => (x.querySelector('.vela-ot-name')?.textContent || '') === n,
+        );
+        const b = r.getBoundingClientRect();
+        return { x: b.x + 60, y: b.y + b.height / 2 };
+    }, name);
+const clickRow = async (name, mods = []) => {
+    const p = await rowPoint(name);
+    for (const m of mods) await page.keyboard.down(m);
+    await page.mouse.click(p.x, p.y);
+    for (const m of mods) await page.keyboard.up(m);
+    await page.waitForTimeout(250);
+};
+await clickRow('BB');
+await clickRow('MACD', ['Control']);
+const bulk = await page.evaluate(() => ({
+    visible: !document.querySelector('.vela-ot-selbar')?.hidden,
+    count: document.querySelector('.vela-ot-selcount')?.textContent ?? '',
+    verbs: [...document.querySelectorAll('.vela-ot-selbar .vela-ot-btn')].map((b) => b.dataset.icon),
+    picked: [...document.querySelectorAll('.vela-ot-row[data-picked]')].map((r) => r.querySelector('.vela-ot-name')?.textContent),
+}));
+assert(bulk.visible, 'Ctrl-click on a second row opens the selection bar', bulk);
+assert(bulk.count === '2 selected', 'the bar counts the pick', bulk.count);
+assert(bulk.verbs.includes('eye-off') && bulk.verbs.includes('trash'), 'the bar carries the eye and the bin', bulk.verbs);
+assert(
+    bulk.picked.length === 2 && bulk.picked.includes('BB') && bulk.picked.includes('MACD'),
+    'both rows read as picked',
+    bulk.picked,
+);
+await page.keyboard.press('Escape');
+await page.waitForTimeout(350);
+const cleared = await page.evaluate(() => ({
+    hidden: document.querySelector('.vela-ot-selbar')?.hidden === true,
+    picked: document.querySelectorAll('.vela-ot-row[data-picked]').length,
+    panel: !!document.querySelector('.vela-ot-row'),
+}));
+assert(cleared.hidden && cleared.picked === 0, 'Esc lets go of the pick', cleared);
+assert(cleared.panel, '…without closing the panel', cleared);
+
 // ── the row menu's "Source code": the legend's { } chip, reachable without the legend ──
 await page.evaluate(() => {
     const row = [...document.querySelectorAll('.vela-ot-row[data-row-kind="indicator"]')].find(
@@ -134,6 +176,32 @@ assert(
     await p.evaluate(() => document.documentElement.scrollWidth),
 );
 assert(phone.errors.length === 0, 'no page errors on the phone pass', phone.errors.slice(0, 3));
+
+// A phone's plain tap must NOT start a pick (the bulk bar would follow every look);
+// a long-press does. The tap half is cheap to assert and catches the regression that
+// makes browsing the tree feel like it is editing.
+await p.evaluate(async () => {
+    const c = window.__ws.active.chart;
+    c.addNativeIndicator('bollinger-bands');
+    await new Promise((r) => setTimeout(r, 4000));
+});
+const tapPoint = await p.evaluate(() => {
+    const r = [...document.querySelectorAll('.vela-ot-row[data-row-kind="indicator"]')].find(
+        (x) => (x.querySelector('.vela-ot-name')?.textContent || '') === 'BB',
+    );
+    if (!r) return null;
+    const b = r.getBoundingClientRect();
+    return { x: b.x + 60, y: b.y + b.height / 2 };
+});
+let tapStartedPick = null;
+if (tapPoint) {
+    await p.touchscreen.tap(tapPoint.x, tapPoint.y);
+    await p.waitForTimeout(400);
+    tapStartedPick = await p.evaluate(() => !document.querySelector('.vela-ot-selbar')?.hidden);
+    assert(tapStartedPick === false, 'a plain tap on a phone does not start a pick', tapStartedPick);
+}
+
+assert(p.url().length > 0, 'the phone context is still alive for the tap check', true);
 await phone.browser.close();
 
-report('object-tree-values', { ...facts, phone: { editorRow, editorOpen } });
+report('object-tree-values', { ...facts, bulk, phone: { editorRow, editorOpen, tapStartedPick } });

@@ -91,7 +91,12 @@ const CSS = `
 .vela-ot-row[data-hidden] > .vela-icon { opacity: 0.45; }
 /* Two different states, and both can be true at once: "picked" is what the panel has selected
    (the group/duplicate candidates), "selected" mirrors what the CHART has selected. */
-.vela-ot-row[data-picked] { background: var(--vela-active); }
+.vela-ot-row[data-picked] {
+    background: var(--vela-active);
+    /* A picked row wears the accent as an inset edge, so a multi-pick reads at a glance
+       even where the active background is nearly the panel's own colour. */
+    box-shadow: inset 2px 0 0 var(--vela-accent);
+}
 .vela-ot-row[data-picked] .vela-ot-name { color: var(--vela-fg-bright); }
 .vela-ot-row[data-selected] { box-shadow: inset 2px 0 0 var(--vela-accent); }
 .vela-ot-avatar {
@@ -248,18 +253,25 @@ const CSS = `
    list while the list scrolls under it, so they never scroll out of reach. */
 .vela-ot-selbar {
     position: sticky;
-    top: -8px;
+    bottom: -8px;
     z-index: 2;
     display: flex;
     align-items: center;
     gap: 2px;
-    margin: -8px -8px 6px;
+    margin: 6px -8px -8px;
     padding: 6px 8px;
-    border-bottom: 1px solid var(--vela-border);
+    border-top: 1px solid var(--vela-border);
     background: var(--vela-bg);
 }
+.vela-ot-selbar[hidden] { display: none; }
 .vela-ot-selcount { flex: 1; min-width: 0; color: var(--vela-fg-muted); font-size: 11px; }
-.vela-ot-selbar .vela-ot-btn { visibility: visible; width: 24px; height: 24px; }
+.vela-ot-selbar {
+    box-shadow: 0 -10px 18px -14px #000;
+}
+.vela-ot-selbar .vela-ot-btn { visibility: visible; width: 26px; height: 26px; color: var(--vela-fg); }
+.vela-ot-selbar .vela-ot-btn .vela-icon { font-size: 14px; }
+.vela-ot-selbar .vela-ot-btn:hover:not(:disabled) { background: var(--vela-active); color: var(--vela-fg-bright); }
+.vela-ot-selbar .vela-ot-btn[data-icon='close'] { color: var(--vela-fg-muted); }
 .vela-ot-selbar .vela-ot-btn[data-icon='group'] .vela-icon { width: 16px; height: 16px; font-size: 16px; }
 
 /* ── drag-and-drop ── */
@@ -438,6 +450,28 @@ export class ObjectTree extends SidePanel {
     private collapsed = new Set<string>();
     /** Drawings picked IN THE PANEL — what the selection bar and "group selection" act on. */
     private picked = new Set<string>();
+    /** The INDICATOR half of the pick. `picked` holds drawings (it is what the chart
+     *  mirrors); the two together are what the bulk bar acts on — TradingView's object
+     *  tree selects studies and drawings alike. */
+    private selInd = new Set<string>();
+    /** True while the pick is a MULTI-pick (modifier, Shift range, Ctrl+A, long-press):
+     *  that is when the floating action bar appears. A plain click just picks one row. */
+    private bulk = false;
+    /** Where a Shift-click range starts — the last row picked without a modifier. */
+    private selAnchor: string | null = null;
+    /** Every selectable row in paint order; ranges and "select all" resolve against it. */
+    private rowOrder: Array<{ id: string; kind: string }> = [];
+    /** A pointer that hovers (a mouse) picks on a plain click; a finger long-presses. */
+    private hoverCapable = true;
+    /** Long-press: a finger held still on a row starts a multi-pick, like a phone list. */
+    private pressTimer: number | null = null;
+    /** The document-level Delete/Esc listener (see the constructor). */
+    private onDocKey: ((e: KeyboardEvent) => void) | null = null;
+    /** A long-press is followed by a synthesised click; that one must not undo the pick. */
+    private suppressClickUntil = 0;
+    /** A finger double-tap must NOT read as a desktop double-click (which opens settings):
+     *  on a phone the second tap is usually just the end of a long-press or a mis-tap. */
+    private lastPointerWasTouch = false;
     /** The group showing its rename field, if any. */
     private renaming: string | null = null;
     /** Set while the panel pushes its pick to the chart, so the `drawing:selected` that comes
@@ -484,6 +518,31 @@ export class ObjectTree extends SidePanel {
 
         this.body.addEventListener('contextmenu', (e) => this.onContextMenu(e));
         this.body.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+        // Multi-select is keyboard-first on a desktop (Shift ranges, Ctrl+A, Delete), so the
+        // list itself takes focus; a finger never needs it.
+        this.body.tabIndex = -1;
+        this.body.addEventListener('keydown', (e) => this.onKeyDown(e));
+        const win = host.ownerDocument.defaultView;
+        this.hoverCapable = typeof win?.matchMedia === 'function' ? win.matchMedia('(hover: hover)').matches : true;
+        // Delete/Esc belong to the PICK, not to whatever happens to hold focus: a pick can be
+        // started from the row (mouse), a long-press (finger) or the chart's own selection,
+        // and in every one of those cases the user expects the keys to work. Capture so the
+        // chart's own Delete handler never sees a key that the tree already answered.
+        this.onDocKey = (e) => {
+            if (!this.open || !this.bulk || this.selCount === 0) return;
+            const t = e.target as HTMLElement | null;
+            if (t?.closest('input, textarea, [contenteditable="true"]')) return;
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.clearSelection();
+            } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.applyBulk('remove');
+            }
+        };
+        host.ownerDocument.addEventListener('keydown', this.onDocKey, true);
     }
 
     override toggle(open = !this.open, instant = false): void {
@@ -531,6 +590,8 @@ export class ObjectTree extends SidePanel {
     }
 
     override destroy(): void {
+        if (this.onDocKey) this.el.ownerDocument.removeEventListener('keydown', this.onDocKey, true);
+        this.onDocKey = null;
         this.detach();
         this.endDrag(false); // a drag in flight has nothing left to drop onto
         this.menu?.destroy();
@@ -640,7 +701,6 @@ export class ObjectTree extends SidePanel {
         this.body.replaceChildren();
 
         const doc = this.el.ownerDocument;
-        this.body.appendChild(this.selectionBar(pass));
         panes.forEach((pane, i) => {
             // Never a band above the first block — the price pane stays pinned to the top.
             if (i > 0) this.body.appendChild(this.gapEl(pass, panes[i - 1]!.id, pane.id));
@@ -656,39 +716,96 @@ export class ObjectTree extends SidePanel {
             empty.textContent = 'Add an indicator or a drawing to populate the tree';
             this.body.appendChild(empty);
         }
+        // The selection bar comes LAST and sticks to the bottom: appearing must not push the
+        // rows down — a long-press is still holding one of them when the bar shows up.
+        this.body.appendChild(this.selectionBar(pass));
+        // Paint order, for Shift ranges and Ctrl+A. Read from the DOM so it can never drift
+        // from what is actually on screen (folded studies, collapsed groups and all).
+        this.rowOrder = [...this.body.querySelectorAll<HTMLElement>('.vela-ot-row[data-id]')]
+            .map((r) => ({ id: r.dataset.id ?? '', kind: r.dataset.rowKind ?? '' }))
+            .filter((r) => r.id !== '');
     }
 
-    /** What the panel itself can do to the selected drawings: bundle them into a group, or
-     *  duplicate all of them. Always in place, dim until there is a selection to act on. */
+    /** TradingView's floating selection toolbar, docked to the top of the list: the eye, the
+     *  bin and the gear act on the WHOLE pick — studies and drawings together — and the
+     *  panel's own verbs (group, duplicate) appear when the pick is all drawings. It exists
+     *  only while a multi-pick is live, so it never sits there as dead space. */
     private selectionBar(pass: Pass): HTMLElement {
         const doc = this.el.ownerDocument;
         const bar = doc.createElement('div');
         bar.className = 'vela-ot-selbar';
         const ids = [...this.picked];
-        const groupable = canGroup(ids, this.groups);
+        const inds = [...this.selInd];
+        const total = ids.length + inds.length;
+        if (!this.bulk || total === 0) {
+            bar.hidden = true;
+            return bar;
+        }
+        bar.setAttribute('role', 'toolbar');
+        bar.setAttribute('aria-label', 'Selection actions');
+        const { chart } = pass;
+        const drawings = chart.drawings.supported ? chart.drawings.all() : [];
+        const anyVisible =
+            inds.some((id) => pass.handle(id)?.visible !== false) ||
+            ids.some((id) => drawings.find((d) => d.id === id)?.visible !== false);
         bar.appendChild(
             this.btn({
-                icon: 'group',
-                title: ids.length === 0 ? 'Group the selected drawings' : groupable ? `Group ${ids.length === 1 ? 'this drawing' : 'these drawings'}` : 'Already in a group',
-                disabled: !groupable,
-                run: () => this.makeGroup(ids),
+                icon: anyVisible ? 'eye-off' : 'eye',
+                title: anyVisible ? `Hide ${total === 1 ? 'it' : `all ${total}`}` : `Show ${total === 1 ? 'it' : `all ${total}`}`,
+                run: () => this.applyBulk(anyVisible ? 'hide' : 'show'),
             }),
         );
         bar.appendChild(
             this.btn({
-                icon: 'clone',
-                title: ids.length === 0 ? 'Duplicate the selected drawings' : 'Duplicate',
-                disabled: ids.length === 0,
-                run: () => {
-                    for (const id of ids) this.cloneInto(pass, id);
-                    this.render();
-                },
+                icon: 'trash',
+                title: `Remove ${total === 1 ? 'it' : `all ${total}`}`,
+                run: () => this.applyBulk('remove'),
             }),
         );
+        // Settings are per-object in this renderer, so the gear is offered when the pick is
+        // exactly one study — the same reach as double-clicking its row.
+        if (inds.length === 1 && ids.length === 0 && chart.renderer.supportsIndicatorSettings) {
+            bar.appendChild(
+                this.btn({
+                    icon: 'gear',
+                    title: 'Indicator settings',
+                    run: () => chart.renderer.openIndicatorSettings(inds[0]!),
+                }),
+            );
+        }
+        // Grouping and duplicating are the panel's own drawing verbs.
+        if (ids.length > 0) {
+            const groupable = canGroup(ids, this.groups);
+            bar.appendChild(
+                this.btn({
+                    icon: 'group',
+                    title: groupable ? `Group ${ids.length === 1 ? 'this drawing' : 'these drawings'}` : 'Already in a group',
+                    disabled: !groupable,
+                    run: () => this.makeGroup(ids),
+                }),
+            );
+            bar.appendChild(
+                this.btn({
+                    icon: 'clone',
+                    title: 'Duplicate',
+                    run: () => {
+                        for (const id of ids) this.cloneInto(pass, id);
+                        this.render();
+                    },
+                }),
+            );
+        }
         const count = doc.createElement('span');
         count.className = 'vela-ot-selcount';
-        count.textContent = ids.length > 1 ? `${ids.length} selected` : '';
+        count.textContent = `${total} selected`;
         bar.appendChild(count);
+        bar.appendChild(
+            this.btn({
+                icon: 'close',
+                title: 'Clear selection',
+                run: () => this.clearSelection(),
+            }),
+        );
         return bar;
     }
 
@@ -846,6 +963,16 @@ export class ObjectTree extends SidePanel {
         );
         el.dataset.rowKind = 'indicator';
         el.dataset.id = row.id;
+        if (this.selInd.has(row.id)) el.dataset.picked = '1';
+        el.addEventListener('click', (e) => this.onRowClick(e, 'indicator', row.id));
+        // TradingView opens a study's settings on a double-click; the row's ▾/right-click
+        // keeps the same verb, this is just the shortcut.
+        el.addEventListener('dblclick', (e) => {
+            if (this.lastPointerWasTouch) return;
+            if ((e.target as HTMLElement).closest('.vela-ot-btn, .vela-ot-fold')) return;
+            const h = handle;
+            if (h && pass.chart.renderer.supportsIndicatorSettings) pass.chart.renderer.openIndicatorSettings(h.id);
+        });
         // Live readout: the span is painted once and only its TEXT is rewritten afterwards
         // (see refreshValues) — a re-render per tick would rebuild the list under a finger.
         const val = el.querySelector<HTMLElement>('.vela-ot-val');
@@ -1008,24 +1135,173 @@ export class ObjectTree extends SidePanel {
         if (inGroup) el.classList.add('vela-ot-subrow');
         if (this.selectedDrawings.has(d.id)) el.dataset.selected = '1';
         if (this.picked.has(d.id)) el.dataset.picked = '1';
-        el.addEventListener('click', (e) => this.onDrawClick(e, d.id));
+        el.addEventListener('click', (e) => this.onRowClick(e, 'drawing', d.id));
         return el;
     }
 
-    /** Clicking a drawing picks it; holding the platform's modifier extends the pick, and
-     *  clicking the only picked row clears it. The chart mirrors whatever comes out. */
-    private onDrawClick(e: MouseEvent, id: string): void {
-        if (e.ctrlKey || e.metaKey) {
-            if (this.picked.has(id)) this.picked.delete(id);
-            else this.picked.add(id);
-        } else if (this.picked.has(id) && this.picked.size === 1) {
-            this.picked.clear();
-        } else {
-            this.picked.clear();
-            this.picked.add(id);
+    /** How many rows are picked, drawings and studies together. */
+    private get selCount(): number {
+        return this.picked.size + this.selInd.size;
+    }
+
+    private setFor(kind: string): Set<string> {
+        return kind === 'drawing' ? this.picked : this.selInd;
+    }
+
+    /** Clicking a row picks it; Ctrl/Cmd extends the pick, Shift takes a range, and a plain
+     *  click on the only picked row clears it. A long-press on a finger starts a pick, the
+     *  way a phone list does — a plain tap there stays a tap. Drawings mirror onto the chart. */
+    private onRowClick(e: MouseEvent, kind: string, id: string): void {
+        if ((e.target as HTMLElement).closest('.vela-ot-btn, .vela-ot-fold, .vela-ot-rename')) return;
+        if (Date.now() < this.suppressClickUntil) return; // the click a long-press synthesised
+        if (e.shiftKey && this.selAnchor) {
+            this.selectRange(id);
+            return;
         }
+        if (e.ctrlKey || e.metaKey) {
+            const set = this.setFor(kind);
+            if (set.has(id)) set.delete(id);
+            else set.add(id);
+            this.selAnchor = id;
+            this.bulk = this.selCount > 1;
+            this.selectOnChart([...this.picked]);
+            this.render();
+            return;
+        }
+        if (!this.hoverCapable && this.selCount === 0) return; // a finger's plain tap
+        if (this.setFor(kind).has(id) && this.selCount === 1) {
+            this.clearSelection();
+            return;
+        }
+        this.picked.clear();
+        this.selInd.clear();
+        this.setFor(kind).add(id);
+        this.selAnchor = id;
+        this.bulk = false;
         this.selectOnChart([...this.picked]);
         this.render();
+    }
+
+    /** Shift-click: everything between the anchor and this row, in the order it is painted. */
+    private selectRange(id: string): void {
+        const order = this.rowOrder;
+        const to = order.findIndex((r) => r.id === id);
+        const from = order.findIndex((r) => r.id === this.selAnchor);
+        if (to < 0 || from < 0) {
+            this.selAnchor = id;
+            return;
+        }
+        const [lo, hi] = from <= to ? [from, to] : [to, from];
+        this.picked.clear();
+        this.selInd.clear();
+        for (const row of order.slice(lo, hi + 1)) this.setFor(row.kind).add(row.id);
+        this.bulk = true;
+        this.selectOnChart([...this.picked]);
+        this.render();
+    }
+
+    /** Ctrl/Cmd+A — every row the panel is showing. */
+    private selectAllRows(): void {
+        if (this.rowOrder.length === 0) return;
+        this.picked.clear();
+        this.selInd.clear();
+        for (const row of this.rowOrder) this.setFor(row.kind).add(row.id);
+        this.bulk = true;
+        this.selAnchor = this.rowOrder[0]!.id;
+        this.selectOnChart([...this.picked]);
+        this.render();
+    }
+
+    private clearSelection(quiet = false): void {
+        if (this.selCount === 0 && !this.bulk) return;
+        this.picked.clear();
+        this.selInd.clear();
+        this.selAnchor = null;
+        this.bulk = false;
+        this.selectOnChart([]);
+        if (!quiet) this.render();
+    }
+
+    /** The pick's eye / trash, over studies and drawings alike. */
+    private applyBulk(what: 'hide' | 'show' | 'remove'): void {
+        const chart = this.chart;
+        if (!chart || this.selCount === 0) return;
+        const handles = new Map(chart.indicators().map((h) => [h.id, h]));
+        if (what === 'remove') {
+            for (const id of [...this.selInd]) handles.get(id)?.remove();
+            for (const id of [...this.picked]) chart.drawings.remove(id);
+            this.picked.clear();
+            this.selInd.clear();
+            this.bulk = false;
+            this.selAnchor = null;
+            this.selectOnChart([]);
+        } else {
+            const show = what === 'show';
+            for (const id of this.selInd) handles.get(id)?.setVisible(show);
+            for (const id of this.picked) chart.drawings.show(id, show);
+        }
+        this.render();
+    }
+
+    /** Delete/Backspace removes the pick, Ctrl+A takes the lot, Esc lets go — the keys a
+     *  TradingView object tree answers to. */
+    private onKeyDown(e: KeyboardEvent): void {
+        const target = e.target as HTMLElement | null;
+        if (target?.closest('input, textarea, [contenteditable="true"]')) return;
+        if (e.key === 'Escape') {
+            // Swallow it: the panel's own Escape (close) must not fire while a pick is live —
+            // the first Escape lets go of the pick, the next one closes the panel.
+            if (this.selCount === 0 && !this.bulk) return;
+            e.preventDefault();
+            e.stopPropagation();
+            this.clearSelection();
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+            e.preventDefault();
+            this.selectAllRows();
+            return;
+        }
+        if ((e.key === 'Delete' || e.key === 'Backspace') && this.selCount > 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.applyBulk('remove');
+        }
+    }
+
+    /** A finger held still on a row: start a pick there instead of dragging it. */
+    private armLongPress(e: PointerEvent, kind: string, id: string): void {
+        const win = this.el.ownerDocument.defaultView;
+        if (!win || this.pressTimer !== null) return;
+        // Lifting the finger (or the system cancelling the touch) disarms it; holding still
+        // for the delay is what starts the pick.
+        const off = (): void => {
+            this.cancelLongPress();
+            win.removeEventListener('pointerup', off);
+            win.removeEventListener('pointercancel', off);
+        };
+        win.addEventListener('pointerup', off);
+        win.addEventListener('pointercancel', off);
+        this.pressTimer = win.setTimeout(() => {
+            this.pressTimer = null;
+            this.endDrag(false);
+            this.picked.clear();
+            this.selInd.clear();
+            this.setFor(kind).add(id);
+            this.selAnchor = id;
+            this.bulk = true;
+            this.suppressClickUntil = Date.now() + 700;
+            this.selectOnChart([...this.picked]);
+            this.render();
+        }, 450);
+        void e;
+    }
+
+    private cancelLongPress(): void {
+        if (this.pressTimer === null) return;
+        const win = this.el.ownerDocument.defaultView;
+        win?.clearTimeout(this.pressTimer);
+        this.pressTimer = null;
     }
 
     /** Push the panel's pick onto the chart, muting the `drawing:selected` echo it causes. */
@@ -1200,8 +1476,21 @@ export class ObjectTree extends SidePanel {
     // drawings, and land in another pane's list to move there.
 
     private onPointerDown(e: PointerEvent): void {
-        if (e.button !== 0 || this.drag) return;
+        if (e.button !== 0) return;
         const target = e.target as HTMLElement;
+        this.lastPointerWasTouch = e.pointerType === 'touch';
+        const control = target.closest('.vela-ot-btn, .vela-ot-fold, .vela-ot-rename');
+        const anyRow = target.closest<HTMLElement>('.vela-ot-row[data-id]');
+        // The list takes focus on a press, so Delete/Ctrl+A/Esc reach onKeyDown. Not on the
+        // rename field — that click belongs to the text box.
+        if (anyRow && !target.closest('.vela-ot-rename')) this.body.focus({ preventScroll: true });
+        // A finger held still on a row starts a pick (a mouse has Ctrl/Shift instead).
+        if (e.pointerType === 'touch' && anyRow && !control) {
+            const kind = anyRow.dataset.rowKind ?? '';
+            const id = anyRow.dataset.id ?? '';
+            if (id !== '') this.armLongPress(e, kind, id);
+        }
+        if (this.drag) return;
         // Row and pane-head buttons are controls, not drag handles.
         if (target.closest('.vela-ot-btn')) return;
         const rowEl = target.closest<HTMLElement>('.vela-ot-row[data-drag]');
@@ -1238,6 +1527,7 @@ export class ObjectTree extends SidePanel {
         if (!drag) return;
         if (!drag.active) {
             if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < DRAG_SLOP) return;
+            this.cancelLongPress(); // it is a drag, not a long-press
             this.beginDrag(drag);
         }
         if (drag.ghost) {
@@ -1513,9 +1803,36 @@ export class ObjectTree extends SidePanel {
         menu.openAt(e.clientX, e.clientY);
     }
 
+    /** The multi-pick's verbs, wherever they are invoked from (bar, right-click). */
+    private bulkMenu(b: MenuBuilder, pass: Pass): MenuItemDescriptor[] {
+        const total = this.selCount;
+        const { chart } = pass;
+        const drawings = chart.drawings.supported ? chart.drawings.all() : [];
+        const ids = [...this.picked];
+        const inds = [...this.selInd];
+        const anyVisible =
+            inds.some((id) => pass.handle(id)?.visible !== false) ||
+            ids.some((id) => drawings.find((d) => d.id === id)?.visible !== false);
+        const items = [
+            b.entry(anyVisible ? `Hide ${total}` : `Show ${total}`, anyVisible ? 'eye-off' : 'eye', () =>
+                this.applyBulk(anyVisible ? 'hide' : 'show'),
+            ),
+        ];
+        if (ids.length > 0 && canGroup(ids, this.groups)) {
+            items.push(b.entry(ids.length === 1 ? 'Create a group of drawings' : `Group these ${ids.length} drawings`, 'group', () => this.makeGroup(ids)));
+        }
+        items.push(b.entry('Clear selection', 'close', () => this.clearSelection(), true));
+        items.push(b.entry(`Remove ${total}`, 'trash', () => this.applyBulk('remove')));
+        return items;
+    }
+
     private itemsForRow(b: MenuBuilder, pass: Pass, rowEl: HTMLElement): MenuItemDescriptor[] {
         const paneId = rowEl.dataset.pane ?? PRICE_PANE_ID;
         const id = rowEl.dataset.id;
+        // Right-clicking inside a multi-pick acts on the PICK, not on the one row under the
+        // pointer — "Remove 4" rather than a surprise single removal.
+        const kind = rowEl.dataset.rowKind ?? '';
+        if (this.bulk && id !== undefined && this.setFor(kind).has(id)) return this.bulkMenu(b, pass);
         switch (rowEl.dataset.rowKind) {
             case 'price':
                 return this.priceMenu(b, pass);
@@ -1761,6 +2078,9 @@ export class ObjectTree extends SidePanel {
     private prune(chart: Vela): void {
         const live = new Set((chart.drawings.supported ? chart.drawings.all() : []).map((d) => d.id));
         for (const id of [...this.picked]) if (!live.has(id)) this.picked.delete(id);
+        const liveInd = new Set(chart.indicators().map((h) => h.id));
+        for (const id of [...this.selInd]) if (!liveInd.has(id)) this.selInd.delete(id);
+        if (this.selCount === 0) this.bulk = false;
         if (this.groups.length === 0) {
             this.renaming = null;
             return;
