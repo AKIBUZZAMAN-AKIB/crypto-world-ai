@@ -54,6 +54,10 @@ export interface MarkerPoint {
     color: string;
     text?: string;
     size?: 'tiny' | 'small' | 'normal' | 'large' | 'huge';
+    /** Exact y for `location.absolute` markers (Pine), in the pane's own scale. */
+    price?: number;
+    /** Label ink for markers that carry `text` (Pine `textcolor`). */
+    textColor?: string;
 }
 
 /** A chart surface a series can show on (see {@link SeriesDisplay}). */

@@ -629,6 +629,21 @@ export class WebGL2Backend implements IRenderBackend {
     }
 
     private emitFill(b: Batch, model: IndicatorModel, fill: Fill, pane: PaneNode, coords: CoordinateSystem, i0: number, i1: number, off = 0): void {
+        // Constant band (`fill(hline1, hline2, …)`) — one rect between two prices.
+        if (fill.fromPrice !== undefined && fill.toPrice !== undefined) {
+            if (!fill.color) return;
+            const yA = coords.priceToY(fill.fromPrice, pane.scale, pane.bounds);
+            const yB = coords.priceToY(fill.toPrice, pane.scale, pane.bounds);
+            const top = Math.max(pane.bounds.top, Math.min(yA, yB));
+            const bottom = Math.min(pane.bounds.top + pane.bounds.height, Math.max(yA, yB));
+            if (bottom <= top) return;
+            const x0 = Math.max(0, coords.logicalToX(i0));
+            const x1 = Math.min(coords.width, coords.logicalToX(i1));
+            if (x1 <= x0) return;
+            b.rect(x0, top, x1 - x0, bottom - top, parseColor(fill.color));
+            return;
+        }
+        if (!fill.fromSeriesId || !fill.toSeriesId) return;
         const from = findPoints(model, fill.fromSeriesId);
         const to = findPoints(model, fill.toSeriesId);
         if (!from || !to) return;

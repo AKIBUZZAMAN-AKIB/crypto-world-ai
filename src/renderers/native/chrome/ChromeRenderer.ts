@@ -1,7 +1,7 @@
 import type { VelaTheme } from '../../../core/options';
 import type { IndicatorModel } from '../../../core/model/indicator';
 import type { OHLCV } from '../../../core/model/ohlcv';
-import type { LineStyle } from '../../../core/model/series';
+import type { LineStyle, MarkerPoint } from '../../../core/model/series';
 import type { CoordinateSystem } from '../core/CoordinateSystem';
 import type { SceneGraph, PaneNode } from '../core/SceneGraph';
 import { percentScaleFor } from '../core/SceneGraph';
@@ -9,6 +9,7 @@ import { percentScaleFor } from '../core/SceneGraph';
 export { percentScaleFor } from '../core/SceneGraph';
 import { DrawingSceneRenderer, modelDrawingSet, type DrawingSet } from '../../shared/DrawingSceneRenderer';
 import { renderTradeMarkers } from '../../shared/trade-markers';
+import { renderPineMarkers } from '../../shared/pine-markers';
 import type { TradeExecution } from '../../../core/model/trades';
 import { paneAxisTicks, formatAxisValue, timeTicks } from './ticks';
 import { PriceAxisTickSource } from './priceAxisTicks';
@@ -162,6 +163,18 @@ export class ChromeRenderer {
             }
         }
 
+        // ── Pine plotshape/plotchar/plotarrow glyphs — each marker series paints in ITS OWN
+        //    pane (a study's Bull/Bear labels belong to the study pane, not the price pane),
+        //    above the plot lines and below the crosshair. ──
+        for (const m of scene.indicators.values()) {
+            const pane = m.paneId ? scene.panes.get(m.paneId) : undefined;
+            if (!pane || pane.collapsed) continue;
+            for (const s of m.series) {
+                if (s.kind !== 'markers' || s.markers.length === 0) continue;
+                this.renderMarkers(ctx, coords, scene, theme, s.markers, pane, dataW);
+            }
+        }
+
         // ── axes + current-price line + countdown ──
         this.drawPriceAxes(ctx, scene, coords, theme, dataW, panes);
         this.drawMergedScaleColumns(ctx, scene, coords, dataW);
@@ -262,6 +275,44 @@ export class ChromeRenderer {
             // Half the candle BODY width (bodies take ~0.8 of the pitch), so the
             // fill-price ticks hug the bar's edges at every zoom.
             Math.max(1.5, coords.bodySpacing() * 0.4),
+        );
+        ctx.restore();
+    }
+
+    /** Pine marker glyphs for one marker series, clipped to its pane. */
+    private renderMarkers(
+        ctx: CanvasRenderingContext2D,
+        coords: CoordinateSystem,
+        scene: SceneGraph,
+        theme: VelaTheme,
+        markers: readonly MarkerPoint[],
+        pane: PaneNode,
+        dataW: number,
+    ): void {
+        ctx.save();
+        ctx.translate(0, pane.bounds.top); // pane-relative space, clipped like the drawings
+        ctx.beginPath();
+        ctx.rect(0, 0, dataW, pane.bounds.height);
+        ctx.clip();
+        renderPineMarkers(
+            ctx,
+            markers,
+            {
+                xOf: (ms) => coords.timeToX(ms),
+                yOfPrice: (price) => coords.priceToY(price, pane.scale, pane.bounds) - pane.bounds.top,
+                barYAt: (ms) => {
+                    const b = scene.bars[Math.round(coords.timeToLogical(ms))];
+                    if (!b) return null;
+                    return {
+                        high: coords.priceToY(b.high, pane.scale, pane.bounds) - pane.bounds.top,
+                        low: coords.priceToY(b.low, pane.scale, pane.bounds) - pane.bounds.top,
+                    };
+                },
+                top: 0,
+                bottom: pane.bounds.height,
+                width: dataW,
+            },
+            { fontSize: scene.style.fontSize, fontFamily: theme.fontFamily, textColor: theme.textColor },
         );
         ctx.restore();
     }

@@ -2972,6 +2972,15 @@ var PlotSink = class {
     }
     return rec;
   }
+  /** `fill(hline1, hline2, color)` — a horizontal band between two constant prices. */
+  ensureBandFill(callId, fromPrice, toPrice, color, title) {
+    let rec = this.fills.get(callId);
+    if (!rec) {
+      rec = { callId, fromPrice, toPrice, color, colors: [], ...title ? { title } : {} };
+      this.fills.set(callId, rec);
+    }
+    return rec;
+  }
 };
 function slotCount(bars, offset) {
   return offset > 0 ? bars + offset : bars;
@@ -3040,8 +3049,18 @@ function buildModel(sink, bars, opts) {
   }
   const fills = [];
   for (const rec of sink.fills.values()) {
-    const fromSeriesId = lineIds.get(rec.fromId);
-    const toSeriesId = lineIds.get(rec.toId);
+    if (rec.fromPrice !== void 0 && rec.toPrice !== void 0) {
+      fills.push({
+        id: `${opts.instanceId}:fill:${rec.callId}`,
+        paneId,
+        fromPrice: rec.fromPrice,
+        toPrice: rec.toPrice,
+        color: rec.color
+      });
+      continue;
+    }
+    const fromSeriesId = rec.fromId === void 0 ? void 0 : lineIds.get(rec.fromId);
+    const toSeriesId = rec.toId === void 0 ? void 0 : lineIds.get(rec.toId);
     if (!fromSeriesId || !toSeriesId) continue;
     const fill = { id: `${opts.instanceId}:fill:${rec.callId}`, paneId, fromSeriesId, toSeriesId, color: rec.color };
     if (rec.colors.some((c) => c !== null)) fill.colors = rec.colors;
@@ -5186,15 +5205,24 @@ function registerInput(r) {
     if (!typeName) {
       const defExpr = c.argExpr(0, "defval");
       const identName = defExpr && defExpr.kind === "ident" ? defExpr.name : null;
+      const isColorRef = defExpr && defExpr.kind === "call" && defExpr.callee.kind === "ident" && defExpr.callee.name.startsWith("color.") || defExpr && defExpr.kind === "str" && /^#[0-9a-fA-F]{6,8}$/.test(defExpr.value);
       if (identName && c.rt.seriesByName(identName).known > 0) typeName = "source";
+      else if (isColorRef) typeName = "color";
       else if (defExpr && defExpr.kind === "str") typeName = "string";
       else if (defExpr && defExpr.kind === "bool") typeName = "bool";
+      else if (defExpr && defExpr.kind === "num") typeName = Number.isInteger(defExpr.value) ? "int" : "float";
       else typeName = "float";
     }
     if (typeName === "source") {
       const name = override.present ? toStr(override.value) : null;
       if (name && name !== "") return c.rt.seriesByName(name).get(0);
       return c.arg(0, "defval");
+    }
+    if (typeName === "color") {
+      const override2 = overridden(c);
+      if (override2.present) return new PineColor(toStr(override2.value ?? "#000000"));
+      const value = c.arg(0, "defval");
+      return value instanceof PineColor ? value : new PineColor(typeof value === "string" ? value : "#000000");
     }
     if (override.present) {
       if (typeName === "bool") return Boolean(override.value);
@@ -5234,6 +5262,14 @@ function plotRef(c) {
 function isPlotRef(v) {
   return Boolean(v && typeof v === "object" && v.__pine === "plot");
 }
+function isHlineRef(v) {
+  return Boolean(v && typeof v === "object" && v.__pine === "hline");
+}
+function shiftedTime(rt, offset) {
+  const bar = rt.getBarAt(rt.barIndex + offset);
+  if (!bar) return null;
+  return bar.time;
+}
 function registerDraw(r) {
   r.set("plot", (c) => {
     const rt = c.rt;
@@ -5249,7 +5285,7 @@ function registerDraw(r) {
     }
     const styleToken = c.arg(4, "style");
     const kind = mapPlotStyle(typeof styleToken === "string" ? styleToken : "line");
-    const offset = intArg(c, 5, "offset", 0);
+    const offset = intArg(c, 7, "offset", 0);
     const forceOverlay = c.arg(11, "force_overlay");
     const rec = rt.sink.ensureLine(c.id, {
       title,
@@ -5272,8 +5308,10 @@ function registerDraw(r) {
     const styleToken = c.arg(2, "style");
     const locationToken = c.arg(3, "location");
     const color = colorCss(c.arg(4, "color"), "#2196f3");
-    const text = c.arg(5, "text");
-    const sizeToken = c.arg(7, "size");
+    const offset = intArg(c, 5, "offset", 0);
+    const text = c.arg(6, "text");
+    const textColorArg = c.arg(7, "textcolor");
+    const sizeToken = c.arg(9, "size");
     const rec = rt.sink.ensureMarkers(c.id, title);
     const bar = rt.bar;
     if (!bar) return null;
@@ -5282,13 +5320,23 @@ function registerDraw(r) {
       rec.points[rt.barIndex] = null;
       return null;
     }
+    const time = offset === 0 ? bar.time : shiftedTime(rt, offset);
+    if (time === null) {
+      rec.points[rt.barIndex] = null;
+      return null;
+    }
+    const locationTokenStr = typeof locationToken === "string" ? locationToken : "aboveBar";
     const point = {
-      time: bar.time,
-      position: mapLocation(typeof locationToken === "string" ? locationToken : "aboveBar"),
+      time,
+      position: mapLocation(locationTokenStr),
       shape: mapShape(typeof styleToken === "string" ? styleToken : "circle"),
       color
     };
+    const numeric2 = toNum(series);
+    if (locationTokenStr === "absolute" && numeric2 !== null) point.price = numeric2;
     if (text !== null) point.text = toStr(text);
+    if (textColorArg instanceof PineColor) point.textColor = textColorArg.css;
+    else if (typeof textColorArg === "string") point.textColor = textColorArg;
     if (typeof sizeToken === "string") {
       const size = sizeToken;
       if (size) point.size = size;
@@ -5303,6 +5351,10 @@ function registerDraw(r) {
     const char = c.arg(2, "char");
     const locationToken = c.arg(3, "location");
     const color = colorCss(c.arg(4, "color"), "#2196f3");
+    const offset = intArg(c, 5, "offset", 0);
+    const textArg = c.arg(6, "text");
+    const textColorArg = c.arg(7, "textcolor");
+    const sizeToken = c.arg(9, "size");
     const rec = rt.sink.ensureMarkers(c.id, title);
     const bar = rt.bar;
     if (!bar) return null;
@@ -5310,13 +5362,29 @@ function registerDraw(r) {
       rec.points[rt.barIndex] = null;
       return null;
     }
-    rec.points[rt.barIndex] = {
-      time: bar.time,
-      position: mapLocation(typeof locationToken === "string" ? locationToken : "aboveBar"),
+    const time = offset === 0 ? bar.time : shiftedTime(rt, offset);
+    if (time === null) {
+      rec.points[rt.barIndex] = null;
+      return null;
+    }
+    const locationTokenStr = typeof locationToken === "string" ? locationToken : "aboveBar";
+    const label = textArg !== null ? textArg : char;
+    const point = {
+      time,
+      position: mapLocation(locationTokenStr),
       shape: "circle",
-      color,
-      ...char !== null ? { text: toStr(char) } : {}
+      color
     };
+    const numeric2 = toNum(series);
+    if (locationTokenStr === "absolute" && numeric2 !== null) point.price = numeric2;
+    if (label !== null) point.text = toStr(label);
+    if (textColorArg instanceof PineColor) point.textColor = textColorArg.css;
+    else if (typeof textColorArg === "string") point.textColor = textColorArg;
+    if (typeof sizeToken === "string") {
+      const size = sizeToken;
+      if (size) point.size = size;
+    }
+    rec.points[rt.barIndex] = point;
     return plotRef(c);
   });
   r.set("plotarrow", (c) => {
@@ -5374,14 +5442,24 @@ function registerDraw(r) {
         width
       });
     }
-    return { __pine: "hline" };
+    return { __pine: "hline", callId: c.id };
   });
   r.set("fill", (c) => {
     const rt = c.rt;
     const from = c.arg(0, "plot1");
     const to = c.arg(1, "plot2");
+    const colorArg0 = c.arg(2, "color");
+    if (isHlineRef(from) && isHlineRef(to)) {
+      const a = rt.sink.hlines.get(from.callId);
+      const b = rt.sink.hlines.get(to.callId);
+      if (!a || !b) return null;
+      const title = strArg(c, 3, "title", "Fill");
+      const color2 = colorArg0 instanceof PineColor ? colorArg0.css : "rgba(33, 150, 243, 0.2)";
+      rt.sink.ensureBandFill(c.id, Math.max(a.price, b.price), Math.min(a.price, b.price), color2, title);
+      return null;
+    }
     if (!isPlotRef(from) || !isPlotRef(to)) {
-      c.warn("fill requires two plot references; the call is ignored");
+      c.warn("fill requires two plot or hline references; the call is ignored");
       return null;
     }
     const fromId = from.callId;
@@ -5489,12 +5567,16 @@ function mapShape(token) {
   switch (token) {
     case "arrowUp":
     case "arrowup":
-    case "labelup":
       return "arrowUp";
     case "arrowDown":
     case "arrowdown":
-    case "labeldown":
       return "arrowDown";
+    // `shape.labelup`/`labeldown` are the text-pill styles: keep them distinct from the
+    // bare arrows so a host can paint the TradingView label box (not a triangle).
+    case "labelup":
+      return "labelUp";
+    case "labeldown":
+      return "labelDown";
     case "square":
       return "square";
     case "diamond":
@@ -9260,11 +9342,16 @@ var Runtime = class _Runtime {
    */
   rejectRemovedArgs(name, expr) {
     if (name === "input" && this.version >= 5) {
-      throw new PineRuntimeError(
-        "input() was split into input.int()/input.float()/input.bool()/\u2026 in Pine v5",
-        "TYPE_ERROR",
-        { line: expr.line }
+      const removed = expr.args.find(
+        (a) => a.name === "type" || a.name === "minval" || a.name === "maxval" || a.name === "step" || a.name === "options" || a.name === "confirm"
       );
+      if (removed) {
+        throw new PineRuntimeError(
+          `'input' has no '${removed.name}' parameter since Pine v5; use input.int()/input.float()/input.bool()/input.source()/\u2026 instead`,
+          "TYPE_ERROR",
+          { line: expr.line }
+        );
+      }
     }
     const family = name.split(".")[0] ?? name;
     for (const arg of expr.args) {

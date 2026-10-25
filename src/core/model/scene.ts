@@ -28,8 +28,12 @@ export interface Fill {
     id: string;
     paneId: string;
     /** RESOLVED series ids (the orchestrator resolves Pine plot refs to ids). */
-    fromSeriesId: string;
-    toSeriesId: string;
+    fromSeriesId?: string;
+    toSeriesId?: string;
+    /** Upper anchor price of a constant band (Pine `fill(hline1, hline2, …)`). */
+    fromPrice?: number;
+    /** Lower anchor price of a constant band. */
+    toPrice?: number;
     /** Flat band color (no per-bar variation). */
     color?: string;
     /** Per-bar solid color (conditional fills), aligned to the anchor points by index. */

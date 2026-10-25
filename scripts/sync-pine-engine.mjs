@@ -28,7 +28,8 @@ if (!existsSync(join(source, 'LICENSE'))) {
 const to = join(root, 'playground/vendor/pine-libre');
 mkdirSync(to, { recursive: true });
 for (const file of ['index.js', 'index.d.ts', 'LICENSE']) {
-    copyFileSync(join(source, file), join(to, file));
+    // The build artifacts live under `dist/`; the LICENSE at the repo root.
+    copyFileSync(file === 'LICENSE' ? join(source, file) : join(from, file), join(to, file));
 }
 
 const version = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')).version;

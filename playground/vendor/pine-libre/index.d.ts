@@ -307,6 +307,10 @@ interface MarkerPoint {
     color: string;
     text?: string;
     size?: 'tiny' | 'small' | 'normal' | 'large' | 'huge';
+    /** Exact y of the glyph for `location.absolute` (TV paints the shape AT the series value). */
+    price?: number;
+    /** Label text ink (Pine `textcolor`). */
+    textColor?: string;
 }
 interface SeriesBase {
     id: string;
@@ -343,8 +347,14 @@ interface CandleSeries extends SeriesBase {
 interface Fill {
     id: string;
     paneId: string;
-    fromSeriesId: string;
-    toSeriesId: string;
+    /** Anchor series for a `fill(plot1, plot2, …)` band (absent for price bands). */
+    fromSeriesId?: string;
+    /** Anchor series for a `fill(plot1, plot2, …)` band (absent for price bands). */
+    toSeriesId?: string;
+    /** Upper price of a `fill(hline1, hline2, …)` band — a horizontal band across the pane. */
+    fromPrice?: number;
+    /** Lower price of a `fill(hline1, hline2, …)` band. */
+    toPrice?: number;
     color?: string;
     colors?: Array<string | null>;
     overlay?: boolean;
@@ -1129,8 +1139,13 @@ interface HlineRecord {
 }
 interface FillRecord {
     callId: number;
-    fromId: number;
-    toId: number;
+    /** Anchor plot call ids for a series band (absent for a price band). */
+    fromId?: number;
+    toId?: number;
+    /** Anchor prices for a `fill(hline1, hline2, …)` band. */
+    fromPrice?: number;
+    toPrice?: number;
+    title?: string;
     color: string;
     colors: Array<string | null>;
 }
@@ -1168,6 +1183,8 @@ declare class PlotSink {
     ensureBackground(callId: number, title: string): BgRecord;
     ensureCandles(callId: number, title: string, kind: 'candles' | 'bars'): CandleRecord;
     ensureFill(callId: number, fromId: number, toId: number, color: string): FillRecord;
+    /** `fill(hline1, hline2, color)` — a horizontal band between two constant prices. */
+    ensureBandFill(callId: number, fromPrice: number, toPrice: number, color: string, title?: string): FillRecord;
 }
 
 /**
