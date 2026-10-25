@@ -72,6 +72,11 @@ describe('built-in indicator Pine sources', () => {
         expect(unknown).toEqual([]);
     });
 
+    it('every catalog study has a Pine source (TradingView opens them all)', () => {
+        const missing = classicSpecs.map((s) => s.type).filter((t) => classicPineSource(t) === undefined);
+        expect(missing).toEqual([]);
+    });
+
     it('covers the studies a trader opens most', () => {
         for (const type of ['sma', 'ema', 'rsi', 'macd', 'bollinger-bands', 'stochastic', 'average-true-range', 'on-balance-volume']) {
             expect(classicPineSource(type), `no Pine source for ${type}`).toBeTruthy();
@@ -85,11 +90,15 @@ describe('built-in indicator Pine sources', () => {
             expect(errors.map((e) => e.message)).toEqual([]);
             expect(model, `${type} emitted no model`).not.toBeNull();
             if (!model) return;
-            expect(model.series.length).toBeGreaterThan(0);
+            // Most studies plot series; a few (Zig Zag) draw only line segments — both are
+            // "a drawable model", so the check accepts either and the `drawn` assert below
+            // still requires actual content.
+            const drewLines = (model.lines?.length ?? 0) + (model.polylines?.length ?? 0);
+            expect(model.series.length + drewLines).toBeGreaterThan(0);
             // The overlay flag decides the PANE — the source must agree with the catalog,
             // or "Source code" would show a study that renders somewhere else.
             expect(model.overlay).toBe(catalog.get(type)?.overlay);
-            const drawn = model.series.some((s) => {
+            const drawn = drewLines > 0 || model.series.some((s) => {
                 if (s.kind === 'markers') return s.markers.length > 0;
                 if ('points' in s) return (s.points ?? []).some((p) => p.value !== null);
                 return (s.bars?.length ?? 0) > 0;

@@ -15,7 +15,7 @@
  * whose Pine equivalent drifts from the native numbers fails the build.
  */
 
-import { BEARISH, BULLISH, NEUTRAL, WARNING } from '../../palette';
+import { ACCENT, BEARISH, BULLISH, NEUTRAL, WARNING } from '../../palette';
 import { classicSpecs } from './index';
 
 /** The classic catalog's study-line blue — the colour every default plot uses. */
@@ -936,6 +936,335 @@ hline(0, title="Zero line", color=color.new(${NEUTRAL}, 50), linestyle=hline.sty
 );
 
 /** Type → Pine v6 source. A type absent here has no Pine implementation (no `{ }` icon). */
+// ── the last group: studies whose Pine form arrived with full coverage ──────────────
+
+const CHANDELIER_EXIT = script(
+    'Chandelier Exit',
+    true,
+    `len = input.int(22, "Length", minval=1)
+mult = input.float(3.0, "Multiplier", minval=0.1, step=0.1)
+ratchet = input.bool(false, "Use ratchet")
+longInk = input.color(${BULLISH}, "Long", inline="c")
+shortInk = input.color(${BEARISH}, "Short", inline="c")
+
+rangeAt = ta.atr(len) * mult
+basicLong = ta.highest(high, len) - rangeAt
+basicShort = ta.lowest(low, len) + rangeAt
+
+var float longStop = na
+var float shortStop = na
+longStop := ratchet and not na(longStop) and close[1] > longStop ? math.max(basicLong, longStop) : basicLong
+shortStop := ratchet and not na(shortStop) and close[1] < shortStop ? math.min(basicShort, shortStop) : basicShort
+
+plot(longStop, title="Long Stop", color=longInk, linewidth=2, style=plot.style_linebr)
+plot(shortStop, title="Short Stop", color=shortInk, linewidth=2, style=plot.style_linebr)`,
+);
+
+const CHANDE_KRoll = script(
+    'Chande Kroll Stop',
+    true,
+    `p = input.int(10, "ATR Length", minval=1)
+x = input.float(1.0, "ATR Multiplier", minval=0.1, step=0.1)
+q = input.int(9, "Stop Length", minval=1)
+longInk = input.color(${BULLISH}, "Long")
+shortInk = input.color(${BEARISH}, "Short")
+
+rangeAt = ta.atr(p) * x
+firstHigh = ta.highest(high, p) - rangeAt
+firstLow = ta.lowest(low, p) + rangeAt
+
+plot(ta.lowest(firstLow, q), title="Stop Long", color=longInk, linewidth=2)
+plot(ta.highest(firstHigh, q), title="Stop Short", color=shortInk, linewidth=2)`,
+);
+
+const ALLIGATOR = script(
+    'Williams Alligator',
+    true,
+    `jawLength = input.int(13, "Jaw Length", minval=1, group="Jaw")
+jawOffset = input.int(8, "Jaw Offset", minval=0, group="Jaw")
+teethLength = input.int(8, "Teeth Length", minval=1, group="Teeth")
+teethOffset = input.int(5, "Teeth Offset", minval=0, group="Teeth")
+lipsLength = input.int(5, "Lips Length", minval=1, group="Lips")
+lipsOffset = input.int(3, "Lips Offset", minval=0, group="Lips")
+jawInk = input.color(color.new(${ACCENT}, 0), "Jaw", group="Colors")
+teethInk = input.color(color.new(${BEARISH}, 0), "Teeth", group="Colors")
+lipsInk = input.color(color.new(${BULLISH}, 0), "Lips", group="Colors")
+
+jaw = ta.rma(hl2, jawLength)
+teeth = ta.rma(hl2, teethLength)
+lips = ta.rma(hl2, lipsLength)
+
+plot(jaw, title="Jaw", color=jawInk, linewidth=2, offset=jawOffset)
+plot(teeth, title="Teeth", color=teethInk, linewidth=2, offset=teethOffset)
+plot(lips, title="Lips", color=lipsInk, linewidth=2, offset=lipsOffset)`,
+);
+
+const GATOR = script(
+    'Gator Oscillator',
+    false,
+    `src = input.source(hl2, "Source")
+jawLength = input.int(13, "Jaw Length", minval=1)
+teethLength = input.int(8, "Teeth Length", minval=1)
+lipsLength = input.int(5, "Lips Length", minval=1)
+growInk = input.color(${BULLISH}, "Growing")
+shrinkInk = input.color(${BEARISH}, "Shrinking")
+
+jaw = ta.rma(src, jawLength)
+teeth = ta.rma(src, teethLength)
+lips = ta.rma(src, lipsLength)
+
+upper = math.abs(jaw - teeth)
+lower = -math.abs(teeth - lips)
+
+upperInk = upper > nz(upper[1], upper) ? growInk : shrinkInk
+lowerInk = lower < nz(lower[1], lower) ? growInk : shrinkInk
+plot(upper, title="Upper", style=plot.style_columns, color=upperInk)
+plot(lower, title="Lower", style=plot.style_columns, color=lowerInk)`,
+);
+
+const CONNORS_RSI = script(
+    'Connors RSI',
+    false,
+    `rsiLength = input.int(3, "RSI Length", minval=2)
+streakLength = input.int(2, "Streak RSI Length", minval=2)
+rankLength = input.int(100, "Percent Rank Length", minval=2)
+rsiInk = input.color(${BEARISH}, "RSI", inline="c")
+lineInk = input.color(${NEUTRAL}, "Levels", inline="c")
+
+var float streak = 0.0
+priceChange = ta.change(close)
+streak := priceChange > 0 ? math.max(streak, 0) + 1 : priceChange < 0 ? math.min(streak, 0) - 1 : 0
+
+priceRsi = ta.rsi(close, rsiLength)
+streakRsi = ta.rsi(streak, streakLength)
+rank = ta.percentrank(ta.roc(close, 1), rankLength)
+
+crsi = (priceRsi + streakRsi + rank) / 3
+
+plot(crsi, title="Connors RSI", color=rsiInk, linewidth=2)
+hline(90, title="Overbought", color=lineInk, linestyle=hline.style_dotted)
+hline(10, title="Oversold", color=lineInk, linestyle=hline.style_dotted)`,
+);
+
+const SMI_ERGODIC = script(
+    'SMI Ergodic',
+    false,
+    `longLength = input.int(20, "Long Length", minval=1)
+shortLength = input.int(5, "Short Length", minval=1)
+signalLength = input.int(5, "Signal Length", minval=1)
+showOscillator = input.bool(false, "Show as oscillator")
+growInk = input.color(${BULLISH}, "Growing")
+fallInk = input.color(${BEARISH}, "Falling")
+
+momentum = ta.change(close)
+num = ta.ema(ta.ema(momentum, longLength), shortLength)
+den = ta.ema(ta.ema(math.abs(momentum), longLength), shortLength)
+smi = den == 0 ? 0 : 100 * num / den
+signal = ta.ema(smi, signalLength)
+
+oscillator = showOscillator ? smi - signal : smi
+oscInk = showOscillator ? (oscillator >= nz(oscillator[1], oscillator) ? growInk : fallInk) : growInk
+
+plot(oscillator, title=showOscillator ? "Oscillator" : "SMI", style=plot.style_columns, color=oscInk)
+plot(showOscillator ? na : signal, title="Signal", color=fallInk, linewidth=1)
+hline(0, title="Zero", color=color.new(${NEUTRAL}, 50), linestyle=hline.style_dashed)`,
+);
+
+const KNOW_SURE_THING = script(
+    'Know Sure Thing',
+    false,
+    `rocLength1 = input.int(10, "ROC Length #1", minval=1, group="ROC")
+rocLength2 = input.int(15, "ROC Length #2", minval=1, group="ROC")
+rocLength3 = input.int(20, "ROC Length #3", minval=1, group="ROC")
+rocLength4 = input.int(30, "ROC Length #4", minval=1, group="ROC")
+smaLength1 = input.int(10, "SMA Length #1", minval=1, group="Smoothing")
+smaLength2 = input.int(10, "SMA Length #2", minval=1, group="Smoothing")
+smaLength3 = input.int(10, "SMA Length #3", minval=1, group="Smoothing")
+smaLength4 = input.int(15, "SMA Length #4", minval=1, group="Smoothing")
+bullInk = input.color(${BULLISH}, "KST")
+bearInk = input.color(${BEARISH}, "Signal")
+
+r1 = ta.sma(ta.roc(close, rocLength1), smaLength1)
+r2 = ta.sma(ta.roc(close, rocLength2), smaLength2)
+r3 = ta.sma(ta.roc(close, rocLength3), smaLength3)
+r4 = ta.sma(ta.roc(close, rocLength4), smaLength4)
+kst = r1 + 2 * r2 + 3 * r3 + 4 * r4
+signal = ta.sma(kst, 9)
+
+plot(kst, title="KST", color=kst >= 0 ? bullInk : bearInk, linewidth=2)
+plot(signal, title="Signal", color=bearInk)
+hline(0, title="Zero", color=color.new(${NEUTRAL}, 50), linestyle=hline.style_dashed)`,
+);
+
+const RVI_CLASSIC = script(
+    'Relative Volatility Index',
+    false,
+    `stdevLength = input.int(10, "StdDev Length", minval=1)
+smoothLength = input.int(14, "Smoothing Length", minval=1)
+overbought = input.int(80, "Overbought", minval=1, maxval=100)
+oversold = input.int(20, "Oversold", minval=0, maxval=99)
+useRma = input.bool(false, "Smooth with RMA")
+rviInk = input.color(${NEUTRAL}, "RVI")
+levelInk = input.color(${NEUTRAL}, "Levels")
+
+sigma = ta.stdev(close, stdevLength)
+priceChange = ta.change(close)
+up = priceChange > 0 ? sigma : 0
+down = priceChange < 0 ? sigma : 0
+upSmooth = useRma ? ta.rma(up, smoothLength) : ta.ema(up, smoothLength)
+downSmooth = useRma ? ta.rma(down, smoothLength) : ta.ema(down, smoothLength)
+rvi = upSmooth + downSmooth == 0 ? 0 : 100 * upSmooth / (upSmooth + downSmooth)
+
+plot(rvi, title="RVI", color=rviInk, linewidth=2)
+hline(overbought, title="Overbought", color=levelInk, linestyle=hline.style_dashed)
+hline(oversold, title="Oversold", color=levelInk, linestyle=hline.style_dashed)
+fill(hline(overbought), hline(oversold), color=color.new(levelInk, 97), title="Background")`,
+);
+
+const TTM_SQUEEZE = script(
+    'TTM Squeeze',
+    false,
+    `length = input.int(20, "Length", minval=1)
+bbMult = input.float(2.0, "BB StdDev", minval=0.1, step=0.1)
+kcMult = input.float(1.5, "KC ATR", minval=0.1, step=0.1)
+src = input.source(close, "Source")
+upInk = input.color(${BULLISH}, "Up")
+downInk = input.color(${BEARISH}, "Down")
+dotInk = input.color(#000000, "Squeeze dot")
+
+basis = ta.sma(src, length)
+dev = bbMult * ta.stdev(src, length)
+kcRange = kcMult * ta.atr(length)
+rangeMid = (ta.highest(high, length) + ta.lowest(low, length)) / 2
+anchor = (rangeMid + basis) / 2
+mom = ta.linreg(src - anchor, length, 0)
+
+squeezeOn = (basis + dev < basis + kcRange) and (basis - dev > basis - kcRange)
+momInk = mom >= 0 ? upInk : downInk
+
+plot(mom, title="Momentum", style=plot.style_columns, color=momInk)
+plot(0, title="Zero", color=color.new(${NEUTRAL}, 60))
+plotshape(squeezeOn, title="Squeeze", style=shape.xcross, location=location.bottom, color=dotInk, size=size.tiny)`,
+);
+
+const CHAIKIN_VOLATILITY = script(
+    'Chaikin Volatility',
+    false,
+    `length = input.int(10, "Length", minval=1)
+rocLength = input.int(10, "ROC Length", minval=1)
+cvInk = input.color(${LINE_BLUE}, "Chaikin Volatility")
+levelInk = input.color(${NEUTRAL}, "Levels")
+
+rangeAt = high - low
+smooth = ta.ema(rangeAt, length)
+cv = smooth[rocLength] == 0 ? 0 : 100 * (smooth - smooth[rocLength]) / smooth[rocLength]
+
+plot(cv, title="Chaikin Volatility", color=cvInk, linewidth=2)
+hline(0, title="Zero", color=levelInk, linestyle=hline.style_dashed)`,
+);
+
+const KLINGER = script(
+    'Klinger Oscillator',
+    false,
+    `fastLength = input.int(34, "Fast Length", minval=1)
+slowLength = input.int(55, "Slow Length", minval=1)
+signalLength = input.int(13, "Signal Length", minval=1)
+kvoInk = input.color(${LINE_BLUE}, "KVO")
+signalInk = input.color(${WARNING}, "Signal")
+
+hlc = high + low + close
+trend = hlc > hlc[1] ? 1 : -1
+dm = high - low
+var float cm = 0.0
+cm := trend == nz(trend[1], trend) ? cm + dm : nz(dm[1], 0) + dm
+volumeForce = cm == 0 ? 0 : volume * math.abs(2 * dm / cm - 1) * trend * 100
+
+kvo = ta.ema(volumeForce, fastLength) - ta.ema(volumeForce, slowLength)
+signal = ta.ema(kvo, signalLength)
+
+plot(kvo, title="Klinger Oscillator", color=kvoInk, linewidth=2)
+plot(signal, title="Signal", color=signalInk)
+hline(0, title="Zero", color=color.new(${NEUTRAL}, 50), linestyle=hline.style_dashed)`,
+);
+
+const PVO_STUDY = script(
+    'Percentage Volume Oscillator',
+    false,
+    `fastLength = input.int(12, "Fast Length", minval=1)
+slowLength = input.int(26, "Slow Length", minval=1)
+signalLength = input.int(9, "Signal Length", minval=1)
+showHistogram = input.bool(true, "Show histogram")
+upInk = input.color(${BULLISH}, "Expansion")
+downInk = input.color(${BEARISH}, "Contraction")
+signalInk = input.color(${WARNING}, "Signal")
+
+fast = ta.ema(volume, fastLength)
+slow = ta.ema(volume, slowLength)
+pvo = slow == 0 ? na : 100 * (fast - slow) / slow
+signal = ta.ema(pvo, signalLength)
+hist = pvo - signal
+
+plot(showHistogram ? hist : na, title="Histogram", style=plot.style_columns, color=hist >= 0 ? color.new(upInk, 60) : color.new(downInk, 60))
+plot(pvo, title="PVO", color=pvo >= signal ? upInk : downInk, linewidth=2)
+plot(signal, title="Signal", color=signalInk)
+hline(0, title="Zero", color=color.new(${NEUTRAL}, 50), linestyle=hline.style_dashed)`,
+);
+
+const WILLIAMS_FRACTAL = script(
+    'Williams Fractal',
+    true,
+    `periods = input.int(2, "Periods", minval=1)
+upInk = input.color(${BULLISH}, "Up fractal")
+downInk = input.color(${BEARISH}, "Down fractal")
+
+window = 2 * periods + 1
+topHigh = ta.highest(high, window)
+bottomLow = ta.lowest(low, window)
+
+// The bar 'periods' back is the middle of the window that ENDS here.
+downFractal = high[periods] == topHigh
+upFractal = low[periods] == bottomLow
+
+plotshape(downFractal, title="Down fractal", style=shape.triangledown, location=location.abovebar, color=downInk, offset=-periods, size=size.tiny)
+plotshape(upFractal, title="Up fractal", style=shape.triangleup, location=location.belowbar, color=upInk, offset=-periods, size=size.tiny)`,
+);
+
+const ZIGZAG = script(
+    'Zig Zag',
+    true,
+    `deviation = input.float(5.0, "Deviation %", minval=0.1, step=0.1)
+depth = input.int(10, "Depth", minval=1)
+lineInk = input.color(${LINE_BLUE}, "Zig Zag")
+
+threshold = deviation / 100
+
+var int lastIdx = na
+var float lastPrice = na
+var bool rising = true
+
+pivotHigh = ta.pivothigh(high, depth, depth)
+pivotLow = ta.pivotlow(low, depth, depth)
+pivotIdx = bar_index - depth
+
+if not na(pivotHigh)
+    moveUp = na(lastPrice) or pivotHigh > lastPrice * (1 + threshold)
+    if moveUp and not rising
+        line.new(lastIdx, lastPrice, pivotIdx, pivotHigh, color=lineInk, width=2)
+        lastIdx := pivotIdx
+        lastPrice := pivotHigh
+        rising := true
+
+if not na(pivotLow)
+    moveDown = na(lastPrice) or pivotLow < lastPrice * (1 - threshold)
+    if moveDown and rising
+        if not na(lastIdx)
+            line.new(lastIdx, lastPrice, pivotIdx, pivotLow, color=lineInk, width=2)
+        lastIdx := pivotIdx
+        lastPrice := pivotLow
+        rising := false`,
+);
+
+
 const SOURCES: Record<string, string> = {
     sma: SMA,
     ema: EMA,
@@ -997,6 +1326,20 @@ const SOURCES: Record<string, string> = {
     'intraday-intensity': INTENSITY,
     vidya: VIDYA_MARGIN,
     'volume-flow-indicator': VOLUME_FLOW,
+    'chandelier-exit': CHANDELIER_EXIT,
+    'chande-kroll-stop': CHANDE_KRoll,
+    'williams-alligator': ALLIGATOR,
+    'gator-oscillator': GATOR,
+    'connors-rsi': CONNORS_RSI,
+    'smi-ergodic': SMI_ERGODIC,
+    'know-sure-thing': KNOW_SURE_THING,
+    'relative-volatility-index': RVI_CLASSIC,
+    'ttm-squeeze': TTM_SQUEEZE,
+    'chaikin-volatility': CHAIKIN_VOLATILITY,
+    'klinger-oscillator': KLINGER,
+    pvo: PVO_STUDY,
+    'williams-fractal': WILLIAMS_FRACTAL,
+    zigzag: ZIGZAG,
 };
 
 /** The Pine v6 source behind a built-in study, or `undefined` when it has none. */

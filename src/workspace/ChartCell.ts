@@ -6,6 +6,7 @@
 // chart instance survives every market change and only dies with the cell itself, on a
 // layout change — its state then round-trips through the workspace pool, so shrinking
 // 4 → 2 → 4 restores the third and fourth exactly, indicators and drawings included).
+import { classicPineSource } from '../core/native-indicators/classics/pine-source';
 import { Vela } from '../Vela';
 import { normalizeSession, type MarketSession, type NativeBackend, type VelaOptions, type VelaTheme } from '../core/options';
 import type { OHLCV } from '../core/model/ohlcv';
@@ -1290,12 +1291,19 @@ export class ChartCell {
 
     /** The picker's library rows: supported natives first (see {@link supportedNatives}),
      *  then the manifest in the host's own order. */
-    libraryRows(): Array<{ name: string; language?: string; category?: string; native?: boolean; nativeType?: string; beta?: boolean }> {
+    libraryRows(): Array<{ name: string; language?: string; category?: string; native?: boolean; nativeType?: string; beta?: boolean; source?: string }> {
         return [
             // The descriptor's OWN family, not one 'Built-in' bucket: 77 rows under a single
             // heading is a wall of text with no way in.
-            ...this.supportedNatives().map((n) => ({ name: n.title, category: n.category ?? 'Built-in', native: true, nativeType: n.type, beta: n.beta })),
-            ...this.manifest.map((e) => ({ name: e.name, language: e.language, category: e.category })),
+            ...this.supportedNatives().map((n) => ({
+                name: n.title,
+                category: n.category ?? 'Built-in',
+                native: true,
+                nativeType: n.type,
+                beta: n.beta,
+                ...(classicPineSource(n.type) ? { source: classicPineSource(n.type) as string } : {}),
+            })),
+            ...this.manifest.map((e) => ({ name: e.name, language: e.language, category: e.category, source: e.script })),
         ];
     }
 

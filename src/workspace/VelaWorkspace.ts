@@ -912,6 +912,11 @@ export class VelaWorkspace {
                       },
                       onRemove: (i) => this.active.removeFromChart(i),
                       onSettings: (i) => this.active.openChartRowSettings(i),
+                      // The catalog row's `{ }`: a built-in opens READ-ONLY (TradingView's
+                      // rule), a library script opens editable.
+                      onSource: (row) => {
+                          if (row.source !== undefined) this.openEditor(row.source, row.name, { readOnly: row.native === true });
+                      },
                       favorites: () => this.indFavs,
                       onFavorite: (key, on) => this.setIndicatorFavorite(key, on),
                       recent: () => recentOf('indicators'),

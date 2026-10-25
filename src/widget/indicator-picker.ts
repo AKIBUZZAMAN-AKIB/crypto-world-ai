@@ -22,6 +22,12 @@ export interface IndicatorRow {
     nativeType?: string;
     /** Beta badge (native catalog flag). */
     beta?: boolean;
+    /**
+     * The study's Pine source, when it has one — the row then shows TradingView's `{ }`
+     * chip and opens that code in the editor (read-only for a built-in, editable for a
+     * library script). Absent ⇒ no chip, exactly like TV's non-Pine built-ins.
+     */
+    source?: string;
 }
 
 const STYLE_ID = 'vela-widget-indpicker';
@@ -139,6 +145,8 @@ const CSS = `
     letter-spacing: 0.06em;
     text-transform: uppercase;
 }
+.vela-ip-code,
+.vela-ip-code:hover { color: var(--vela-fg); background: var(--vela-hover); }
 .vela-ip-star {
     all: unset;
     flex: none;
@@ -166,7 +174,7 @@ const CSS = `
 .vela-ip-gear:hover { color: var(--vela-fg-bright); background: var(--vela-hover); }
 @media (pointer: coarse) {
     .vela-ip-row { min-height: 46px; padding: 0 6px; }
-    .vela-ip-star { width: 36px; height: 36px; }
+    .vela-ip-star, .vela-ip-code { width: 36px; height: 36px; }
     .vela-ip-gear, .vela-ip-trash { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; }
     .vela-ip-tab { min-height: 36px; }
 }
@@ -228,6 +236,8 @@ export interface IndicatorPickerOptions {
     /** Open ONE live instance's settings from its row. Omitted ⇒ no gear (a host whose
      *  chart has no indicator settings surface keeps the plain remove-only row). */
     onSettings?: (instanceIndex: number) => void;
+    /** Open the row's Pine source in the editor (`row.source` is set). */
+    onSource?: (row: IndicatorRow) => void;
     /** The starred indicator keys. Omitted ⇒ the shared favourites store (localStorage)
      *  is the source of truth, which is what a lone chart wants. */
     favorites?: () => readonly string[];
@@ -290,6 +300,7 @@ export class IndicatorPicker {
             const trash = target.closest<HTMLElement>('.vela-ip-trash');
             const gear = target.closest<HTMLElement>('.vela-ip-gear');
             const star = target.closest<HTMLElement>('.vela-ip-star');
+            const code = target.closest<HTMLElement>('.vela-ip-code');
             const row = target.closest<HTMLElement>('.vela-ip-row');
             if (!row) return;
             if (star) {
@@ -311,6 +322,15 @@ export class IndicatorPicker {
                 this.opts.onSettings?.(Number(row.dataset.instance));
             } else if (trash) {
                 this.opts.onRemove(Number(row.dataset.instance));
+            } else if (code) {
+                // The `{ }` chip opens the study's code instead of adding it.
+                const index = row.dataset.library !== undefined ? Number(row.dataset.library) : -1;
+                const entry = index >= 0 ? this.opts.library()[index] : undefined;
+                if (entry?.source) {
+                    this.close();
+                    this.opts.onSource?.(entry);
+                }
+                return;
             } else if (row.dataset.library !== undefined) {
                 this.opts.onAdd(Number(row.dataset.library));
             }
@@ -450,6 +470,16 @@ export class IndicatorPicker {
                 trash.setAttribute('aria-label', `Remove ${r.name}`);
                 row.appendChild(trash);
             } else {
+                // TradingView's `{ }` on a catalog row: open the study's code before adding
+                // it. Only studies that HAVE Pine code get the chip.
+                if (r.source && this.opts.onSource) {
+                    const code = doc.createElement('button');
+                    code.className = 'vela-ip-code';
+                    code.appendChild(iconEl('braces', doc));
+                    code.title = 'Source code';
+                    code.setAttribute('aria-label', `${r.name} source code`);
+                    row.appendChild(code);
+                }
                 // Library rows get the star — the on-chart card's rows are already chosen,
                 // and a star there would sit beside a trash icon saying the opposite.
                 const star = doc.createElement('button');
