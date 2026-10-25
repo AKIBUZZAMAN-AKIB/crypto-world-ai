@@ -198,6 +198,42 @@ export interface CellDeps {
     /** Workspace-only legend actions for one indicator row — the "apply to the whole
      *  layout" pair. Omitted in a single-chart host. */
     layoutLegendActions?(indicatorId: string, cellId: string): import('../core/ports/IChartRenderer').LegendActionView[];
+    /** The shell's chart-settings TEMPLATES (TradingView's Settings → Templates). Omitted
+     *  in a lone-chart host, which then keeps the dialog's plain "Reset defaults". */
+    settingsTemplates?: SettingsTemplatesService;
+    /** The shell's per-TYPE indicator defaults — the indicator settings dialog's Defaults
+     *  menu ("Save as default", the apply-to-all rows). Omitted in a lone-chart host,
+     *  which then keeps that dialog's plain "Reset defaults" chip. */
+    indicatorDefaults?: IndicatorDefaultsService;
+}
+
+/** The shell side of the indicator defaults. Values live in the workspace DOCUMENT (they
+ *  outlive a chart, exactly as TradingView's do); the per-chart verbs are here because an
+ *  "apply to every RSI on this chart" edit belongs to the cell that asked. */
+export interface IndicatorDefaultsService {
+    has(type: string): boolean;
+    /** Full value bags for one type, or null. */
+    get(type: string): { inputs: Record<string, InputValue>; props: Record<string, InputValue> } | null;
+    save(type: string, inputs: Record<string, InputValue>, props: Record<string, InputValue>): void;
+    clear(type: string): void;
+    /** Copy a type's settings onto every chart in the layout; returns instances changed. */
+    applyToAll(type: string, inputs: Record<string, InputValue>, props: Record<string, InputValue>): number;
+    chartCount(): number;
+}
+
+/** The shell side of the chart-settings templates, addressed per CELL: the dialog that
+ *  asks belongs to one chart, so "apply to this chart" means that cell. */
+export interface SettingsTemplatesService {
+    list(cellId: string): Array<{ name: string; active: boolean }>;
+    activeName(cellId: string): string | null;
+    defaultName(): string | null;
+    setDefault(name: string | null): void;
+    /** `'all'` reaches every chart; any other value is the cell id. */
+    apply(name: string, target: 'all' | string): void;
+    save(name: string, cellId: string): boolean;
+    remove(name: string): void;
+    applyToAll(cellId: string): void;
+    chartCount(): number;
 }
 
 /** One live manifest/external instance and, when it deviates from declaration
@@ -969,6 +1005,80 @@ export class ChartCell {
         if (this.sessionAvailableFlag) sections.push(sessionSection);
         sections.push(watermarkSection);
         chart.renderer.setSettingsSections(sections);
+        this.publishSettingsTemplates(chart);
+        this.publishIndicatorDefaults(chart);
+    }
+
+    /** The indicator settings dialog's Defaults menu, bound to THIS cell: a chart-wide
+     *  apply stays here, a layout-wide one goes to the shell. Re-published with the
+     *  sections so a rebuilt renderer is never left with a stale adapter. */
+    private publishIndicatorDefaults(chart: NonNullable<ChartCell['inner']>): void {
+        const svc = this.deps.indicatorDefaults;
+        if (!svc) {
+            chart.renderer.setIndicatorDefaults(null);
+            return;
+        }
+        chart.renderer.setIndicatorDefaults({
+            has: (type) => svc.has(type),
+            saved: (type) => svc.get(type),
+            save: (type, inputs, props) => svc.save(type, inputs, props),
+            clear: (type) => svc.clear(type),
+            chartCount: () => svc.chartCount(),
+            applyToAll: (type, inputs, props, scope) =>
+                scope === 'layout' ? svc.applyToAll(type, inputs, props) : this.applyIndicatorSettingsToType(type, inputs, props),
+        });
+    }
+
+    /** Write one type's settings onto every instance of it on THIS chart. Returns how many
+     *  instances were touched (the edited one included — it already holds the values, so
+     *  the write is a no-op there, never a second run). */
+    applyIndicatorSettingsToType(type: string, inputs: Record<string, InputValue>, props: Record<string, InputValue>): number {
+        let touched = 0;
+        const propKeys = Object.keys(props);
+        for (const handle of this.nativeHandles()) {
+            if (handle.nativeType !== type) continue;
+            const next: Record<string, InputValue> = {};
+            const current = handle.inputValues();
+            for (const schema of handle.inputs) {
+                const wanted = inputs[schema.key];
+                if (wanted === undefined) continue;
+                if (JSON.stringify(current[schema.key]) !== JSON.stringify(wanted)) next[schema.key] = wanted;
+            }
+            if (Object.keys(next).length > 0) handle.setInputs(next);
+            if (propKeys.length > 0) {
+                const wantedProps: Record<string, InputValue> = {};
+                const held = handle.propValues();
+                for (const key of propKeys) {
+                    const wanted = props[key]!;
+                    if (JSON.stringify(held[key]) !== JSON.stringify(wanted)) wantedProps[key] = wanted;
+                }
+                if (Object.keys(wantedProps).length > 0) handle.setProps(wantedProps);
+            }
+            touched += 1;
+        }
+        return touched;
+    }
+
+    /** The chart-settings dialog's Templates control, bound to THIS cell (see
+     *  {@link SettingsTemplatesService}). Re-published with the sections: cheap, and it
+     *  keeps a rebuilt renderer wired. */
+    private publishSettingsTemplates(chart: NonNullable<ChartCell['inner']>): void {
+        const svc = this.deps.settingsTemplates;
+        if (!svc) {
+            chart.renderer.setSettingsTemplates(null);
+            return;
+        }
+        chart.renderer.setSettingsTemplates({
+            list: () => svc.list(this.id),
+            activeName: () => svc.activeName(this.id),
+            defaultName: () => svc.defaultName(),
+            setDefault: (name) => svc.setDefault(name),
+            apply: (name, target) => svc.apply(name, target === 'all' ? 'all' : this.id),
+            save: (name) => svc.save(name, this.id),
+            remove: (name) => svc.remove(name),
+            applyToAll: () => svc.applyToAll(this.id),
+            chartCount: () => svc.chartCount(),
+        });
     }
 
     /** Show/hide this cell's symbol watermark (persisted per cell). */
@@ -1449,6 +1559,14 @@ export class ChartCell {
         if (!chart) return;
         const before = new Set(chart.indicators().map((h) => h.id));
         let added: IndicatorHandle | null = chart.addNativeIndicator(type);
+        // TradingView's "Save as default": a NEW instance opens with the user's saved
+        // settings for its type. Seeded before the ledger is read, so persistence and
+        // undo both see the values the trader actually sees.
+        const saved = this.deps.indicatorDefaults?.get(type);
+        if (added && saved) {
+            if (Object.keys(saved.inputs).length > 0) added.setInputs(saved.inputs);
+            if (Object.keys(saved.props).length > 0) added.setProps(saved.props);
+        }
         this.syncPresentNatives();
         this.refreshNativeCatalog();
         if (before.has(added.id)) return;

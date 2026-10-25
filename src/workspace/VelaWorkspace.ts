@@ -42,7 +42,9 @@ import { AlertList } from '../widget/alert-list';
 import { AlertCreateSheet } from '../widget/alert-create';
 import { CompareSheet } from '../widget/compare-sheet';
 import type { CompareDisplay } from '../core/native-indicators/compare';
-import type { SavedPriceAlert } from '../state/document';
+import type { IndicatorDefault, SavedPriceAlert } from '../state/document';
+import { BUILTIN_TEMPLATES, builtinTemplate } from '../state/builtin-templates';
+import type { InputValue } from '../core/model/inputs';
 import { advanceAlert, alertRowLabel, alertWatchesSymbol, describeAlert, isMoveCondition, movingFires, nextAlertId, type AlertCondition, type AlertFrequency, type PriceAlert } from './price-alerts';
 import { Tip } from '../widget/tip';
 import { REDUCED_MOTION_CSS } from '../ui/motion';
@@ -121,7 +123,7 @@ const SYNC_ROW_ORDER: ReadonlyArray<readonly [SyncKind, string]> = [
 ];
 /** The same labels as a lookup, for the status-line badge's tooltip. */
 const KIND_LABEL = Object.fromEntries(SYNC_ROW_ORDER) as Record<SyncKind, string>;
-import { ChartCell, seedDefaults, cellChartDefaults, type CellSeed, type CellBoot, type PooledCellState } from './ChartCell';
+import { ChartCell, seedDefaults, cellChartDefaults, type CellSeed, type CellBoot, type PooledCellState, type SettingsTemplatesService, type IndicatorDefaultsService } from './ChartCell';
 import { buildContext, type WorkspaceWidgetContext } from './context';
 import { WorkspaceReplay, lastOpenClosedBy } from './WorkspaceReplay';
 import {
@@ -404,6 +406,17 @@ export function resolveTyping(key: string, open: TypingState): { target: 'symbol
     return null;
 }
 
+/** A value bag reduced to what the document sanitizer keeps (primitives only), or null. */
+function primitiveBag(bag: Record<string, InputValue>): Record<string, number | string | boolean> | null {
+    const out: Record<string, number | string | boolean> = {};
+    for (const [key, value] of Object.entries(bag)) {
+        if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+        else if (typeof value === 'string') out[key] = value;
+        else if (typeof value === 'boolean') out[key] = value;
+    }
+    return Object.keys(out).length > 0 ? out : null;
+}
+
 export class VelaWorkspace {
     readonly root: HTMLElement;
     /** The shortcut system — one manager for the whole workspace, routed to the active cell. */
@@ -555,8 +568,43 @@ export class VelaWorkspace {
     private linkInbox: { symbol?: string; timeframe?: string; range?: { from: number; to: number } } | null = null;
     /** The saved snapshot opened (or written) last — the picker's active row. */
     private activeSavedLayout: string | null = null;
-    /** Autosave + the house template for new charts (see `WorkspaceState.layoutPrefs`). */
-    private layoutPrefs: { autosave: boolean; defaultTemplate: string | null } = { autosave: false, defaultTemplate: null };
+    /** Autosave + the house templates for new charts (see `WorkspaceState.layoutPrefs`). */
+    private layoutPrefs: { autosave: boolean; defaultTemplate: string | null; defaultAppearance: string | null } = {
+        autosave: false,
+        defaultTemplate: null,
+        defaultAppearance: null,
+    };
+    /** CHART-SETTINGS templates: the chart's appearance under a name (TV's Settings →
+     *  Templates). The market and the indicators are not part of one. */
+    private readonly appearanceTemplates = new Map<string, Record<string, unknown>>();
+    /** One service object for every cell (the verbs take the cell id). */
+    private readonly settingsTemplatesService: SettingsTemplatesService = {
+        list: (cellId) => this.appearanceTemplateList(cellId),
+        activeName: (cellId) => this.appearanceTemplateName(cellId),
+        defaultName: () => this.layoutPrefs.defaultAppearance,
+        setDefault: (name) => this.setDefaultAppearanceTemplate(name),
+        apply: (name, target) => {
+            this.applyAppearanceTemplate(name, target);
+        },
+        save: (name, cellId) => this.saveAppearanceTemplate(name, cellId),
+        remove: (name) => this.deleteAppearanceTemplate(name),
+        applyToAll: (cellId) => this.applySettingsToAll(cellId),
+        chartCount: () => this.cellsById.size,
+    };
+    /** INDICATOR defaults, by indicator type id (TradingView: indicator settings →
+     *  Defaults → "Save as default"). Full value bags, so loading one is exact. */
+    private readonly indicatorDefaults = new Map<string, IndicatorDefault>();
+    private readonly indicatorDefaultsService: IndicatorDefaultsService = {
+        has: (type) => this.indicatorDefaults.has(type),
+        get: (type) => {
+            const entry = this.indicatorDefaults.get(type);
+            return entry ? { inputs: { ...(entry.inputs ?? {}) }, props: { ...(entry.props ?? {}) } } : null;
+        },
+        save: (type, inputs, props) => this.saveIndicatorDefault(type, inputs, props),
+        clear: (type) => this.clearIndicatorDefault(type),
+        applyToAll: (type, inputs, props) => this.applyIndicatorSettingsToAll(type, inputs, props),
+        chartCount: () => this.cellsById.size,
+    };
     /**
      * Document revision, bumped by every {@link markStateDirty}. Saving a layout records
      * the revision it captured; the picker's "unsaved changes" dot is the difference.
@@ -1032,6 +1080,10 @@ export class VelaWorkspace {
             templates: {
                 templates: () => this.templateList(),
                 onApplyTemplate: (name, target) => this.applyTemplate(name, target),
+                builtins: () => this.builtinTemplates(),
+                onApplyBuiltin: (id) => {
+                    this.applyBuiltinTemplate(id);
+                },
                 onSaveTemplate: (name, includeMarket) => this.saveTemplate(name, { includeMarket }),
                 onDeleteTemplate: (name) => this.deleteTemplate(name),
                 onRenameTemplate: (from, to) => this.renameTemplate(from, to),
@@ -1672,11 +1724,20 @@ export class VelaWorkspace {
         if (this.drawingsScope !== 'layout') state.drawingsScope = this.drawingsScope;
         if (this.savedLayouts.size > 0) state.savedLayouts = Object.fromEntries([...this.savedLayouts].map(([k, v]) => [k, v as unknown]));
         if (this.layoutMeta.size > 0) state.layoutMeta = Object.fromEntries([...this.layoutMeta].map(([k, v]) => [k, { ...v }]));
-        if (this.layoutPrefs.autosave || this.layoutPrefs.defaultTemplate) {
+        if (this.layoutPrefs.autosave || this.layoutPrefs.defaultTemplate || this.layoutPrefs.defaultAppearance) {
             state.layoutPrefs = {
                 ...(this.layoutPrefs.autosave ? { autosave: true } : {}),
                 ...(this.layoutPrefs.defaultTemplate ? { defaultTemplate: this.layoutPrefs.defaultTemplate } : {}),
+                ...(this.layoutPrefs.defaultAppearance ? { defaultAppearance: this.layoutPrefs.defaultAppearance } : {}),
             };
+        }
+        if (this.appearanceTemplates.size > 0) {
+            state.appearanceTemplates = Object.fromEntries(
+                [...this.appearanceTemplates].map(([name, config]) => [name, { version: 1 as const, config }]),
+            );
+        }
+        if (this.indicatorDefaults.size > 0) {
+            state.indicatorDefaults = Object.fromEntries([...this.indicatorDefaults].map(([type, entry]) => [type, { ...entry }]));
         }
         if (this.templates.size > 0) {
             state.templates = Object.fromEntries(
@@ -1728,9 +1789,18 @@ export class VelaWorkspace {
         if (st.templates) {
             for (const [name, template] of Object.entries(st.templates)) this.templates.set(name, template);
         }
+        if (st.indicatorDefaults) {
+            this.indicatorDefaults.clear();
+            for (const [type, entry] of Object.entries(st.indicatorDefaults)) this.indicatorDefaults.set(type, { ...entry });
+        }
+        if (st.appearanceTemplates) {
+            this.appearanceTemplates.clear();
+            for (const [name, tpl] of Object.entries(st.appearanceTemplates)) this.appearanceTemplates.set(name, tpl.config);
+        }
         if (st.layoutPrefs) {
             this.layoutPrefs.autosave = st.layoutPrefs.autosave === true;
             this.layoutPrefs.defaultTemplate = st.layoutPrefs.defaultTemplate ?? null;
+            this.layoutPrefs.defaultAppearance = st.layoutPrefs.defaultAppearance ?? null;
         }
         if (st.watchlist) this.watchlist = [...st.watchlist];
         if (st.groupNames) this.groupNames = { ...st.groupNames };
@@ -2732,9 +2802,18 @@ export class VelaWorkspace {
                 manifestSettled: () => this.manifestSettled,
                 toast: (message, kind, durationMs) => this.toastHost.show(message, kind, durationMs),
                 layoutLegendActions: (indicatorId, cellId) => this.layoutLegendActions(indicatorId, cellId),
+                // Chart settings → Templates (TV's own place). Always offered: a lone
+                // chart can still save its look; only "Apply to all" needs siblings.
+                settingsTemplates: this.settingsTemplatesService,
+                indicatorDefaults: this.indicatorDefaultsService,
                 ...(this.def.cells.length > 1 ? { applySettingsToAll: (cellId: string) => this.applySettingsToAll(cellId) } : {}),
                 ...(this.def.cells.length > 1 && !this.monoLayout ? { openSyncGesture: (cellId: string) => this.openSyncSurface(cellId) } : {}),
             });
+            // The house APPEARANCE (chart settings → Templates → "start new charts with")
+            // lands before the cell's first paint. A pooled cell keeps its own look, and a
+            // restored one is overwritten by `applyState` a moment later.
+            const houseLook = !pooled ? this.houseAppearance() : undefined;
+            if (houseLook) cell.chart.renderer.applyConfig(houseLook);
             cell.host.style.gridArea = perCell[slot.id]?.gridArea ?? '';
             this.cellsById.set(id, cell);
             // A REBUILT active cell (backend flip, pool round-trip) gets a fresh host —
@@ -3864,6 +3943,30 @@ export class VelaWorkspace {
         return JSON.stringify({ app: 'vela', kind: 'drawing-template', version: 1, tool, name, settings: found.settings }, null, 2);
     }
 
+    /** TradingView's six BUILT-IN templates, read-only and always available. */
+    builtinTemplates(): Array<{ id: string; name: string; description: string; count: number }> {
+        return BUILTIN_TEMPLATES.map((t) => ({ id: t.id, name: t.name, description: t.description, count: t.indicators.length }));
+    }
+
+    /** Apply one built-in — the same REPLACE contract a saved template has. */
+    applyBuiltinTemplate(id: string, target: 'active' | 'all' = 'active'): number {
+        const builtin = builtinTemplate(id);
+        if (!builtin) return 0;
+        const ids = target === 'all' ? [...this.cellsById.keys()] : this.activeId ? [this.activeId] : [];
+        let changed = 0;
+        for (const cellId of ids) {
+            const cell = this.cellsById.get(cellId);
+            if (!cell) continue;
+            cell.applyIndicatorTemplate({ indicators: builtin.indicators });
+            changed += 1;
+        }
+        if (changed > 0) {
+            this.markStateDirty();
+            this.toast(`“${builtin.name}” applied to ${changed} chart${changed === 1 ? '' : 's'}`, 'success');
+        }
+        return changed;
+    }
+
     saveTemplate(name: string, opts: { includeMarket?: boolean } = {}): boolean {
         const key = name.trim().slice(0, 40);
         if (!key || !this.activeId) return false;
@@ -3969,6 +4072,147 @@ export class VelaWorkspace {
         this.markStateDirty();
         this.toast(`Template “${name}” imported`, 'success');
         return name;
+    }
+
+
+    //
+    // "Save as default" stores one indicator TYPE's settings in the document, so every
+    // NEW instance of that type — on any chart, in any layout — opens with them. That is
+    // the scope TV uses (a per-chart default would be a different, smaller promise).
+
+    /** Every type that has saved defaults, for host chrome/tests. */
+    indicatorDefaultTypes(): string[] {
+        return [...this.indicatorDefaults.keys()];
+    }
+
+    /** One type's saved defaults (full value bags), or null. */
+    indicatorDefault(type: string): { inputs: Record<string, number | string | boolean>; props: Record<string, number | string | boolean> } | null {
+        return this.indicatorDefaultsService.get(type);
+    }
+
+    /** Save the CURRENT settings of one indicator type as its default. */
+    saveIndicatorDefault(type: string, inputs: Record<string, InputValue>, props: Record<string, InputValue> = {}): void {
+        const key = type.trim().slice(0, 60);
+        if (!key) return;
+        const entry: IndicatorDefault = {};
+        const inputsBag = primitiveBag(inputs);
+        const propsBag = primitiveBag(props);
+        if (inputsBag) entry.inputs = inputsBag;
+        if (propsBag) entry.props = propsBag;
+        if (!entry.inputs && !entry.props) return;
+        this.indicatorDefaults.set(key, entry);
+        this.markStateDirty();
+        this.toast(`Saved as the default for ${key}`, 'success');
+    }
+
+    /** Forget one type's saved defaults (new instances fall back to the declaration). */
+    clearIndicatorDefault(type: string): boolean {
+        if (!this.indicatorDefaults.delete(type)) return false;
+        this.markStateDirty();
+        return true;
+    }
+
+    /** Copy one type's settings onto every instance across every chart. Returns the count
+     *  of instances touched — the menu's confirmation reads it back. */
+    applyIndicatorSettingsToAll(type: string, inputs: Record<string, InputValue>, props: Record<string, InputValue> = {}): number {
+        let touched = 0;
+        for (const cell of this.cellsById.values()) touched += cell.applyIndicatorSettingsToType(type, inputs, props);
+        if (touched > 0) this.markStateDirty();
+        return touched;
+    }
+
+    // ── chart-settings templates (TradingView's Settings → Templates) ───────────────
+    //
+    // What TV's chart settings store is the APPEARANCE: candle and background colours,
+    // grid, scales, status line. The market and the indicators belong to a layout (or to
+    // a chart/indicator template), so a settings template deliberately carries neither —
+    // applying one restyles whatever market the chart is on.
+    //
+    // The control lives in the chart-settings dialog's footer, where TV puts it; the
+    // dialog owns no templates, it asks the shell through `SettingsTemplatesService`.
+
+    /** The saved appearance templates, with `active` true for the one `cellId` wears. */
+    appearanceTemplateList(cellId?: string): Array<{ name: string; active: boolean }> {
+        const base = this.cellConfig(cellId ?? this.activeId ?? '');
+        const baseJson = base ? JSON.stringify(base) : null;
+        return [...this.appearanceTemplates].map(([name, config]) => ({
+            name,
+            active: baseJson !== null && JSON.stringify(config) === baseJson,
+        }));
+    }
+
+    /** The appearance template `cellId` currently matches, if any (the control's label). */
+    appearanceTemplateName(cellId?: string): string | null {
+        return this.appearanceTemplateList(cellId).find((row) => row.active)?.name ?? null;
+    }
+
+    /** Capture a cell's appearance under `name` (an existing name is replaced). */
+    saveAppearanceTemplate(name: string, cellId?: string): boolean {
+        const key = name.trim().slice(0, 40);
+        const config = this.cellConfig(cellId ?? this.activeId ?? '');
+        if (!key || !config) return false;
+        this.appearanceTemplates.set(key, config);
+        this.markStateDirty();
+        this.toast(`Template “${key}” saved`, 'success');
+        return true;
+    }
+
+    /** Apply an appearance template to one cell (`'all'` restyles every chart). */
+    applyAppearanceTemplate(name: string, target: 'all' | string = 'active'): number {
+        const config = this.appearanceTemplates.get(name);
+        if (!config) return 0;
+        const ids = target === 'all' ? [...this.cellsById.keys()] : [target === 'active' ? (this.activeId ?? '') : target];
+        let changed = 0;
+        for (const id of ids) {
+            const cell = this.cellsById.get(id);
+            if (!cell) continue;
+            cell.chart.renderer.applyConfig(config);
+            changed += 1;
+        }
+        if (changed > 0) {
+            this.markStateDirty();
+            this.toast(`Template “${name}” applied to ${changed} chart${changed === 1 ? '' : 's'}`, 'success');
+        }
+        return changed;
+    }
+
+    deleteAppearanceTemplate(name: string): boolean {
+        if (!this.appearanceTemplates.delete(name)) return false;
+        // A house pointer at a template that no longer exists would promise a look that
+        // can never arrive.
+        if (this.layoutPrefs.defaultAppearance === name) {
+            this.layoutPrefs.defaultAppearance = null;
+            this.events.emit('layout:prefs', undefined);
+        }
+        this.markStateDirty();
+        return true;
+    }
+
+    /** The appearance template NEW charts open with (null = the factory look). */
+    defaultAppearanceTemplate(): string | null {
+        return this.layoutPrefs.defaultAppearance;
+    }
+
+    setDefaultAppearanceTemplate(name: string | null): void {
+        const next = name && this.appearanceTemplates.has(name) ? name : null;
+        if (this.layoutPrefs.defaultAppearance === next) return;
+        this.layoutPrefs.defaultAppearance = next;
+        this.events.emit('layout:prefs', undefined);
+        this.markStateDirty();
+    }
+
+    /** A cell's live appearance document (null when the renderer has no rich config). */
+    private cellConfig(cellId: string): Record<string, unknown> | null {
+        const cell = this.cellsById.get(cellId);
+        if (!cell) return null;
+        const config = cell.chart.renderer.getConfig() as unknown;
+        return config && typeof config === 'object' && !Array.isArray(config) ? (config as Record<string, unknown>) : null;
+    }
+
+    /** The house appearance's config, for a chart that is about to be born. */
+    private houseAppearance(): Record<string, unknown> | undefined {
+        const name = this.layoutPrefs.defaultAppearance;
+        return name ? this.appearanceTemplates.get(name) : undefined;
     }
 
     // ── watchlist + batch symbols ────────────────────────────────────────────────────
@@ -5061,6 +5305,10 @@ export class VelaWorkspace {
                 templates: () => this.templateList(),
                 onSaveTemplate: (name, includeMarket) => this.saveTemplate(name, { includeMarket }),
                 onApplyTemplate: (name, target) => this.applyTemplate(name, target),
+                builtins: () => this.builtinTemplates(),
+                onApplyBuiltin: (id) => {
+                    this.applyBuiltinTemplate(id);
+                },
                 onDeleteTemplate: (name) => this.deleteTemplate(name),
                 onRenameTemplate: (from, to) => this.renameTemplate(from, to),
                 defaultTemplate: () => this.defaultTemplate(),

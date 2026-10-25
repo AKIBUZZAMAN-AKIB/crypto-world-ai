@@ -633,6 +633,10 @@ this shell: the small templates glyph there opens
 - the saved templates, each with its indicator count (and the market, when it was saved
   with one) — **clicking one applies it** here and closes the menu, replacing this chart's
   indicators as TradingView's does;
+- **the six built-ins TradingView ships** — *Bill Williams' 3 Lines*, *Displaced EMA*,
+  *MA Exp Ribbon* (five EMAs at 8/13/21/34/55), *Oscillators*, *Swing Trading* and
+  *Volume Based* — listed under the saved ones and read-only: they apply like any other
+  template but carry no star, kebab or rename field, so they can never be overwritten;
 - the row's **star**, which makes that template the set **new charts open with** (the
   heading says what that is), and the row's **kebab**: *Apply to all charts* (a multi-chart
   layout only), *Rename…*, *Export*, *Delete* — delete arms on the first tap, deletes on
@@ -646,6 +650,54 @@ picker's Templates pane and the phone's More drawer, so a template saved in one 
 all three, and `ws.saveTemplate` / `applyTemplate` / `renameTemplate` / `deleteTemplate` /
 `setDefaultTemplate` drive it from code. Composition id `'templates'`; it renders wherever
 the shell has templates to offer, single-chart mode included.
+
+### Chart-settings templates
+
+The chart-settings dialog carries TradingView's second kind of template in the same place
+it does: a **Templates** control at the left of the dialog's footer, where its text is the
+template the chart currently wears (or *Templates* when it matches none). A settings
+template is the **appearance** — candle and background colours, grid, scales, status line —
+and deliberately neither a market nor an indicator set: applying one restyles whatever the
+chart is showing.
+
+- **clicking a row** applies it to this chart (the dialog re-seeds its controls at once, so
+  it never shows the settings it just replaced);
+- the row's **star** makes it the look **new charts open with** — a template that keeps a
+  live chart out of it leaves the star alone;
+- the row's **trash arms on the first tap and deletes on the second**;
+- **Save template…** captures the open chart as it is now — the same document
+  `getConfig()` returns, which is also what `applyConfig` takes back;
+- **Apply defaults** restores the factory look (it is the old *Reset defaults* button,
+  moved into the menu so the footer keeps one control);
+- **Apply to all** copies the chart's current settings onto every chart in the layout —
+  the button TV puts beside this one, and the reason the two share a footer.
+
+Deleting a template that the house pointer names clears the pointer rather than leaving it
+dangling. On a phone the control is the same chip in the same footer, the panel is capped
+to the viewport, and the footer never scrolls sideways. From code: `ws.appearanceTemplateList`,
+`appearanceTemplateName`, `saveAppearanceTemplate`, `applyAppearanceTemplate`,
+`deleteAppearanceTemplate`, `defaultAppearanceTemplate`, `setDefaultAppearanceTemplate`.
+
+### Indicator settings — Defaults
+
+The indicator settings dialog's footer opens with **Defaults ▾** (TradingView's own
+control), a menu of:
+
+- **Save as default** (then *Update saved default*) — this indicator **type**'s current
+  inputs and declaration props become what every *new* instance of that type opens with,
+  whichever chart or layout it is added on. Existing instances keep their own settings;
+- **Load saved default** — writes the saved values into this form, greyed until one exists;
+- **Clear saved default** — forgets it, so new instances fall back to the declaration again;
+- **Apply to every <study> on this chart** / **…in the layout** — copy the current settings
+  onto the other instances of the same type (the rows only appear when there are some);
+- **Reset to factory defaults** — the old reset button, now one row in the menu.
+
+Values live in the workspace document (`indicatorDefaults`), so they survive a reload and
+travel with a saved layout, and they are sanitized to primitives on the way back in. A
+script indicator (no registered type) keeps the plain *Reset defaults* chip. From code:
+`ws.saveIndicatorDefault(type, inputs, props)`, `indicatorDefault(type)`,
+`clearIndicatorDefault(type)`, `indicatorDefaults` in the document, and
+`chart.renderer.setIndicatorDefaults(host)` — or `ws.indicatorDefaultTypes()`.
 
 ### The layout menu
 
@@ -804,16 +856,23 @@ presentation. Sheets and full-screen pickers act on the **active cell**.
 
 What changes on mobile:
 
-- **One bottom bar replaces both desktop bars**, left to right: the symbol button
-  (full-screen symbol search), the timeframe button (a bottom sheet with the date-range
-  presets on top and the timeframe grid below), indicators (the full-screen picker),
-  drawings (a bottom sheet with a search bar, the tool groups as scrollable tabs, and
-  favorite stars), **the script editor** (when a scripting engine is configured — the
-  panel rises as a draggable bottom sheet, see
-  [scripting engines](./scripting-engines.md#the-script-editor)), a three-dots sheet (undo/redo, screenshot, chart type, the side
-  panels, time zone, alerts, contributed topbar actions and — multi-chart grids only —
-  a **Layout** entry with the same tap-to-apply grid canvas as the desktop dropdown,
-  the sync switches below it), and chart settings.
+- **One bottom bar replaces both desktop bars.** Its two ends are pinned: the **pair
+  name** on the left (the pin that says which cell your next tap acts on; tapping it
+  opens the full-screen symbol search) and, on the right, the **three-dots sheet** and
+  **chart settings**. Everything between them scrolls sideways in one band, in the order
+  a trade is set up: **interval → chart type → drawings → fullscreen → indicators →
+  the script editor**. The interval button is a bottom sheet with the date-range presets
+  on top and the timeframe grid below; drawings is a sheet with a search bar, the tool
+  groups as scrollable tabs and favorite stars; the editor (when a scripting engine is
+  configured) rises as a draggable bottom sheet (see
+  [scripting engines](./scripting-engines.md#the-script-editor)). The band fades at
+  whichever edge still has stops behind it, so a phone with no chart maximized still
+  shows where the tools went. The three-dots sheet holds undo/redo, screenshot, chart
+  type, the side panels, time zone, alerts, contributed topbar actions, an entry per
+  **hidden chart** (`ws.hiddenChartList()` — the charts a smaller layout set aside; tapping
+  one puts it in the active pane and parks the chart it replaced, `ws.showHiddenChart(id)`
+  from code), and — multi-chart grids only — a **Layout** entry with the same
+  tap-to-apply grid canvas as the desktop dropdown, the sync switches below it.
 - **The docked drawing toolbar hides.** Picking a tool from the drawings sheet arms it
   and shows a floating pill over the chart — the armed tool's icon, the magnet cycle,
   stay-in-drawing-mode, the eraser, and ✕ to disarm. Favorites keep working (stars in

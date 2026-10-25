@@ -164,6 +164,16 @@ export const TEMPLATES_MENU_CSS = `
 .vela-tm-chip:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: 1px; }
 .vela-tm-chip[data-danger='1'] { color: var(--vela-down, #e5484d); border-color: var(--vela-down, #e5484d); }
 .vela-tm-sep { height: 1px; margin: 5px 6px; background: var(--vela-border); }
+.vela-tm-group {
+    margin: 8px 0 2px;
+    padding: 0 8px;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--vela-fg-muted);
+}
+.vela-tm-glyph--builtin { background: transparent; border: 1px solid var(--vela-border-strong); color: var(--vela-fg-muted); }
 .vela-tm-empty {
     padding: 4px 10px 10px;
     font-size: 12px;
@@ -264,6 +274,10 @@ export interface TemplatesMenuOptions {
     onSetDefault?: (name: string | null) => void;
     /** How many charts the layout has — gates "Apply to all charts". */
     chartCount?: () => number;
+    /** TradingView's six read-only built-ins, listed under the saved templates. Applying
+     *  one always REPLACES the chart's indicators — the same contract as a saved one. */
+    builtins?: () => Array<{ id: string; name: string; description: string; count: number }>;
+    onApplyBuiltin?: (id: string) => void;
     onOpenChange?: (open: boolean) => void;
 }
 
@@ -395,13 +409,23 @@ export class TemplatesMenu {
         // ── the list ──
         const list = d.createElement('div');
         list.className = 'vela-tm-list';
+        const builtins = this.opts.builtins?.() ?? [];
         if (rows.length === 0) {
             const empty = d.createElement('div');
             empty.className = 'vela-tm-empty';
-            empty.textContent = 'No templates yet. Set the chart up the way you trade it, then save its indicators below.';
+            empty.textContent = builtins.length > 0
+                ? 'No templates of your own yet — start from a built-in below, or set the chart up and save it.'
+                : 'No templates yet. Set the chart up the way you trade it, then save its indicators below.';
             list.appendChild(empty);
         }
         for (const row of rows) list.appendChild(this.renderRow(row, house, charts));
+        if (builtins.length > 0) {
+            const group = d.createElement('div');
+            group.className = 'vela-tm-group';
+            group.textContent = 'Built-in';
+            list.appendChild(group);
+            for (const built of builtins) list.appendChild(this.renderBuiltin(built));
+        }
         card.appendChild(list);
 
         // ── save / import ──
@@ -438,6 +462,38 @@ export class TemplatesMenu {
         card.appendChild(flash);
 
         panel.replaceChildren(card);
+    }
+
+    /** A read-only built-in: apply only — no star, no kebab, no rename field. */
+    private renderBuiltin(built: { id: string; name: string; description: string; count: number }): HTMLElement {
+        const d = this.doc;
+        const wrap = d.createElement('div');
+        wrap.className = 'vela-tm-item vela-tm-builtin';
+        wrap.dataset.builtin = built.id;
+        const btn = d.createElement('button');
+        btn.type = 'button';
+        btn.className = 'vela-tm-row';
+        btn.dataset.builtin = built.id;
+        btn.setAttribute('aria-label', `Apply the built-in template ${built.name} to this chart`);
+        const glyph = d.createElement('span');
+        glyph.className = 'vela-tm-glyph vela-tm-glyph--builtin';
+        glyph.appendChild(iconEl('style-line', d));
+        const id = d.createElement('span');
+        id.className = 'vela-tm-id';
+        const name = d.createElement('span');
+        name.className = 'vela-tm-name';
+        name.textContent = built.name;
+        const meta = d.createElement('span');
+        meta.className = 'vela-tm-meta';
+        meta.textContent = `${built.description} · ${built.count} indicator${built.count === 1 ? '' : 's'}`;
+        id.append(name, meta);
+        btn.append(glyph, id);
+        btn.addEventListener('click', () => {
+            this.opts.onApplyBuiltin?.(built.id);
+            this.popover?.hide();
+        });
+        wrap.appendChild(btn);
+        return wrap;
     }
 
     private renderRow(row: TemplatesMenuRow, house: string | null, charts: number): HTMLElement {

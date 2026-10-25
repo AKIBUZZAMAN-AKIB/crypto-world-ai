@@ -10,6 +10,7 @@ import { CalloutBubble } from '../../ui/components/callout-bubble';
 import {
     IndicatorInputsDialog,
     ensureDialogStyles,
+    type IndicatorDefaultsMenuHost,
     type InputsUIChange,
 } from './IndicatorInputsDialog';
 export type { InputsUIChange } from './IndicatorInputsDialog';
@@ -60,6 +61,8 @@ interface LegendRow {
     /** Declaration-props schema + values (the settings dialog's "Properties" tab). */
     props: InputSchema[];
     propValues: Record<string, InputValue>;
+    /** The NATIVE type id — what the settings dialog's Defaults menu keys on. */
+    indicatorType?: string;
     el: HTMLElement;
     titleEl: HTMLElement;
     statusEl: HTMLElement;
@@ -284,6 +287,11 @@ export class InputsUI {
     private disposeTips(store: Map<string, Array<() => void>>, id: string): void {
         for (const dispose of store.get(id) ?? []) dispose();
         store.delete(id);
+    }
+
+    /** The shell's per-type indicator defaults (the settings dialog's Defaults menu). */
+    setDefaultsHost(host: IndicatorDefaultsMenuHost | null): void {
+        this.inputsDialog.setDefaultsHost(host);
     }
 
     setOnChange(cb: (c: InputsUIChange) => void): void {
@@ -703,7 +711,7 @@ export class InputsUI {
     }
 
     /** Create or update an indicator's legend row (in the legend for its pane). */
-    upsert(id: string, title: string, inputs: InputSchema[], values: Record<string, InputValue>, paneId = 'price', opts: { native?: boolean; beta?: boolean; props?: InputSchema[]; propValues?: Record<string, InputValue> } = {}): void {
+    upsert(id: string, title: string, inputs: InputSchema[], values: Record<string, InputValue>, paneId = 'price', opts: { native?: boolean; beta?: boolean; props?: InputSchema[]; propValues?: Record<string, InputValue>; type?: string } = {}): void {
         const existing = this.rows.get(id);
         if (existing) {
             existing.title = title;
@@ -711,6 +719,7 @@ export class InputsUI {
             existing.values = { ...values };
             existing.props = opts.props ?? [];
             existing.propValues = { ...(opts.propValues ?? {}) };
+            if (opts.type !== undefined) existing.indicatorType = opts.type;
             existing.titleEl.textContent = title;
             if (existing.paneId !== paneId) { // re-routed to a different pane
                 existing.paneId = paneId;
@@ -874,7 +883,7 @@ export class InputsUI {
         el.appendChild(controlsEl);
 
         this.attach(this.legendFor(paneId), el, !!opts.native);
-        const row: LegendRow = { id, title, inputs, values: { ...values }, props: opts.props ?? [], propValues: { ...(opts.propValues ?? {}) }, el, titleEl, statusEl, valuesEl, plotValues: [], plotValuesKey: '', showValues: null, highlighted: false, paneId, hidden: false, eyeEl, controlsEl, extrasEl, calloutsEl, callouts: [], native: !!opts.native };
+        const row: LegendRow = { id, title, inputs, values: { ...values }, props: opts.props ?? [], propValues: { ...(opts.propValues ?? {}) }, ...(opts.type !== undefined ? { indicatorType: opts.type } : {}), el, titleEl, statusEl, valuesEl, plotValues: [], plotValuesKey: '', showValues: null, highlighted: false, paneId, hidden: false, eyeEl, controlsEl, extrasEl, calloutsEl, callouts: [], native: !!opts.native };
         this.rows.set(id, row);
         this.renderCallouts(row);
         this.syncFoldToggle(); // 2+ indicators grow the fold chevron; a folded legend hides the new row too
@@ -1072,7 +1081,11 @@ export class InputsUI {
 
     private openDialog(id: string): void {
         const row = this.rows.get(id);
-        if (row) this.inputsDialog.open(row);
+        if (!row) return;
+        // How many instances of this indicator the chart carries — gates the dialog's
+        // "apply to every <title> on this chart" row, exactly as TradingView gates it.
+        const siblings = row.indicatorType ? [...this.rows.values()].filter((r) => r.indicatorType === row.indicatorType).length : 0;
+        this.inputsDialog.open({ ...row, ...(siblings > 0 ? { siblings } : {}) });
     }
 
     /** Idle legend-row fill — a translucent wash of the chart background, so the title keeps

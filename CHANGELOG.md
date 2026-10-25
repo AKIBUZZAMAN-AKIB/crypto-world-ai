@@ -6,6 +6,33 @@ All notable changes to Vela, newest first.
 
 ### Added
 
+- **Chart-settings templates — TradingView's other template, in the chart-settings
+  footer.** The settings dialog now opens with a **Templates** control where TV puts it
+  (left of Cancel/Ok, its text = the template the chart wears, or *Templates*): a row
+  applies that **appearance** (candle and background colours, grid, scales, status line —
+  never the market or the indicators), the row's star makes it the look **new charts open
+  with**, its trash arms then deletes, **Save template…** captures the chart as it is,
+  **Apply defaults** restores the factory look and **Apply to all** copies the current
+  settings onto every chart in the layout. Applying one re-seeds an open dialog instead of
+  leaving it showing what it just replaced; deleting the house template clears the house
+  pointer. Stored in the document (`appearanceTemplates`, `layoutPrefs.defaultAppearance`),
+  sanitized on the way back in, and readable from code (`appearanceTemplateList`,
+  `saveAppearanceTemplate`, `applyAppearanceTemplate`, `defaultAppearanceTemplate`).
+- **Indicator settings get Defaults ▾ — and it means it.** TradingView's footer control
+  arrives in the indicator dialog: **Save as default** stores that indicator *type*'s
+  inputs and declaration props in the document, so every **new** instance of the type —
+  any chart, any layout — opens with them (existing instances are untouched);
+  **Load saved default**, **Clear saved default**, **Apply to every <study> on this
+  chart / in the layout** (rows appear only when there are siblings) and **Reset to
+  factory defaults**. Values sanitize to primitives on restore; a script indicator keeps
+  the plain *Reset defaults* chip. Seam: `renderer.setIndicatorDefaults(host)` /
+  `ws.saveIndicatorDefault(type, inputs, props)`.
+- **TradingView's six built-in indicator templates.** *Bill Williams' 3 Lines*,
+  *Displaced EMA*, *MA Exp Ribbon* (five EMAs, 8/13/21/34/55), *Oscillators*, *Swing
+  Trading* and *Volume Based* are listed under the saved templates in the dropdown (and in
+  the phone's Templates pane), read-only: no star, no kebab, no rename field — they apply
+  like any other template, replacing the chart's indicators. Every type they name is a
+  registered native, which a unit test enforces.
 - **Chart templates, where TradingView keeps them: beside Indicators.** The topbar grows
   the templates dropdown the toolbar has always implied — the indicator set you trade
   with, saved under a name and applied anywhere. A row carries the template's indicator

@@ -273,6 +273,9 @@ export interface TopbarOptions {
         onSetDefaultTemplate?: (name: string | null) => void;
         /** Charts in the layout — gates "Apply to all charts". */
         chartCount?: () => number;
+        /** TradingView's six read-only built-ins, listed under the saved templates. */
+        builtins?: () => Array<{ id: string; name: string; description: string; count: number }>;
+        onApplyBuiltin?: (id: string) => void;
     };
     /** Optional workspace LAYOUT dropdown (rendered after the style dropdown when
      *  given) — the grid-canvas picker composing uniform grids, with the workspace
@@ -530,6 +533,8 @@ export class Topbar {
                 ...(tpl.defaultTemplate ? { defaultTemplate: () => tpl.defaultTemplate?.() ?? null } : {}),
                 ...(tpl.onSetDefaultTemplate ? { onSetDefault: (name: string | null) => tpl.onSetDefaultTemplate?.(name) } : {}),
                 ...(tpl.chartCount ? { chartCount: () => tpl.chartCount?.() ?? 1 } : {}),
+                ...(tpl.builtins ? { builtins: () => tpl.builtins?.() ?? [] } : {}),
+                ...(tpl.onApplyBuiltin ? { onApplyBuiltin: (id: string) => tpl.onApplyBuiltin?.(id) } : {}),
                 onOpenChange: (open: boolean) => btn.setAttribute('aria-expanded', String(open)),
             });
             btn.addEventListener('click', () => this.templatesMenu?.open(btn));

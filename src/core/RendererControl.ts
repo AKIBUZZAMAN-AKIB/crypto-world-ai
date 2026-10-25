@@ -274,6 +274,22 @@ export class RendererControl {
         return this;
     }
 
+    /** Hand the renderer's chart-settings dialog the shell's TEMPLATES store (TradingView's
+     *  Settings → Templates). `null` removes the control. No-op on renderers without the
+     *  seam; the templates themselves always live in the shell. */
+    setSettingsTemplates(host: import('./ports/IChartRenderer').SettingsTemplateHost | null): this {
+        this.renderer.setSettingsTemplates?.(host);
+        return this;
+    }
+
+    /** Hand the renderer's INDICATOR settings dialog the shell's per-type defaults
+     *  (TradingView's Defaults menu). `null` restores the plain "Reset defaults" chip.
+     *  No-op on renderers without the seam; the values always live in the shell. */
+    setIndicatorDefaults(host: import('./ports/IChartRenderer').IndicatorDefaultsHost | null): this {
+        this.renderer.setIndicatorDefaults?.(host);
+        return this;
+    }
+
     /**
      * Set the settings-dialog visibility policy: `hidden` lists setting ids to hide —
      * a tab (`'canvas'`), a group (`'canvas.grid'`), or a single row

@@ -72,12 +72,31 @@ try {
         const el = document.querySelector('.vela-tm');
         const r = el.getBoundingClientRect();
         const bg = getComputedStyle(el).backgroundColor;
-        return { x: r.x, y: r.y, w: r.width, h: r.height, bg, vw: innerWidth, vh: innerHeight, rows: el.querySelectorAll('.vela-tm-item').length };
+        return {
+            x: r.x,
+            y: r.y,
+            w: r.width,
+            h: r.height,
+            bg,
+            vw: innerWidth,
+            vh: innerHeight,
+            rows: el.querySelectorAll('.vela-tm-item:not(.vela-tm-builtin)').length,
+            builtins: [...el.querySelectorAll('.vela-tm-builtin .vela-tm-name')].map((n) => n.textContent),
+        };
     });
     facts.panel = box;
     assert(box.bg !== 'rgba(0, 0, 0, 0)' && box.bg !== 'transparent', 'the panel paints its own surface', box.bg);
     assert(box.x >= 0 && box.y >= 0 && box.x + box.w <= box.vw && box.y + box.h <= box.vh, 'the panel fits the viewport', box);
     assert(box.rows === 0, 'a fresh workspace has no templates yet', box.rows);
+    facts.builtins = box.builtins;
+    assert(box.builtins.join('|') === [
+        "Bill Williams' 3 Lines",
+        'Displaced EMA',
+        'MA Exp Ribbon',
+        'Oscillators',
+        'Swing Trading',
+        'Volume Based',
+    ].join('|'), 'TradingView’s six built-ins are listed, in order, read-only', box.builtins);
     await closeMenu();
 
     // ── 3. save with "remember the market", straight into the store ──────────────
@@ -166,6 +185,26 @@ try {
     facts.deleted = s;
     assert(!s.names.some((n) => n.startsWith('Second set:')), 'the second tap deletes it', s.names);
     assert(s.names.some((n) => n.startsWith('Desk set:')), 'and leaves the others alone', s.names);
+
+    // ── 7b. a BUILT-IN applies like a saved template (and is not editable) ───────
+    await openMenu();
+    const builtinRow = '.vela-tm-builtin[data-builtin="ma-exp-ribbon"] .vela-tm-row';
+    assert((await page.locator(builtinRow).count()) === 1, 'the ribbon built-in is a row of its own', builtinRow);
+    assert((await page.locator('.vela-tm-builtin .vela-tm-star, .vela-tm-builtin .vela-tm-kebab').count()) === 0, 'built-ins carry no star and no kebab — they cannot be edited', 'readonly');
+    await page.click(builtinRow);
+    await page.waitForTimeout(400);
+    const built = await page.evaluate(() => ({
+        open: !!document.querySelector('.vela-tm'),
+        emas: window.__ws.cell('a').chart.indicators().filter((h) => h.nativeType === 'ema').length,
+        lengths: window.__ws
+            .cell('a')
+            .chart.indicators()
+            .filter((h) => h.nativeType === 'ema')
+            .map((h) => h.inputValues().length),
+    }));
+    facts.builtinApplied = built;
+    assert(built.open === false, 'the menu closes after applying', built.open);
+    assert(built.emas === 5 && built.lengths.join(',') === '8,13,21,34,55', 'the ribbon lands as five EMAs at 8/13/21/34/55', built);
 
     // ── 8. Escape closes and gives focus back to the button ──────────────────────
     await closeMenu();

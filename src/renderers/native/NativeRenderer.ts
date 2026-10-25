@@ -16,6 +16,8 @@ import type {
     DataWindowOHLC,
     DataWindowGroup,
     DataWindowReadout,
+    SettingsTemplateHost,
+    IndicatorDefaultsHost,
 } from '../../core/ports/IChartRenderer';
 import type { VelaTheme } from '../../core/options';
 import type { OHLCV } from '../../core/model/ohlcv';
@@ -61,7 +63,7 @@ import { PriceAxisTickSource } from './chrome/priceAxisTicks';
 import { LabelTooltip } from './chrome/LabelTooltip';
 import { AXIS_MASTER_W, AXIS_MERGED_W, axisCompact, axisMasterWidth } from './chrome/axisLayout';
 import { CrosshairRenderer } from './chrome/CrosshairRenderer';
-import { SettingsDialog } from './chrome/SettingsDialog';
+import { SettingsDialog, type SettingsTemplatesHost } from './chrome/SettingsDialog';
 import { UserDrawingController } from './drawings/UserDrawingController';
 import { IndicatorDrawingSlices, mergeSlices } from './drawings/IndicatorDrawingSlices';
 import { createProjector } from './drawings/Projector';
@@ -399,6 +401,11 @@ export class NativeRenderer implements IChartRenderer {
     /** First-run config snapshot — what "Reset defaults" restores. */
     private factoryConfig: ChartConfig | null = null;
     private hostSettingsSections: HostSettingsSection[] = [];
+    /** The shell's chart-settings templates store, adapted for the dialog (see
+     *  {@link setSettingsTemplates}). */
+    private settingsTemplates: SettingsTemplateHost | null = null;
+    /** The shell's per-TYPE indicator defaults (the indicator dialog's Defaults menu). */
+    private indicatorDefaults: IndicatorDefaultsHost | null = null;
     private readonly clickCbs = new Set<(e: ClickEvent) => void>();
     private readonly axisLongPressCbs = new Set<(e: AxisLongPressEvent) => void>();
     private readonly inputChangeCbs = new Set<(e: InputChangeEvent) => void>();
@@ -1104,7 +1111,10 @@ export class NativeRenderer implements IChartRenderer {
                 this.plot.appendChild(this.settingsButton);
             }
             if (this.settingsButton) this.settingsButton.style.display = 'flex';
-            if (this.plot && !this.settingsDialog) this.settingsDialog = new SettingsDialog(this.dialogHost ?? this.plot, this.theme);
+            if (this.plot && !this.settingsDialog) {
+                this.settingsDialog = new SettingsDialog(this.dialogHost ?? this.plot, this.theme);
+                this.settingsDialog.setTemplateHost(this.dialogTemplates());
+            }
         } else {
             this.settingsButton?.style.setProperty('display', 'none');
             this.settingsDialog?.close();
@@ -1149,6 +1159,7 @@ export class NativeRenderer implements IChartRenderer {
         if (!this.settingsDialog && this.plot) {
             this.settingsDialog = new SettingsDialog(this.dialogHost ?? this.plot, this.theme);
             this.settingsDialog.setLayoutMode(this.layoutMode);
+            this.settingsDialog.setTemplateHost(this.dialogTemplates());
         }
         this.toggleSettingsDialog(section);
     }
@@ -1730,6 +1741,7 @@ export class NativeRenderer implements IChartRenderer {
         this.inputsUI.setTitlesVisible(this.indicatorTitlesOn); // a remount keeps the toggle state
         this.inputsUI.setValuesVisible(this.indicatorValuesOn);
         this.inputsUI.setDialogHost(this.dialogHost);
+        this.inputsUI.setDefaultsHost(this.indicatorDefaults);
         this.inputsUI.setSymbolPicker(this.symbolPicker);
         this.inputsUI.setLegendActions(this.legendActionsProvider);
         this.inputsUI.setLegendCallouts(this.legendCalloutsProvider);
@@ -2311,6 +2323,7 @@ export class NativeRenderer implements IChartRenderer {
             this.inputsUI.upsert(model.id, model.shorttitle ?? model.title, model.inputs, model.inputValues, model.paneId, {
                 native: !!model.native,
                 ...(model.props ? { props: model.props, propValues: model.propValues ?? {} } : {}),
+                ...(model.native?.type ? { type: model.native.type } : {}),
             });
         }
         if (model.native?.type === 'volume') {
@@ -2485,6 +2498,46 @@ export class NativeRenderer implements IChartRenderer {
     setSettingsSections(sections: HostSettingsSection[]): void {
         this.hostSettingsSections = sections;
         this.settingsDialog?.setHostSections(sections);
+    }
+
+    /**
+     * The shell's chart-settings TEMPLATES. The dialog gets an adapter: every verb is the
+     * shell's, and each one that moves the chart's settings re-seeds the OPEN dialog from
+     * the live config — a template landing must repaint the controls, not leave them
+     * showing the settings it just replaced.
+     */
+    setSettingsTemplates(host: SettingsTemplateHost | null): void {
+        this.settingsTemplates = host;
+        this.settingsDialog?.setTemplateHost(this.dialogTemplates());
+    }
+
+    /**
+     * The shell's per-type indicator DEFAULTS. Stored here only so the inputs dialog can be
+     * handed the adapter on every chrome rebuild; the shell owns the values.
+     */
+    setIndicatorDefaults(host: IndicatorDefaultsHost | null): void {
+        this.indicatorDefaults = host;
+        this.inputsUI?.setDefaultsHost(host);
+    }
+
+    private dialogTemplates(): SettingsTemplatesHost | null {
+        const h = this.settingsTemplates;
+        if (!h) return null;
+        return {
+            list: () => h.list(),
+            activeName: () => h.activeName(),
+            defaultName: () => h.defaultName(),
+            setDefault: (name) => h.setDefault(name),
+            apply: (name, target) => {
+                h.apply(name, target);
+                this.settingsDialog?.refresh(this.getConfig());
+            },
+            save: (name) => h.save(name),
+            remove: (name) => h.remove(name),
+            applyToAll: () => h.applyToAll(),
+            chartCount: () => h.chartCount(),
+            changed: () => this.settingsDialog?.refresh(this.getConfig()),
+        };
     }
 
     setSettingsVisibility(policy: { hidden?: readonly string[] }): void {

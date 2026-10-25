@@ -16,7 +16,7 @@ import {
 } from '../../../chart-types/registry';
 import { iconAt } from '../../../core/icons';
 import { TIMEZONES, tzMenuLabel, normalizeTimezone } from '../../../core/timezones';
-import { closeOpenPopovers } from '../../../ui/components/popover';
+import { closeOpenPopovers, Popover } from '../../../ui/components/popover';
 import { closeWidthPopover } from '../../../ui/components/glyph-select';
 import { Dialog } from '../../../ui/components/dialog';
 import { overlayScrollbarCss } from '../../../ui/styles';
@@ -103,7 +103,7 @@ function styleLabel(id: string): string {
 }
 
 const SD_STYLE_ID = 'vela-settings-controls';
-const SD_STYLE_REV = '6';
+const SD_STYLE_REV = '7';
 
 /**
  * The dialog's surface palette. It follows the STABLE chrome surface (the tokens written on
@@ -201,8 +201,56 @@ ${overlayScrollbarCss('.vela-sd-pane')}
    alignment device; on mobile the trigger hugs its value instead (the grid's control
    column is max-content), capped so a long option still ellipsizes before the label. */
 .vela-sd-mobile .vela-select-trigger .vela-select-label{white-space:nowrap !important;}
-.vela-sd-mobile .vela-select:not([data-fill]){width:auto;min-width:100px;max-width:min(220px,55vw);}`;
+.vela-sd-mobile .vela-select:not([data-fill]){width:auto;min-width:100px;max-width:min(220px,55vw);}
+/* ── Templates (chart settings): TradingView's dropdown in the dialog footer ──
+   The surface, edge and lift belong to the panel: the kit popover is a transparent
+   positioner, so without these the chart reads straight through the menu. */
+.vela-sd-tplbtn{display:inline-flex;align-items:center;gap:6px;max-width:46vw;}
+.vela-sd-tplbtn .vela-sd-tplname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.vela-sd-tplbtn[data-open='1']{background:var(--vela-hover);border-color:var(--vela-border-strong);color:var(--vela-fg-bright);}
+.vela-sd-applyall{margin-left:auto;}
+.vela-sd-tpl{width:274px;max-height:min(70vh,460px);overflow-y:auto;overscroll-behavior:contain;padding:6px;box-sizing:border-box;color:var(--vela-fg);font-size:13px;background:var(--vela-surface-elev);border:1px solid var(--vela-border-strong);border-radius:12px;box-shadow:var(--vela-shadow-dialog);}
+.vela-sd-tpl-head{padding:7px 8px 5px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--vela-fg-muted);}
+.vela-sd-tpl-list{display:flex;flex-direction:column;gap:1px;}
+.vela-sd-tpl-item{display:flex;align-items:center;border-radius:7px;}
+.vela-sd-tpl-item:hover{background:var(--vela-hover);}
+.vela-sd-tpl-row{all:unset;box-sizing:border-box;flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:7px;cursor:pointer;font-size:12.5px;}
+.vela-sd-tpl-row:focus-visible{outline:2px solid var(--vela-accent);outline-offset:-2px;}
+.vela-sd-tpl-tick{flex:none;display:grid;place-items:center;width:14px;height:14px;color:var(--vela-accent);}
+.vela-sd-tpl-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--vela-fg-bright);}
+.vela-sd-tpl-del{all:unset;flex:none;display:grid;place-items:center;width:26px;height:26px;margin-right:3px;border-radius:6px;color:var(--vela-fg-muted);cursor:pointer;}
+.vela-sd-tpl-del:hover,.vela-sd-tpl-del[data-armed='1']{background:var(--vela-hover-strong);color:var(--vela-down,#e5484d);}
+.vela-sd-tpl-empty{padding:2px 8px 6px;font-size:12px;line-height:1.45;color:var(--vela-fg-muted);}
+.vela-sd-tpl-sep{height:1px;margin:5px 6px;background:var(--vela-border);}
+.vela-sd-tpl-act{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;height:30px;padding:0 8px;border-radius:7px;font-size:12.5px;color:var(--vela-fg);cursor:pointer;}
+.vela-sd-tpl-act:hover{background:var(--vela-hover);}
+.vela-sd-tpl-act:focus-visible{outline:2px solid var(--vela-accent);outline-offset:-2px;}
+.vela-sd-tpl-glyph{flex:none;display:grid;place-items:center;width:14px;height:14px;color:var(--vela-fg-muted);}
+.vela-sd-tpl-form{display:flex;gap:6px;padding:2px 6px 4px;}
+.vela-sd-tpl-input{flex:1 1 auto;min-width:0;height:30px;padding:0 8px;border:1px solid var(--vela-border-strong);border-radius:6px;background:var(--vela-surface);color:var(--vela-fg-bright);font:inherit;font-size:12.5px;}
+.vela-sd-tpl-input:focus-visible{outline:2px solid var(--vela-accent);outline-offset:-1px;}
+.vela-sd-tpl-ok{flex:none;height:30px;padding:0 12px;border:none;border-radius:6px;background:var(--vela-accent);color:var(--vela-fg-on-fill);font:inherit;font-weight:600;cursor:pointer;}
+.vela-sd-tpl-flash{min-height:15px;margin:2px 8px 3px;font-size:11.5px;color:var(--vela-fg-muted);}
+.vela-sd-tpl-flash[data-tone='ok']{color:var(--vela-up);}
+.vela-sd-tpl-flash[data-tone='bad']{color:var(--vela-down,#e5484d);}`;
     if (!existing) document.head.appendChild(st);
+}
+
+/** The shell's chart-settings TEMPLATES, as the dialog uses them (TradingView's
+ *  Settings → Templates). The dialog owns no templates: it renders the menu and calls
+ *  these. `changed` tells it the chart's settings moved outside the dialog (a template
+ *  landed), so an OPEN dialog re-seeds instead of showing what it just replaced. */
+export interface SettingsTemplatesHost {
+    list(): Array<{ name: string; active: boolean }>;
+    activeName(): string | null;
+    defaultName(): string | null;
+    setDefault(name: string | null): void;
+    apply(name: string, target: 'this' | 'all'): void;
+    save(name: string): boolean;
+    remove(name: string): void;
+    applyToAll(): void;
+    chartCount(): number;
+    changed(): void;
 }
 
 export class SettingsDialog {
@@ -211,6 +259,16 @@ export class SettingsDialog {
     private onChange: ((patch: ConfigPatch) => void) | null = null;
     private onImport: ((json: unknown) => void) | null = null;
     private onReset: (() => void) | null = null;
+    /** The shell's templates store (null on a lone chart: the dialog shows no Templates
+     *  control and keeps its plain "Reset defaults" button). */
+    private templateHost: SettingsTemplatesHost | null = null;
+    private templatePop: Popover | null = null;
+    private templateBtn: HTMLButtonElement | null = null;
+    /** Inline feedback inside the Templates menu, cleared on the next render. */
+    private templateFlash: { text: string; tone?: 'ok' | 'bad' } | null = null;
+    /** Save-as form unfolded, and the template whose delete is armed (one at a time). */
+    private templateSaving = false;
+    private templateArmed: string | null = null;
     private config: ChartConfig | null = null;
     private syncTypeTabs: ((style: string) => void) | null = null;
     private hostSections: HostSettingsSection[] = [];
@@ -244,6 +302,283 @@ export class SettingsDialog {
     /** Host-app sections (e.g. the widget's Status line tab) — re-shown on next open. */
     setHostSections(sections: HostSettingsSection[]): void {
         this.hostSections = sections;
+    }
+
+    /**
+     * The shell's chart-settings TEMPLATES (TradingView's Settings → Templates). Called
+     * before the dialog opens; while it is open the footer already carries the control, so
+     * only the label needs re-reading.
+     */
+    setTemplateHost(host: SettingsTemplatesHost | null): void {
+        this.templateHost = host;
+        this.refreshTemplateLabel();
+    }
+
+    /** The footer's plain reset button — the whole control on a chart with no templates. */
+    private resetControl(label: string): HTMLButtonElement {
+        const resetBtn = document.createElement('button');
+        resetBtn.type = 'button';
+        resetBtn.textContent = label;
+        resetBtn.className = 'vela-sd-btn vela-sd-reset';
+        resetBtn.addEventListener('click', () => this.onReset?.());
+        return resetBtn;
+    }
+
+    private applyAllControl(host: SettingsTemplatesHost): HTMLButtonElement {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'vela-sd-btn vela-sd-applyall';
+        btn.textContent = 'Apply to all';
+        btn.title = 'Copy this chart’s settings onto every chart in the layout';
+        btn.addEventListener('click', () => {
+            host.applyToAll();
+            host.changed();
+        });
+        return btn;
+    }
+
+    /** The Templates dropdown itself: a labelled button whose text IS the current template. */
+    private templatesControl(host: SettingsTemplatesHost): HTMLButtonElement {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'vela-sd-btn vela-sd-tplbtn';
+        btn.setAttribute('aria-haspopup', 'dialog');
+        btn.setAttribute('aria-expanded', 'false');
+        const name = document.createElement('span');
+        name.className = 'vela-sd-tplname';
+        name.textContent = host.activeName() ?? 'Templates';
+        const caret = document.createElement('span');
+        caret.className = 'vela-sd-tpl-glyph';
+        caret.innerHTML = iconAt('chevron-down', 14);
+        btn.append(name, caret);
+        const label = host.activeName();
+        btn.title = label ? `Template: ${label}` : 'Chart templates';
+        btn.addEventListener('click', () => this.openTemplates(btn, host));
+        return btn;
+    }
+
+    private refreshTemplateLabel(): void {
+        const btn = this.templateBtn;
+        const host = this.templateHost;
+        if (!btn || !host) return;
+        const label = host.activeName();
+        const span = btn.querySelector('.vela-sd-tplname');
+        if (span) span.textContent = label ?? 'Templates';
+        btn.title = label ? `Template: ${label}` : 'Chart templates';
+    }
+
+    private openTemplates(anchor: HTMLElement, host: SettingsTemplatesHost): void {
+        if (this.templatePop) {
+            this.closeTemplates();
+            return;
+        }
+        closeOpenPopovers();
+        this.templateFlash = null;
+        this.templateSaving = false;
+        this.templateArmed = null;
+        const pop = new Popover({
+            trigger: anchor,
+            host: this.container,
+            gap: 6,
+            align: 'start',
+            content: (body) => this.renderTemplates(body, host),
+            onClose: () => {
+                this.templatePop = null;
+                this.templateSaving = false;
+                this.templateArmed = null;
+                anchor.dataset.open = '0';
+                anchor.setAttribute('aria-expanded', 'false');
+            },
+        });
+        this.templatePop = pop;
+        anchor.dataset.open = '1';
+        anchor.setAttribute('aria-expanded', 'true');
+        pop.show();
+    }
+
+    private closeTemplates(): void {
+        this.templatePop?.hide();
+    }
+
+    private renderTemplates(body: HTMLElement, host: SettingsTemplatesHost): void {
+        const rows = host.list();
+        const active = host.activeName();
+        const house = host.defaultName();
+        const card = document.createElement('div');
+        card.className = 'vela-sd-tpl';
+
+        const head = document.createElement('div');
+        head.className = 'vela-sd-tpl-head';
+        head.textContent = 'Chart templates';
+        card.appendChild(head);
+
+        const list = document.createElement('div');
+        list.className = 'vela-sd-tpl-list';
+        if (rows.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'vela-sd-tpl-empty';
+            empty.textContent = 'No templates yet. Style the chart, then save the look under a name.';
+            list.appendChild(empty);
+        }
+        for (const row of rows) {
+            const item = document.createElement('div');
+            item.className = 'vela-sd-tpl-item';
+            item.dataset.name = row.name;
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'vela-sd-tpl-row';
+            btn.dataset.name = row.name;
+            btn.setAttribute('aria-label', `Apply the template ${row.name}`);
+            const tick = document.createElement('span');
+            tick.className = 'vela-sd-tpl-tick';
+            if (row.active) tick.innerHTML = iconAt('check', 14);
+            const name = document.createElement('span');
+            name.className = 'vela-sd-tpl-name';
+            name.textContent = row.name;
+            btn.append(tick, name);
+            if (house === row.name) {
+                const badge = document.createElement('span');
+                badge.className = 'vela-sd-tpl-name';
+                badge.style.cssText = 'flex:none;font-size:10.5px;font-weight:600;color:var(--vela-accent);';
+                badge.textContent = 'default';
+                btn.appendChild(badge);
+            }
+            btn.addEventListener('click', () => {
+                host.apply(row.name, 'this');
+                this.templateFlash = { text: `Applied “${row.name}”`, tone: 'ok' };
+                this.templateArmed = null;
+                this.renderTemplates(body, host);
+                this.refreshTemplateLabel();
+            });
+
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'vela-sd-tpl-del';
+            const armed = this.templateArmed === row.name;
+            if (armed) del.dataset.armed = '1';
+            del.title = armed ? 'Press again to delete' : `Delete ${row.name}`;
+            del.setAttribute('aria-label', armed ? `Delete ${row.name} — press again to confirm` : `Delete ${row.name}`);
+            del.innerHTML = iconAt('trash', 14);
+            del.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.templateArmed !== row.name) {
+                    this.templateArmed = row.name;
+                    this.templateFlash = null;
+                    this.renderTemplates(body, host);
+                    return;
+                }
+                this.templateArmed = null;
+                host.remove(row.name);
+                this.templateFlash = { text: `“${row.name}” deleted`, tone: 'ok' };
+                this.renderTemplates(body, host);
+                this.refreshTemplateLabel();
+            });
+
+            item.append(btn, del);
+            list.appendChild(item);
+        }
+        card.appendChild(list);
+
+        const sep = document.createElement('div');
+        sep.className = 'vela-sd-tpl-sep';
+        card.appendChild(sep);
+
+        if (this.templateSaving) {
+            const form = document.createElement('div');
+            form.className = 'vela-sd-tpl-form';
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'vela-sd-tpl-input';
+            input.placeholder = 'Template name';
+            input.maxLength = 40;
+            input.setAttribute('aria-label', 'Save chart settings as a template');
+            const ok = document.createElement('button');
+            ok.type = 'button';
+            ok.className = 'vela-sd-tpl-ok';
+            ok.textContent = 'Save';
+            const commit = (): void => {
+                const next = input.value.trim();
+                if (!next) {
+                    input.focus();
+                    return;
+                }
+                const saved = host.save(next);
+                this.templateSaving = false;
+                this.templateFlash = saved
+                    ? { text: `Saved “${next}”`, tone: 'ok' }
+                    : { text: 'That name is taken', tone: 'bad' };
+                this.renderTemplates(body, host);
+                this.refreshTemplateLabel();
+            };
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') commit();
+            });
+            ok.addEventListener('click', commit);
+            form.append(input, ok);
+            card.appendChild(form);
+            setTimeout(() => input.focus(), 0);
+        } else {
+            const save = this.templateAction('plus', 'Save as template…', () => {
+                this.templateSaving = true;
+                this.templateArmed = null;
+                this.templateFlash = null;
+                this.renderTemplates(body, host);
+            });
+            save.dataset.save = '1';
+            card.appendChild(save);
+        }
+
+        // The house template: what a NEW chart opens with. TV hangs it off the template
+        // name; here the active template's own row states the choice.
+        if (active && host.setDefault) {
+            const isHouse = house === active;
+            const label = isHouse ? `Stop starting new charts with “${active}”` : `Start new charts with “${active}”`;
+            const star = this.templateAction(isHouse ? 'star-filled' : 'star', label, () => {
+                host.setDefault(isHouse ? null : active);
+                this.templateFlash = isHouse
+                    ? { text: 'New charts will open with the factory look', tone: 'ok' }
+                    : { text: `New charts will start with “${active}”`, tone: 'ok' };
+                this.renderTemplates(body, host);
+            });
+            star.dataset.house = '1';
+            card.appendChild(star);
+        }
+
+        const defaults = this.templateAction('reset', 'Apply defaults', () => {
+            this.onReset?.();
+            this.templateFlash = { text: 'Defaults restored', tone: 'ok' };
+            this.renderTemplates(body, host);
+            this.refreshTemplateLabel();
+        });
+        defaults.dataset.defaults = '1';
+        card.appendChild(defaults);
+
+        const flash = document.createElement('div');
+        flash.className = 'vela-sd-tpl-flash';
+        flash.setAttribute('role', 'status');
+        flash.setAttribute('aria-live', 'polite');
+        if (this.templateFlash) {
+            flash.textContent = this.templateFlash.text;
+            if (this.templateFlash.tone) flash.dataset.tone = this.templateFlash.tone;
+        }
+        card.appendChild(flash);
+
+        body.replaceChildren(card);
+    }
+
+    private templateAction(icon: string, label: string, run: () => void): HTMLButtonElement {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'vela-sd-tpl-act';
+        const glyph = document.createElement('span');
+        glyph.className = 'vela-sd-tpl-glyph';
+        glyph.innerHTML = iconAt(icon, 14);
+        const text = document.createElement('span');
+        text.textContent = label;
+        btn.append(glyph, text);
+        btn.addEventListener('click', run);
+        return btn;
     }
 
     /** The timeline-mark groups and their current visibility — the Events tab's rows on next open. */
@@ -361,13 +696,19 @@ export class SettingsDialog {
             headerStart: burger,
             closeOnBackdrop: true,
             footer: (foot) => {
-                foot.style.cssText = `padding:10px 14px;display:flex;align-items:center;justify-content:flex-start;gap:8px;`;
-                const resetBtn = document.createElement('button');
-                resetBtn.type = 'button';
-                resetBtn.textContent = 'Reset defaults';
-                resetBtn.className = 'vela-sd-btn';
-                resetBtn.addEventListener('click', () => this.onReset?.());
-                foot.appendChild(resetBtn);
+                // Wraps: on a phone the footer carries the Templates control, Apply to all
+                // and the reset verb, and a 360px dialog cannot hold three labels in one row.
+                foot.style.cssText = `padding:10px 14px;display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-start;gap:8px;`;
+                const tpl = this.templateHost;
+                if (tpl) {
+                    // TradingView's chart settings carry the TEMPLATES dropdown at the
+                    // footer's left; "Apply to all" rides the right edge of the same row.
+                    this.templateBtn = this.templatesControl(tpl);
+                    foot.appendChild(this.templateBtn);
+                    if (tpl.chartCount() > 1) foot.appendChild(this.applyAllControl(tpl));
+                } else {
+                    foot.appendChild(this.resetControl('Reset defaults'));
+                }
             },
             // A close signal may only close ITS OWN dialog: the machine reports the exit
             // asynchronously, so a close-then-reopen in one tick would otherwise see the
@@ -379,6 +720,9 @@ export class SettingsDialog {
 
         this.root = ui.positioner;
         this.ui = ui;
+        this.templateSaving = false;
+        this.templateArmed = null;
+        this.templateFlash = null;
         const panes = this.buildContent(ui, config, section, mobile);
         ui.show();
         this.layoutPanes(panes);

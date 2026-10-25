@@ -113,6 +113,11 @@ export const DIALOG_CSS = `
 .vela-dialog-btn:hover { background: var(--vela-hover); color: var(--vela-fg-bright); border-color: var(--vela-fg-muted); }
 .vela-dialog-btn-primary { border-color: var(--vela-selected-bg); background: var(--vela-selected-bg); color: var(--vela-selected-fg); }
 .vela-dialog-btn-primary:hover { background: var(--vela-selected-bg); color: var(--vela-selected-fg); opacity: 0.85; border-color: var(--vela-selected-bg); }
+/* Touch: a dialog's footer actions are the last thing a thumb reaches for, and 34px is
+   under the 44px every platform's guidance asks for. The chip grows, it does not move. */
+@media (pointer: coarse) {
+    .vela-dialog-footer .vela-dialog-btn { height: auto; min-height: 44px; padding: 0 14px; }
+}
 ${overlayScrollbarCss('.vela-dialog-body')}
 /* Scrollers NESTED in a dialog (a flush body's grid, a tab pane) get the same thin
    overlay bars — the two-class selectors below stay overridable by more specific

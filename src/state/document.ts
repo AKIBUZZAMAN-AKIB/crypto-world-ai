@@ -186,6 +186,27 @@ export interface SavedPriceAlert {
     source?: { drawingId: string };
 }
 
+/** One indicator TYPE's saved defaults — TradingView's indicator settings → Defaults →
+ *  "Save as default": the inputs (and declaration props) every NEW instance of that type
+ *  mounts with. Keyed by the indicator's type id, so it travels across symbols, charts
+ *  and layouts with the document instead of dying with one chart. */
+export interface IndicatorDefault {
+    /** Input overrides only — absent keys keep the indicator's declared `defval`. */
+    inputs?: Record<string, number | string | boolean>;
+    /** Declaration-prop overrides (`precision`, a strategy's capital, …). */
+    props?: Record<string, number | string | boolean>;
+}
+
+/** One saved APPEARANCE template — the chart-settings document TradingView's Templates
+ *  dropdown stores: colors, grid, scales, status line. The market and the indicators are
+ *  NOT part of it (those belong to a layout, or to a chart/indicator template). */
+export interface AppearanceTemplate {
+    version: 1;
+    /** The renderer's config document, applied through `applyConfig` (tolerant of fields
+     *  a newer build does not know). */
+    config: Record<string, unknown>;
+}
+
 export interface WorkspaceState {
     version: 1;
     /** The layout id — always `'1'` for a widget. Restoring an id that is not
@@ -228,6 +249,8 @@ export interface WorkspaceState {
         autosave?: boolean;
         /** Template applied to charts that are NEW (not restored): a house style. */
         defaultTemplate?: string;
+        /** APPEARANCE template charts that are NEW open with (chart settings → Templates). */
+        defaultAppearance?: string;
     };
     /**
      * Saved chart TEMPLATES — indicator sets with their settings, no drawings (Vela's
@@ -236,6 +259,17 @@ export interface WorkspaceState {
      * optionally (the symbol/timeframe chips are off by default, as in TradingView).
      */
     templates?: Record<string, ChartTemplate>;
+    /**
+     * INDICATOR defaults, by indicator type id — what "Save as default" in the indicator
+     * settings dialog writes and every new instance of that type opens with.
+     */
+    indicatorDefaults?: Record<string, IndicatorDefault>;
+    /**
+     * CHART-SETTINGS templates — the chart's appearance (colors, grid, scales, status
+     * line) saved under a name; the market and the indicators are not part of one.
+     * Keyed by name.
+     */
+    appearanceTemplates?: Record<string, AppearanceTemplate>;
     /**
      * PRICE ALERTS — the level/watch rows the user armed, per chart. Persisted because an
      * alert is a decision the trader made about a market, not a session artifact: a reload
@@ -432,6 +466,10 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
     if (layoutMeta) out.layoutMeta = layoutMeta;
     const templates = sanitizeTemplates(d.templates);
     if (templates) out.templates = templates;
+    const appearance = sanitizeAppearanceTemplates(d.appearanceTemplates);
+    if (appearance) out.appearanceTemplates = appearance;
+    const indicatorDefaults = sanitizeIndicatorDefaults(d.indicatorDefaults);
+    if (indicatorDefaults) out.indicatorDefaults = indicatorDefaults;
     const prefs = sanitizeLayoutPrefs(d.layoutPrefs);
     if (prefs) out.layoutPrefs = prefs;
     if (Array.isArray(d.watchlist)) {
@@ -487,12 +525,71 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
  * remote URL (a stored `http://…` would beacon the user's view to a third party on every
  * picker open) and never unbounded (a 4 MB data URL would eat the whole storage budget).
  */
+/**
+ * Appearance templates: a name plus a config OBJECT. The config is deliberately not
+ * validated field by field — `applyConfig` ignores what it does not know, so a template
+ * written by an older or newer build still lands instead of being dropped here.
+ */
+function sanitizeAppearanceTemplates(raw: unknown): Record<string, AppearanceTemplate> | null {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const out: Record<string, AppearanceTemplate> = {};
+    let kept = 0;
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+        const name = key.trim().slice(0, 40);
+        if (!name || value == null || typeof value !== 'object' || Array.isArray(value)) continue;
+        const cfg = (value as { config?: unknown }).config;
+        if (cfg == null || typeof cfg !== 'object' || Array.isArray(cfg)) continue;
+        out[name] = { version: 1, config: cfg as Record<string, unknown> };
+        kept += 1;
+        if (kept >= 40) break;
+    }
+    return kept > 0 ? out : null;
+}
+
+/**
+ * Indicator defaults: a type id plus a bag of PRIMITIVES. Anything else (a nested object, an
+ * array, a function that survived a JSON round-trip as something odd) is dropped rather than
+ * handed to `setInputs`, which would take it straight into a running study.
+ */
+function sanitizeIndicatorDefaults(raw: unknown): Record<string, IndicatorDefault> | null {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const bag = (value: unknown): Record<string, number | string | boolean> | null => {
+        if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
+        const out: Record<string, number | string | boolean> = {};
+        for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+            const name = key.trim();
+            if (!name || name.length > 60) continue;
+            if (typeof v === 'number' && Number.isFinite(v)) out[name] = v;
+            else if (typeof v === 'string') out[name] = v.slice(0, 200);
+            else if (typeof v === 'boolean') out[name] = v;
+        }
+        return Object.keys(out).length > 0 ? out : null;
+    };
+    const out: Record<string, IndicatorDefault> = {};
+    let kept = 0;
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+        const type = key.trim().slice(0, 60);
+        if (!type || value == null || typeof value !== 'object' || Array.isArray(value)) continue;
+        const entry: IndicatorDefault = {};
+        const inputs = bag((value as { inputs?: unknown }).inputs);
+        const props = bag((value as { props?: unknown }).props);
+        if (inputs) entry.inputs = inputs;
+        if (props) entry.props = props;
+        if (!entry.inputs && !entry.props) continue;
+        out[type] = entry;
+        kept += 1;
+        if (kept >= 200) break;
+    }
+    return kept > 0 ? out : null;
+}
+
 function sanitizeLayoutPrefs(raw: unknown): WorkspaceState['layoutPrefs'] | null {
     if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const p = raw as Record<string, unknown>;
     const out: NonNullable<WorkspaceState['layoutPrefs']> = {};
     if (typeof p.autosave === 'boolean') out.autosave = p.autosave;
     if (typeof p.defaultTemplate === 'string' && p.defaultTemplate.trim()) out.defaultTemplate = p.defaultTemplate.trim().slice(0, 40);
+    if (typeof p.defaultAppearance === 'string' && p.defaultAppearance.trim()) out.defaultAppearance = p.defaultAppearance.trim().slice(0, 40);
     return Object.keys(out).length > 0 ? out : null;
 }
 

@@ -165,6 +165,12 @@ export class Popover {
             markPopoverDismiss(ev);
             this.hide();
         };
+        // Window CAPTURE, not document: a dialog nested underneath listens for Escape on
+        // `document` (the kit dialog machine does), and stopping the event at the document
+        // in capture does not stop another listener registered on that same node. Claiming
+        // it one node earlier — window is the first stop of every capture pass — makes the
+        // top-most surface the only one Escape closes. Escape twice: the popover, then the
+        // dialog, exactly like TradingView.
         const onKey = (ev: KeyboardEvent): void => {
             if (ev.key !== 'Escape') return;
             ev.preventDefault();
@@ -178,7 +184,7 @@ export class Popover {
         setTimeout(() => {
             if (this.onOutside === onOutside) document.addEventListener('pointerdown', onOutside, true);
         }, 0);
-        document.addEventListener('keydown', onKey, true);
+        window.addEventListener('keydown', onKey, true);
         window.addEventListener('resize', onReflow, true);
         // A scroll anywhere (dialog body, chart container) moves the trigger while the
         // popover is fixed — re-place so the shell tracks it instead of detaching.
@@ -197,7 +203,7 @@ export class Popover {
         this.shown = false;
         announceSurface(this.el, false, 'popover', this.trigger);
         if (this.onOutside) document.removeEventListener('pointerdown', this.onOutside, true);
-        if (this.onKey) document.removeEventListener('keydown', this.onKey, true);
+        if (this.onKey) window.removeEventListener('keydown', this.onKey, true);
         if (this.onReflow) {
             window.removeEventListener('resize', this.onReflow, true);
             document.removeEventListener('scroll', this.onReflow, true);

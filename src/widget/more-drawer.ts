@@ -292,6 +292,7 @@ const CSS = `
 /* The group chip: the ACTIVE chart's mark for this link, and its own tap target. */
 .vela-md-chip:active { background: var(--vela-hover); }
 .vela-md-hint { padding: 2px 2px 8px; font-size: 12px; line-height: 1.4; color: var(--vela-fg-muted); }
+.vela-md-lgroup { margin: 12px 2px 6px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--vela-fg-muted); }
 /* ── Layout setup: the hero card + the sticky two-stop nav ─────────────────────── */
 .vela-md-hero {
     display: flex;
@@ -1060,6 +1061,9 @@ export interface MoreDrawerOptions {
         onSaveLayoutWithThumb?: (name: string) => boolean;
         /** Chart templates (indicator sets; drawings never travel). */
         templates?: () => Array<{ name: string; count: number; symbol?: string; timeframe?: string }>;
+        /** TradingView's six built-ins, listed under the saved ones (apply only). */
+        builtins?: () => Array<{ id: string; name: string; description: string; count: number }>;
+        onApplyBuiltin?: (id: string) => void;
         onSaveTemplate?: (name: string, includeMarket: boolean) => boolean;
         onApplyTemplate?: (name: string, target: 'active' | 'all') => number;
         onDeleteTemplate?: (name: string) => void;
@@ -2530,6 +2534,38 @@ export class MoreDrawer {
                         ...(layout.onDeleteTemplate ? [{ label: 'Delete', danger: true, run: () => { this.openRow = null; layout.onDeleteTemplate?.(t.name); this.render(); } }] : []),
                     ]),
                 );
+            }
+        }
+
+        const builtins = layout.builtins?.() ?? [];
+        if (builtins.length > 0) {
+            const head = doc.createElement('div');
+            head.className = 'vela-md-lgroup';
+            head.textContent = 'Built-in';
+            pane.appendChild(head);
+            for (const b of builtins) {
+                const row = doc.createElement('div');
+                row.className = 'vela-md-lrow';
+                row.dataset.builtin = b.id;
+                const main = doc.createElement('button');
+                main.type = 'button';
+                main.className = 'vela-md-lmain';
+                main.setAttribute('aria-label', `Apply the built-in template ${b.name} to this chart`);
+                const text = doc.createElement('span');
+                text.className = 'vela-md-ltext';
+                const name = doc.createElement('b');
+                name.textContent = b.name;
+                const meta = doc.createElement('small');
+                meta.className = 'vela-md-lmeta';
+                meta.textContent = `${b.description} · ${b.count} indicator${b.count === 1 ? '' : 's'} · tap to apply`;
+                text.append(name, meta);
+                main.appendChild(text);
+                main.addEventListener('click', () => {
+                    layout.onApplyBuiltin?.(b.id);
+                    this.drawer.hide();
+                });
+                row.appendChild(main);
+                pane.appendChild(row);
             }
         }
 

@@ -30,6 +30,11 @@ export interface IndicatorDialogRow {
     /** Declaration-props schema + values — rendered on the "Properties" tab. */
     props: InputSchema[];
     propValues: Record<string, InputValue>;
+    /** The NATIVE indicator's registered type id (`'rsi'`) — what a saved default is
+     *  keyed by and what "apply to all" matches. Absent for a script indicator. */
+    indicatorType?: string;
+    /** How many instances of that type the chart carries (gates "apply to every …"). */
+    siblings?: number;
 }
 
 /** The settings-dialog tab hosting declaration props. */
@@ -42,6 +47,24 @@ type DialogDecl = InputSchema & { prop?: boolean };
 /** The value bag a decl reads from / writes to (inputs vs declaration props). */
 function bagOf(row: IndicatorDialogRow, decl: DialogDecl): Record<string, InputValue> {
     return decl.prop ? row.propValues : row.values;
+}
+
+/**
+ * The shell's per-indicator-type DEFAULTS — TradingView's Defaults menu in the indicator
+ * settings dialog: "Save as default" (that type opens with these settings from now on) and
+ * the apply-to-all verbs. The dialog owns no storage; a null host keeps the plain reset.
+ */
+export interface IndicatorDefaultsMenuHost {
+    /** Whether this type already has saved defaults (the menu's check mark). */
+    has(type: string): boolean;
+    /** The saved defaults, or null — full value bags, so an apply is exact. */
+    saved(type: string): { inputs: Record<string, InputValue>; props: Record<string, InputValue> } | null;
+    save(type: string, inputs: Record<string, InputValue>, props: Record<string, InputValue>): void;
+    clear(type: string): void;
+    /** Copy these settings onto every instance of `type`; returns how many changed. */
+    applyToAll?(type: string, inputs: Record<string, InputValue>, props: Record<string, InputValue>, scope: 'chart' | 'layout'): number;
+    /** How many charts the shell shows — gates the layout-wide row. */
+    chartCount?(): number;
 }
 
 export interface IndicatorDialogHost {
@@ -72,6 +95,13 @@ export class IndicatorInputsDialog {
     private dialogTips: Array<() => void> = [];
     /** Re-applies every `when` gate against current values; set while the dialog is open. */
     private refreshVisibility: (() => void) | null = null;
+    /** The shell's defaults store (null: the footer keeps its plain Reset chip). */
+    private defaultsHost: IndicatorDefaultsMenuHost | null = null;
+    private defaultsPop: Popover | null = null;
+    /** The open menu's own panel (the popover shell is its parent) — re-rendered in place. */
+    private defaultsBody: HTMLElement | null = null;
+    /** Inline feedback inside the Defaults menu, cleared on the next open. */
+    private defaultsFlash: { text: string; tone?: 'ok' | 'bad' } | null = null;
     private choicePop: Popover | null = null;
     private calendarPop: Popover | null = null;
     private calendarAnchor: HTMLElement | null = null;
@@ -80,6 +110,11 @@ export class IndicatorInputsDialog {
 
     isOpen(): boolean {
         return this.dialog !== null;
+    }
+
+    /** The shell's indicator defaults — set before opening; reaches the NEXT dialog. */
+    setDefaultsHost(host: IndicatorDefaultsMenuHost | null): void {
+        this.defaultsHost = host;
     }
 
     private readonly onDialogKey = (e: KeyboardEvent): void => {
@@ -117,7 +152,7 @@ export class IndicatorInputsDialog {
             closeOnEscape: false,
             footer: (foot) => {
                 foot.append(
-                    this.resetAction(),
+                    this.defaultsAction(row),
                     this.dialogButton('Cancel', false, () => this.revertAndClose()),
                     this.dialogButton('Ok', true, () => this.close()),
                 );
@@ -257,6 +292,8 @@ export class IndicatorInputsDialog {
     close(): void {
         document.removeEventListener('keydown', this.onDialogKey);
         closeOpenPopovers();
+        this.defaultsPop = null;
+        this.defaultsBody = null;
         this.refreshVisibility = null;
         this.choicePop = null;
         this.calendarPop = null;
@@ -301,12 +338,213 @@ export class IndicatorInputsDialog {
         this.close();
     }
 
-    /** The footer's reset button — same chip as Cancel, pinned to the LEFT edge
-     *  (`margin-right:auto` against the footer's flex-end keeps Cancel/Ok right). */
-    private resetAction(): HTMLButtonElement {
-        const b = this.dialogButton('Reset defaults', false, () => this.resetToDefaults());
+    /**
+     * The footer's LEFT control — `Defaults ▾` when the shell offers a defaults store
+     * (TradingView's own footer), else the plain "Reset defaults" chip. Either way it
+     * carries `margin-right:auto`, which pins Cancel/Ok to the right edge.
+     */
+    private defaultsAction(row: IndicatorDialogRow): HTMLButtonElement {
+        const host = this.defaultsHost;
+        if (!host || !row.indicatorType) {
+            const plain = this.dialogButton('Reset defaults', false, () => this.resetToDefaults());
+            plain.style.marginRight = 'auto';
+            return plain;
+        }
+        const b = this.dialogButton('Defaults', false, () => this.toggleDefaults(b, row));
         b.style.marginRight = 'auto';
+        b.classList.add('vela-ind-defaults');
+        b.setAttribute('aria-haspopup', 'dialog');
+        b.setAttribute('aria-expanded', 'false');
+        const caret = document.createElement('span');
+        caret.className = 'vela-ind-defaults-caret';
+        caret.innerHTML = iconAt('chevron-down', 12);
+        b.appendChild(caret);
+        if (host.has(row.indicatorType)) b.dataset.saved = '1';
         return b;
+    }
+
+    private toggleDefaults(anchor: HTMLButtonElement, row: IndicatorDialogRow): void {
+        if (this.defaultsPop) {
+            this.defaultsPop.hide();
+            return;
+        }
+        closeOpenPopovers();
+        this.defaultsFlash = null;
+        const pop = new Popover({
+            trigger: anchor,
+            host: this.host.dialogHost() ?? this.host.container,
+            gap: 6,
+            align: 'start',
+            content: (body) => {
+                body.classList.add('vela-ind-defmenu');
+                body.setAttribute('role', 'group');
+                body.setAttribute('aria-label', 'Defaults');
+                this.defaultsBody = body;
+                this.renderDefaults(body, row);
+            },
+            onClose: () => {
+                this.defaultsPop = null;
+                this.defaultsBody = null;
+                anchor.setAttribute('aria-expanded', 'false');
+            },
+        });
+        this.defaultsPop = pop;
+        anchor.setAttribute('aria-expanded', 'true');
+        pop.show();
+    }
+
+    /** One row of the Defaults menu. `disabled` keeps it visible (TV greys rather than hides
+     *  — an empty slot would read as a bug), and the hint says why. */
+    private defaultsRow(label: string, icon: string, onClick: () => void, disabled = false): HTMLButtonElement {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'vela-ind-defrow';
+        const glyph = document.createElement('span');
+        glyph.className = 'vela-ind-defrow-glyph';
+        glyph.innerHTML = iconAt(icon, 14);
+        const text = document.createElement('span');
+        text.className = 'vela-ind-defrow-label';
+        text.textContent = label;
+        b.append(glyph, text);
+        if (disabled) {
+            b.disabled = true;
+            b.setAttribute('aria-disabled', 'true');
+        } else {
+            b.addEventListener('click', onClick);
+        }
+        return b;
+    }
+
+    private renderDefaults(body: HTMLElement, row: IndicatorDialogRow): void {
+        const host = this.defaultsHost;
+        const type = row.indicatorType;
+        if (!host || !type) return;
+        body.textContent = '';
+        const saved = host.saved(type);
+        const hasSaved = host.has(type);
+        const title = row.title;
+
+        body.appendChild(
+            this.defaultsRow(hasSaved ? 'Update saved default' : 'Save as default', hasSaved ? 'check' : 'star-filled', () => {
+                host.save(type, { ...row.values }, { ...row.propValues });
+                this.defaultsBtnMark(true);
+                this.defaultsFlash = { text: `Saved as the default for ${title}`, tone: 'ok' };
+                this.refreshDefaults();
+            }),
+        );
+        body.appendChild(
+            this.defaultsRow('Load saved default', 'restore', () => {
+                const bag = host.saved(type);
+                if (!bag) return;
+                this.loadDefaults(row, bag);
+                // The rebuild closes the menu (the dialog it hangs off is replaced) — the
+                // form itself is the feedback, exactly as TradingView's does.
+                this.rebuild(row);
+            }, !hasSaved || !saved),
+        );
+        body.appendChild(
+            this.defaultsRow('Clear saved default', 'trash', () => {
+                host.clear(type);
+                this.defaultsBtnMark(false);
+                this.defaultsFlash = { text: 'Saved default cleared', tone: 'ok' };
+                this.refreshDefaults();
+            }, !hasSaved),
+        );
+
+        const applyChart = host.applyToAll && (row.siblings ?? 0) > 1;
+        const charts = host.chartCount?.() ?? 1;
+        const applyLayout = host.applyToAll && charts > 1;
+        if (applyChart || applyLayout) {
+            const sep = document.createElement('div');
+            sep.className = 'vela-ind-defsep';
+            body.appendChild(sep);
+            if (applyChart) {
+                body.appendChild(
+                    this.defaultsRow(`Apply to every ${title} on this chart`, 'style-copy', () => {
+                        const n = host.applyToAll?.(type, { ...row.values }, { ...row.propValues }, 'chart') ?? 0;
+                        this.defaultsFlash = { text: `Applied to ${n} ${n === 1 ? 'instance' : 'instances'}`, tone: 'ok' };
+                        this.refreshDefaults();
+                    }),
+                );
+            }
+            if (applyLayout) {
+                body.appendChild(
+                    this.defaultsRow(`Apply to every ${title} in the layout`, 'group', () => {
+                        const n = host.applyToAll?.(type, { ...row.values }, { ...row.propValues }, 'layout') ?? 0;
+                        this.defaultsFlash = { text: `Applied to ${n} ${n === 1 ? 'chart' : 'charts'}`, tone: 'ok' };
+                        this.refreshDefaults();
+                    }),
+                );
+            }
+        }
+
+        const tail = document.createElement('div');
+        tail.className = 'vela-ind-defsep';
+        body.appendChild(tail);
+        body.appendChild(
+            this.defaultsRow('Reset to factory defaults', 'reset', () => {
+                this.defaultsPop?.hide();
+                this.resetToDefaults();
+            }),
+        );
+
+        const flash = document.createElement('div');
+        flash.className = 'vela-ind-defflash';
+        flash.setAttribute('aria-live', 'polite');
+        if (this.defaultsFlash) {
+            flash.textContent = this.defaultsFlash.text;
+            flash.dataset.tone = this.defaultsFlash.tone ?? '';
+        } else {
+            flash.textContent = hasSaved
+                ? `Every new ${title} opens with your saved settings.`
+                : `Save these settings to make every new ${title} open this way.`;
+        }
+        body.appendChild(flash);
+    }
+
+    /** Re-render the open menu after a verb (the rows depend on the store's state). */
+    private refreshDefaults(): void {
+        const row = this.row;
+        const body = this.defaultsBody;
+        if (!row || !body) return;
+        // Keep the keyboard where it was: the rows are rebuilt, so the focused element is
+        // replaced — hand focus to the same INDEX (or the first row after a refusal).
+        const rowsEls = [...body.querySelectorAll<HTMLButtonElement>('.vela-ind-defrow')];
+        const at = rowsEls.indexOf(document.activeElement as HTMLButtonElement);
+        this.renderDefaults(body, row);
+        const next = [...body.querySelectorAll<HTMLButtonElement>('.vela-ind-defrow:not(:disabled)')];
+        if (next.length > 0) (next[Math.min(at < 0 ? 0 : at, next.length - 1)] ?? next[0])?.focus({ preventScroll: true });
+    }
+
+    private defaultsBtnMark(saved: boolean): void {
+        const btn = this.dialog?.querySelector<HTMLElement>('.vela-ind-defaults');
+        if (!btn) return;
+        if (saved) btn.dataset.saved = '1';
+        else delete btn.dataset.saved;
+    }
+
+    /** Write a saved bag into the form (through the same commit path an edit takes). */
+    private loadDefaults(row: IndicatorDialogRow, bag: { inputs: Record<string, InputValue>; props: Record<string, InputValue> }): void {
+        for (const inp of row.inputs) {
+            const value = bag.inputs[inp.key];
+            if (value === undefined || row.values[inp.key] === value) continue;
+            this.commit(row, inp, value);
+        }
+        for (const p of row.props) {
+            const value = bag.props[p.key];
+            if (value === undefined || row.propValues[p.key] === value) continue;
+            this.commit(row, { ...p, prop: true }, value);
+        }
+    }
+
+    /** Re-open the form so every control re-reads the values; the open-time snapshot
+     *  survives, so Cancel still reverts the whole session (same trick as a reset). */
+    private rebuild(row: IndicatorDialogRow): void {
+        const snap = this.snapshot;
+        const propSnap = this.propSnapshot;
+        this.open(row);
+        if (snap) this.snapshot = snap;
+        if (propSnap) this.propSnapshot = propSnap;
     }
 
     /** Restore every input to its declared default (re-running the indicator), then
@@ -849,7 +1087,7 @@ const CLOCK_SVG = iconAt('clock', 14);
 
 const DIALOG_STYLE_ID = 'vela-ind-dialog-styles';
 /** Bump when the injected sheet's rules change so an already-mounted page refreshes them. */
-const DIALOG_STYLE_REV = '30';
+const DIALOG_STYLE_REV = '31';
 const LEGEND_ICON_PX = 16;
 
 /** Inject the scoped styles inline cssText can't reach (color-swatch, focus ring, scrollbar). */
@@ -876,6 +1114,22 @@ ${overlayScrollbarCss('.vela-dialog.vela-ind-dialog *', 9)}
 .vela-ind-close:hover{color:var(--vela-danger) !important;background-color:var(--vela-hover-strong);}
 .vela-ind-fold{transition:border-color var(--vela-dur-fast) ease,opacity var(--vela-dur-fast) ease;}
 .vela-ind-fold:hover{border-color:var(--vela-border-strong);opacity:0.9;}
+/* Defaults menu (TradingView's footer control): the panel owns its surface — the kit
+   popover is a transparent positioner. */
+.vela-ind-defaults{display:inline-flex;align-items:center;gap:5px;}
+.vela-ind-defaults[data-saved='1']{color:var(--vela-accent);border-color:color-mix(in srgb,var(--vela-accent) 45%,var(--vela-border));}
+.vela-ind-defaults-caret{display:grid;place-items:center;opacity:0.72;}
+.vela-ind-defmenu{width:288px;max-height:min(70vh,420px);overflow-y:auto;overscroll-behavior:contain;padding:6px;box-sizing:border-box;color:var(--vela-fg);font-size:13px;background:var(--vela-surface-elev);border:1px solid var(--vela-border-strong);border-radius:12px;box-shadow:var(--vela-shadow-dialog);}
+.vela-ind-defrow{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:9px;width:100%;height:32px;padding:0 9px;border-radius:7px;font-size:12.5px;color:var(--vela-fg);cursor:pointer;}
+.vela-ind-defrow:hover{background:var(--vela-hover);}
+.vela-ind-defrow:focus-visible{outline:2px solid var(--vela-accent);outline-offset:-2px;}
+.vela-ind-defrow:disabled{color:var(--vela-fg-muted);cursor:default;opacity:0.55;}
+.vela-ind-defrow:disabled:hover{background:transparent;}
+.vela-ind-defrow-glyph{flex:none;display:grid;place-items:center;width:15px;height:15px;color:var(--vela-fg-muted);}
+.vela-ind-defrow-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.vela-ind-defsep{height:1px;margin:5px 7px;background:var(--vela-border);}
+.vela-ind-defflash{min-height:15px;margin:4px 9px 3px;font-size:11.5px;line-height:1.4;color:var(--vela-fg-muted);}
+.vela-ind-defflash[data-tone='ok']{color:var(--vela-up);}
 /* Touch: the chip is the only legend affordance a phone shows, so it carries a full
    44px target instead of the desktop 24px one. */
 @media (pointer: coarse){.vela-ind-fold{min-height:44px !important;min-width:44px !important;padding:0 8px !important;background-clip:padding-box;}}

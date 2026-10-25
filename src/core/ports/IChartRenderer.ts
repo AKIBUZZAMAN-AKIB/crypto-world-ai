@@ -48,6 +48,49 @@ export interface RendererCapabilities {
     inputsUI: boolean;
 }
 
+/** The verbs behind the chart-settings dialog's Templates control. A multi-chart shell
+ *  supplies it; the dialog renders the menu and calls these — it never stores templates. */
+export interface SettingsTemplateHost {
+    /** Every saved appearance template, with `active` true for the one this chart wears. */
+    list(): Array<{ name: string; active: boolean }>;
+    /** The name of the template this chart's settings match, if any (the control's label). */
+    activeName(): string | null;
+    /** The template charts created from now on open with. */
+    defaultName(): string | null;
+    setDefault(name: string | null): void;
+    /** Apply to this chart, or to every chart in the layout. */
+    apply(name: string, target: 'this' | 'all'): void;
+    /** Capture THIS chart's settings under `name` (false = the store refused it). */
+    save(name: string): boolean;
+    remove(name: string): void;
+    /** TV's "Apply to all" button: this chart's CURRENT settings, template or not. */
+    applyToAll(): void;
+    /** How many charts the layout has — gates "Apply to all". */
+    chartCount(): number;
+}
+
+/** The verbs behind the INDICATOR settings dialog's Defaults menu (TradingView: "Save as
+ *  default" + the apply-to-all rows). A shell supplies it and owns the values; the dialog
+ *  renders the menu. Absent ⇒ the dialog keeps its plain "Reset defaults" chip. */
+export interface IndicatorDefaultsHost {
+    /** Whether this indicator TYPE already has saved defaults (the menu's check mark). */
+    has(type: string): boolean;
+    /** The saved value bags, or null — full values, so an apply is exact. */
+    saved(type: string): IndicatorDefaultsResult | null;
+    save(type: string, inputs: Record<string, InputValue>, props: Record<string, InputValue>): void;
+    clear(type: string): void;
+    /** Copy these settings onto every instance of `type`; returns how many changed. */
+    applyToAll?(type: string, inputs: Record<string, InputValue>, props: Record<string, InputValue>, scope: 'chart' | 'layout'): number;
+    /** How many charts the shell shows — gates the layout-wide row. */
+    chartCount?(): number;
+}
+
+/** A saved indicator-defaults bag: full input/prop values for one indicator type. */
+export interface IndicatorDefaultsResult {
+    inputs: Record<string, InputValue>;
+    props: Record<string, InputValue>;
+}
+
 /** Opaque handle to a mounted indicator, returned by `mountIndicator()`. */
 export interface IndicatorRenderHandle {
     readonly id: string;
@@ -529,6 +572,14 @@ export interface IChartRenderer {
     /** Host-app settings tabs (callback rows) shown by the renderer's settings dialog.
      *  `id` names a section for the visibility policy (defaults to the title's slug). */
     setSettingsSections?(sections: ReadonlyArray<{ title: string; rows: readonly unknown[]; id?: string }>): void;
+    /** The shell's chart-SETTINGS templates: TradingView's Templates dropdown in the chart
+     *  settings dialog — the chart's APPEARANCE (colors, grid, scales, status line) saved
+     *  under a name, applied to this chart or every chart, with a house default for new
+     *  charts. `null` removes the control (a lone chart with no template store). */
+    setSettingsTemplates?(host: SettingsTemplateHost | null): void;
+    /** The shell's per-TYPE indicator defaults: the indicator settings dialog's Defaults
+     *  menu. `null` removes the menu (the dialog falls back to "Reset defaults"). */
+    setIndicatorDefaults?(host: IndicatorDefaultsHost | null): void;
     /** Settings-dialog visibility policy: `hidden` lists setting ids to hide (a tab, a
      *  group, or a row — subtree semantics). Presentation-only: hidden values keep
      *  being stored and applied. Optional — a renderer without a settings dialog omits it. */
