@@ -118,6 +118,28 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **Chart chrome answers to SPACE, not to the device.** A phone showed neither the
+  indicator legend nor the bottom chart controls however empty the plot was: the renderer
+  folded every legend the moment the shell turned narrow (`setLayoutMode('mobile')`
+  wrote the fold directly), a multi-cell phone grid rerouted the fold chip to the object
+  tree, and the per-cell view cluster was suspended outright — so the only way to reach a
+  study's eye, gear, ×, or the chart's reset was the object tree. Now one measurement
+  decides, identically on a 1280px desktop and a 390px phone: `measureFit()` sums each
+  pane's row heights against the space that pane leaves (insets plus the fold chip) **and**
+  checks the column is wide enough for a title stub plus the action cluster — a 2×2 grid
+  on a 390px phone is 190px per cell, which now folds honestly instead of squeezing the
+  title to 0px with the ✕ hanging outside the chip. Rows show whenever both fit; only a
+  genuinely cramped pane falls back to the bordered count chip, and the press on it unfolds
+  in place (a host overview override takes that press only where the rows could not fit). The user's own fold is kept
+  as an override until a layout flip re-derives it. The same rule reaches the bottom
+  controls: on touch layouts the view cluster keeps its **reset** chip out permanently at
+  a 24px target (drag/zoom/maximize are cursor verbs and the mobile bar already carries
+  maximize), and the **jump-back-to-latest** button grew to a 32px touch target with a
+  14px glyph, appearing the moment the newest bar leaves the screen — no hover to hunt
+  for. Proven by `test/browser/sync-legend-fit.mjs` at 390×780, 1280×900, 1280×200 (a
+  61px pane folds, and the chip still opens it) and 1280×260 (a 91px pane does not); the
+  phone cases cover a full-height chart (rows out) and a 2×2 grid (chip only, and its press
+  is the object-tree door).
 - **`--vela-panel` is a token now.** Chrome surfaces had been painting `var(--vela-panel)`
   against a token no theme defined — the mobile bar's band, the More drawer and the new
   layout menu — so they showed the page through. It aliases the elevated surface.

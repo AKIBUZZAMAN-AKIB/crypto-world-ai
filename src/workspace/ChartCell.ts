@@ -1274,9 +1274,10 @@ export class ChartCell {
         this.cellControls.refresh();
     }
 
-    /** Mobile flips the per-cell cluster off (the shell's mobile bar replaces it). */
-    setControlsSuspended(on: boolean): void {
-        this.cellControls.setSuspended(on);
+    /** Mobile shrinks the per-cell cluster to its compact touch form: the reset chip stays
+     *  out (a phone has no hover to reveal it) and the cursor-only verbs stand down. */
+    setControlsCompact(on: boolean): void {
+        this.cellControls.setCompact(on);
     }
 
     /** Make this cell the active one and put keyboard focus on its chart surface. */

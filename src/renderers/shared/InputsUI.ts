@@ -124,6 +124,17 @@ const LEGEND_CTL_CSS =
     `border:none;line-height:0;padding:0;` +
     `width:${LEGEND_CTL_PX}px;height:${LEGEND_CTL_PX}px;border-radius:3px;box-sizing:border-box;flex:none;`;
 const LEGEND_ROW_MIN_H = LEGEND_CTL_PX + LEGEND_ROW_PAD_Y * 2;
+/** Air the legend column keeps above its first row (and reserves below its last, so a
+ *  row never runs into the pane separator) — the fit measurement budgets both. */
+const LEGEND_TOP_INSET_PX = 8;
+const LEGEND_BOTTOM_INSET_PX = 8;
+/** Room the fold chip claims under the rows (its own height plus the 6px margin-top). */
+const LEGEND_FOLD_CHIP_H = 34;
+/** Narrowest a row may get and still be USABLE: the title keeps a readable stub while the
+ *  action cluster (eye / gear / move / extras / ✕) takes its fixed share. A column below
+ *  this folds — which is the honest "no room" answer, not a squeezed chip with the buttons
+ *  hanging outside it. */
+const LEGEND_MIN_TITLE_W = 56;
 const EYE_SVG = iconAt('eye', LEGEND_ICON_PX);
 const EYE_OFF_SVG = iconAt('eye-off', LEGEND_ICON_PX);
 const GEAR_SVG = iconAt('gear', LEGEND_ICON_PX);
@@ -182,10 +193,16 @@ export class InputsUI {
     private moveMenuId: string | null = null;
     /** Collapsed panes → the master indicator id to keep visible (others hidden in the strip). */
     private paneCollapse = new Map<string, string | null>();
-    /** The user folded the indicator legend away behind the chevron — CHART-WIDE: every
-     *  pane's rows hide (a pane-collapse strip keeps its master label, its only marker),
-     *  unlike {@link paneCollapse} which collapses one pane to a strip. */
-    private legendFolded = false;
+    /** The USER's fold choice — CHART-WIDE: every pane's rows hide (a pane-collapse strip
+     *  keeps its master label, its only marker), unlike {@link paneCollapse} which collapses
+     *  one pane to a strip. `null` means "follow the fit": the rows show whenever the space
+     *  a pane gives them can hold them — on a phone exactly as on a desktop. The fold is
+     *  the short-space fallback, never a per-device default (see {@link foldedNow}). */
+    private manualFold: boolean | null = null;
+    /** Do the indicator rows fit the space their panes give them? Measured per layout
+     *  change (see {@link measureFit}) — the ONE rule behind the fold, identical on every
+     *  device, so a wide phone with room keeps its rows and a short pane folds theirs. */
+    private fits = true;
     /** Titles switched off entirely (a settings toggle): every pane's legend container
      *  hides — rows, fold chevron and all — unlike the fold, which leaves its chip. */
     private titlesVisible = true;
@@ -249,9 +266,9 @@ export class InputsUI {
         const mobile = mode === 'mobile';
         if (mobile === this.mobileLayout) return;
         this.mobileLayout = mobile;
-        // The fold resets to the mode's presentation default on a flip — it is chrome
-        // presentation, not user state (an overview override keeps it folded either way).
-        if (this.overviewAction === null) this.legendFolded = mobile;
+        // A flip re-derives the fold from the space the new layout leaves: the rows are NOT
+        // folded just because the shell turned narrow (a phone with room keeps its legend).
+        this.manualFold = null;
         this.syncFoldToggle();
         if (this.inputsDialog.openId !== null) {
             const id = this.inputsDialog.openId;
@@ -267,7 +284,7 @@ export class InputsUI {
     setLegendOverviewAction(action: (() => void) | null): void {
         if (action === this.overviewAction) return;
         this.overviewAction = action;
-        this.legendFolded = action !== null ? true : this.mobileLayout;
+        this.manualFold = null; // the override (or the fit) decides — a stale manual fold must not stick
         this.syncFoldToggle();
     }
 
@@ -407,8 +424,72 @@ export class InputsUI {
         }
     }
 
+    /** Whether the legend reads folded right now: the user's own choice when they made one,
+     *  otherwise the FIT — rows show while the pane can hold them, on a phone and a desktop
+     *  alike. A host overview override never forces the fold; it only takes over the chip's
+     *  press where the rows could not fit anyway (see {@link chipOpensOverview}). */
+    private get foldedNow(): boolean {
+        return this.manualFold ?? !this.fits;
+    }
+
+    /** Does the chip's press belong to the HOST (its indicator overview) rather than to an
+     *  in-place unfold? Only while the rows genuinely do not fit — the one case where
+     *  unfolding could show nothing useful, so the object tree is the better door. */
+    private get chipOpensOverview(): boolean {
+        return this.overviewAction !== null && !this.fits;
+    }
+
+    /**
+     * Measure whether every pane's indicator rows fit the space that pane leaves and
+     * re-derive the fold when the answer changes. This is the ONE gate behind the fold:
+     * a 1280px desktop and a 390px phone are measured the same way, so chrome that has
+     * room always shows and only a genuinely cramped pane falls back to the count chip.
+     *
+     * A folded legend's rows are display:none, so they measure 0; they are laid out for the
+     * read and put straight back inside the same task (no visible flash), which keeps the
+     * chip able to unfold the moment room appears.
+     */
+    private measureFit(): void {
+        if (this.rows.size === 0 || !this.paneBoundsOf) {
+            this.fits = true;
+            return;
+        }
+        const restored: Array<[HTMLElement, string]> = [];
+        for (const row of this.rows.values()) {
+            if (row.el.style.display !== 'none') continue;
+            restored.push([row.el, row.el.style.display]);
+            row.el.style.display = 'flex';
+        }
+        const need = new Map<string, number>();
+        for (const row of this.rows.values()) {
+            need.set(row.paneId, (need.get(row.paneId) ?? 0) + (row.el.offsetHeight || LEGEND_ROW_MIN_H));
+        }
+        let fits = true;
+        // The fold chip sits under the price pane's rows whenever it will exist at all.
+        const chip = this.rows.size >= 2 || this.mobileLayout || this.overviewAction !== null ? LEGEND_FOLD_CHIP_H : 0;
+        for (const [paneId, height] of need) {
+            const bounds = this.paneBoundsOf(paneId);
+            if (!Number.isFinite(bounds.height)) continue;
+            if (height + LEGEND_TOP_INSET_PX + LEGEND_BOTTOM_INSET_PX + chip > bounds.height) fits = false;
+        }
+        // WIDTH matters as much as height: a grid cell on a phone can be tall enough and still
+        // too narrow for a title plus the action cluster — the squeeze that pushed the ✕ out of
+        // the chip. Every row in a pane must fit that column.
+        for (const row of this.rows.values()) {
+            const column = this.legends.get(row.paneId)?.offsetWidth ?? 0;
+            if (column <= 0) continue; // container not laid out yet — height still governs
+            const cluster = row.controlsEl.childElementCount * (LEGEND_CTL_PX + LEGEND_ACTION_GAP_PX);
+            if (LEGEND_MIN_TITLE_W + cluster > column) fits = false;
+        }
+        for (const [el, display] of restored) el.style.display = display;
+        if (fits === this.fits) return;
+        this.fits = fits;
+        this.syncFoldToggle(true); // the chip follows the new state; the caller re-lays the rows
+    }
+
     /** Reposition the per-pane legend containers after a layout change. */
     reposition(): void {
+        this.measureFit();
         for (const [paneId, lg] of this.legends) this.positionLegend(lg, paneId);
     }
 
@@ -607,9 +688,12 @@ export class InputsUI {
         // (the container's intended layout — set in its cssText), NOT '' which would revert it
         // to block: block children stretch to the widest row, fusing the chips into one slab.
         lg.style.display = bounds.height < 4 || !this.titlesVisible ? 'none' : 'flex';
-        // The container spans the price scale too: cap the column at the data area so a long
-        // row (a narrow chart, many plot values) gives way inside the row instead.
-        lg.style.maxWidth = `calc(100% - ${(bounds.rightAxis ?? 0) + LEGEND_LEFT_PX + LEGEND_SCALE_GAP_PX}px)`;
+        // The container spans the price scale too: give the column an EXPLICIT width over the
+        // data area (not just a max-width on the rows) so a row's max-width resolves against
+        // the real plot — a shrink-to-fit column let a narrow cell's rows collapse onto
+        // themselves, squeezing the title to 0px and letting the action cluster hang outside
+        // the chip. Rows still size to their content inside it.
+        lg.style.width = `calc(100% - ${(bounds.rightAxis ?? 0) + LEGEND_LEFT_PX + LEGEND_SCALE_GAP_PX}px)`;
         // A collapsed pane is a legend-only strip: show just its master indicator's row. Restore
         // hidden rows to 'flex' (their intended layout — set in the row's cssText), NOT '' which
         // would revert them to block and break the inline button row (hide/show, settings, …).
@@ -620,12 +704,12 @@ export class InputsUI {
         const masterId = this.paneCollapse.get(paneId) ?? null;
         for (const row of this.rows.values()) {
             if (row.paneId !== paneId) continue;
-            row.el.style.display = (collapsed ? row.id !== masterId : this.legendFolded) ? 'none' : 'flex';
+            row.el.style.display = (collapsed ? row.id !== masterId : this.foldedNow) ? 'none' : 'flex';
         }
         // Expanded panes inset the legend from the top; a collapsed strip is too short for that —
         // center the single master row in it so its hover controls (hide/show, settings, …) stay
         // fully inside the strip instead of spilling onto the pane separator / axis below.
-        let top = bounds.top + 8;
+        let top = bounds.top + LEGEND_TOP_INSET_PX;
         if (collapsed && Number.isFinite(bounds.height)) {
             const rowH = lg.offsetHeight || 20;
             top = bounds.top + Math.max(1, Math.round((bounds.height - rowH) / 2));
@@ -645,17 +729,19 @@ export class InputsUI {
      * them); with fewer, the toggle disappears and a fold in force is undone. Re-appended
      * last so {@link attach}'s prepend/append never leaves it above a row.
      */
-    private syncFoldToggle(): void {
+    private syncFoldToggle(silent = false): void {
         const count = this.rows.size;
-        // Desktop earns the chevron at 2+ rows; mobile folds even a lone row behind the
-        // chip (the legend is collapsed by default there), and a host overview override
-        // needs the chip from the first row — it is the list's only entry point.
-        const minRows = this.overviewAction !== null || this.mobileLayout ? 1 : 2;
+        // The chip appears at 2+ rows on a wide shell, and from the FIRST row whenever the
+        // rows do not fit (it is then the only way back), on a phone (the count chip is its
+        // touch-sized handle), or under a host overview override.
+        const minRows = this.overviewAction !== null || this.mobileLayout || !this.fits ? 1 : 2;
         if (count < minRows) {
-            const wasFolded = this.legendFolded;
+            const wasFolded = this.foldedNow;
             // Never strand a surviving row hidden behind a toggle that just disappeared;
-            // with no rows at all the fold keeps its default for the next indicator.
-            if (count > 0) this.legendFolded = false;
+            // with no rows at all the fold keeps its default for the next indicator. Clearing
+            // the override (null, not false) hands the decision back to the fit — writing
+            // `false` here would pin the legend open and defeat the measurement later.
+            if (count > 0) this.manualFold = null;
             if (this.foldToggle) {
                 this.foldToggle.remove();
                 this.foldToggle = null;
@@ -669,19 +755,21 @@ export class InputsUI {
             btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'vela-ind-fold';
-            this.tip(this.rowTips, 'fold', btn, () => (this.overviewAction !== null ? 'Indicators' : this.legendFolded ? 'Show indicator legend' : 'Hide indicator legend'));
+            this.tip(this.rowTips, 'fold', btn, () => (this.chipOpensOverview ? 'Indicators' : this.foldedNow ? 'Show indicator legend' : 'Hide indicator legend'));
             btn.addEventListener('click', () => {
-                if (this.overviewAction !== null) {
-                    this.overviewAction();
+                if (this.chipOpensOverview) {
+                    this.overviewAction?.();
                     return;
                 }
-                this.legendFolded = !this.legendFolded;
+                // The press flips what the user SEES — the fit is only the fallback until
+                // they choose for themselves.
+                this.manualFold = !this.foldedNow;
                 this.syncFoldToggle();
             });
             this.foldToggle = btn;
         }
-        const folded = this.legendFolded;
-        btn.setAttribute('aria-label', this.overviewAction !== null ? 'Indicators' : folded ? 'Show indicator legend' : 'Hide indicator legend');
+        const folded = this.foldedNow;
+        btn.setAttribute('aria-label', this.chipOpensOverview ? 'Indicators' : folded ? 'Show indicator legend' : 'Hide indicator legend');
         // Bordered chip in both states; folded shows chevron then the count to its right
         // (reference: "˅ 12"), expanded is just the up chevron that folds the list away.
         // Fill AND ink follow the LIVE plot theme (same as legend rows) — chrome tokens
@@ -694,9 +782,9 @@ export class InputsUI {
         const icon = document.createElement('span');
         // Slightly muted against the count — currentColor rides the button's ink.
         icon.style.cssText = 'display:inline-flex;align-items:center;line-height:0;opacity:0.7;';
-        // The overview override wears the list glyph — the chip opens the host's
+        // The cramped-cell override wears the list glyph — the chip opens the host's
         // indicator overview rather than unfolding rows in place.
-        icon.innerHTML = this.overviewAction !== null ? OVERVIEW_SVG : folded ? UNFOLD_SVG : FOLD_SVG;
+        icon.innerHTML = this.chipOpensOverview ? OVERVIEW_SVG : folded ? UNFOLD_SVG : FOLD_SVG;
         btn.appendChild(icon);
         if (folded) {
             const label = document.createElement('span');
@@ -707,7 +795,7 @@ export class InputsUI {
         // The toggle lives on the PRICE pane's legend (created on demand — the price pane
         // may carry no indicator itself while study panes do).
         this.legendFor('price').appendChild(btn);
-        this.reposition(); // every pane's rows follow the fold, not just the price pane's
+        if (!silent) this.reposition(); // every pane's rows follow the fold, not just the price pane's
     }
 
     /** Create or update an indicator's legend row (in the legend for its pane). */
@@ -986,6 +1074,11 @@ export class InputsUI {
         row.highlighted = highlighted;
         this.renderRowValues(row); // values step aside while the controls are out
         row.el.style.boxShadow = highlighted ? `inset 0 0 0 1px ${this.neutralBorder()}` : 'none';
+        // An open row widens to its content: the action cluster is flex:none, so a row sized
+        // by its idle title alone would leave the buttons hanging outside the chip's fill (a
+        // phone's narrower column showed exactly that). max-width still caps it to the column,
+        // where the title is the part that gives way.
+        row.el.style.width = highlighted ? 'max-content' : '';
         // The solid fill exists only while the row is open — an idle row is a translucent
         // title-sized chip that lets the plot show through while keeping the label legible.
         row.el.style.background = highlighted ? this.theme.background : this.idleRowFill();
@@ -1060,7 +1153,8 @@ export class InputsUI {
         this.legends.clear();
         this.rows.clear();
         this.foldToggle = null; // its element left with the legend containers
-        this.legendFolded = false;
+        this.manualFold = null;
+        this.fits = true;
         this.selectedId = null;
         if (typeof document !== 'undefined') document.removeEventListener('click', this.onDocClick);
     }

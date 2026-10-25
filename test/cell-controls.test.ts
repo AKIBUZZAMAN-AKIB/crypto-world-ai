@@ -189,18 +189,23 @@ describe('CellControls — proximity reveal', () => {
         expect(cluster(host).style.display).toBe('none');
     });
 
-    it('setSuspended(true) hides the cluster and blocks reveals (mobile mode)', () => {
+    it('setCompact(true) keeps ONE chip out (reset) and ignores the hover reveal', () => {
         const host = makeHost();
         const controls = new CellControls(host as never, makeDeps());
         host.fire('pointermove', { clientX: 400, clientY: 554 });
         expect(cluster(host).style.display).toBe('flex');
-        controls.setSuspended(true); // mode flip hides a revealed cluster immediately
-        expect(cluster(host).style.display).toBe('none');
+        controls.setCompact(true); // touch form: reset stays out, the rest stands down
+        expect(cluster(host).style.display).toBe('flex');
+        expect(cluster(host).children).toHaveLength(1);
+        expect(cluster(host).children[0]?.title).toBe('Reset chart');
+        expect(cluster(host).children[0]?.style.width).toBe('24px');
+        host.fire('pointermove', { clientX: 400, clientY: 100 });
+        expect(cluster(host).style.display).toBe('flex'); // a thumb moving never dismisses it
+        controls.setCompact(false);
+        expect(cluster(host).style.display).toBe('none'); // back to the desktop reveal
         host.fire('pointermove', { clientX: 400, clientY: 554 });
-        expect(cluster(host).style.display).toBe('none'); // no reveal while suspended
-        controls.setSuspended(false);
-        host.fire('pointermove', { clientX: 400, clientY: 554 });
-        expect(cluster(host).style.display).toBe('flex'); // back to desktop behavior
+        expect(cluster(host).style.display).toBe('flex');
+        expect(cluster(host).children.length).toBeGreaterThan(1);
     });
 
     it('destroy() unhooks the host listeners and removes the cluster', () => {

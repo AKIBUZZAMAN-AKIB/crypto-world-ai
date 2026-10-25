@@ -122,10 +122,11 @@ const TIME_AXIS_H = 22; // px reserved at the bottom for the time axis
 // ── "scroll to most recent bar" affordance (bottom-right, shown only when the latest bar is off-screen and the cursor is nearby) ──
 // Size/border match the playground drawing-toolbar collapse toggle (`.toolbar-toggle`).
 const SCROLL_BTN_SIZE = 26; // px — width & height (`.toolbar-toggle`)
-const SCROLL_BTN_SIZE_TOUCH = 24; // px — the mobile variant; a hair under the desktop affordance
+const SCROLL_BTN_SIZE_TOUCH = 32; // px — the mobile variant: a finger target, not a cursor one
 const SCROLL_BTN_RADIUS = 5; // px — border-radius (`.toolbar-toggle`)
 const SCROLL_BTN_SHADOW = '0 2px 8px rgba(0,0,0,0.4)'; // box-shadow (`.toolbar-toggle`)
 const SCROLL_BTN_ICON_PX = 12; // px — icon box (`.toolbar-toggle` font-size / FA glyph size)
+const SCROLL_BTN_ICON_PX_TOUCH = 14; // px — the touch variant's glyph, sized to its 32px chip
 const SCROLL_BTN_RIGHT_INSET = 12; // px the button sits left of the price-axis gutter's inner edge
 const SCROLL_BTN_RIGHT = RIGHT_AXIS_W + SCROLL_BTN_RIGHT_INSET; // initial offset (single-column scale); widened at runtime for merged scales
 const SCROLL_BTN_BOTTOM = TIME_AXIS_H + 14; // px from the plot's bottom edge — the corner slot also used by the opt-in `settings` gear (off by default)
@@ -1260,8 +1261,8 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     /** Double-chevron icon — the "jump back to the latest bar" affordance. */
-    private scrollButtonIcon(): string {
-        return iconAt('chevrons-right', SCROLL_BTN_ICON_PX);
+    private scrollButtonIcon(px = SCROLL_BTN_ICON_PX): string {
+        return iconAt('chevrons-right', px);
     }
 
     /** The button's fill — the chart background at 50% so it blends with the plot beneath. */
@@ -1721,6 +1722,7 @@ export class NativeRenderer implements IChartRenderer {
             if (this.scrollButton) {
                 this.scrollButton.style.width = `${SCROLL_BTN_SIZE_TOUCH}px`;
                 this.scrollButton.style.height = `${SCROLL_BTN_SIZE_TOUCH}px`;
+                this.scrollButton.innerHTML = this.scrollButtonIcon(SCROLL_BTN_ICON_PX_TOUCH);
             }
         }
 
@@ -2487,10 +2489,11 @@ export class NativeRenderer implements IChartRenderer {
         // their expand chips; the shell's own chrome covers pane/chart maximize).
         this.paneControls?.setSuspended(mode === 'mobile');
         if (this.scrollButton) {
-            // A finger needs a larger target than a cursor.
+            // A finger needs a larger target (and a larger glyph) than a cursor.
             const px = mode === 'mobile' ? SCROLL_BTN_SIZE_TOUCH : SCROLL_BTN_SIZE;
             this.scrollButton.style.width = `${px}px`;
             this.scrollButton.style.height = `${px}px`;
+            this.scrollButton.innerHTML = this.scrollButtonIcon(mode === 'mobile' ? SCROLL_BTN_ICON_PX_TOUCH : SCROLL_BTN_ICON_PX);
         }
         this.updateScrollToRealtimeButton();
     }

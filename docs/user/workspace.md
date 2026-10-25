@@ -138,12 +138,16 @@ Reset re-enables auto price scaling and frames the full history — the context 
 "Reset view". On single-cell grids the drag handle and maximize stay away; zoom and
 reset remain.
 
-On **mobile** the hover clusters don't apply (no cursor to reveal them — the per-pane
-hover buttons stay away too, though a collapsed pane keeps its expand chip). The
-mobile bottom bar carries a **maximize stop** instead: one tap isolates the current
-chart over the grid, and the stop lights up as an inverse chip whenever something is
-isolated — the chart itself, or a pane inside it (a double-tap in the plot maximizes
-a pane). Tapping the lit stop restores the view.
+The same rule picks what a **touch** layout shows, and it is a rule about SPACE, not
+about the device: where there is no cursor to hover with, the cluster keeps its one
+essential verb — **reset** — out as a small chip at the bottom-left of every cell, and
+the cursor-only verbs (drag, zoom, maximize) stand down. The mobile bottom bar carries
+a **maximize stop** in their place: one tap isolates the current chart over the grid,
+and the stop lights up as an inverse chip whenever something is isolated — the chart
+itself, or a pane inside it (a double-tap in the plot maximizes a pane). Tapping the
+lit stop restores the view. The **jump-back-to-latest** button needs no hover on a
+phone at all: it appears the moment the newest bar is off screen, at a 32px touch
+target, and disappears again when the view is back at the edge.
 
 ## Sync links
 
@@ -562,8 +566,8 @@ they work from the very first keystroke, before any click.
   the stack together. Every indicator row shows its **newest value**, and a study with more than
   one plot has a chevron that opens the **full readout**: one line per plot, with the plot's own
   colour and its value, updating in place as the crosshair moves or a bar closes. On a phone
-  that list is the readout — the legend is folded away there — so the tree is where a study's
-  numbers are read. Right-clicking an indicator also offers **Source code** (the legend's `{ }`
+  the legend rows carry that readout directly while the pane has room for them; the tree is
+  the fallback for a cramped cell, and it carries every study's values there too. Right-clicking an indicator also offers **Source code** (the legend's `{ }`
   chip by another route): a built-in opens read-only, a script editable. Double-clicking a
   study's row opens its settings.
   The tree multi-selects the way TradingView's does — **Ctrl/Cmd-click** extends the pick,
@@ -886,10 +890,14 @@ What changes on mobile:
   SHEET: drag its grip to resize it (a tap snaps it between the two useful heights) and
   the chart stays visible above it, because an editor on a phone must be usable
   *without* leaving the chart.
-- **The indicator legend starts collapsed** behind its count chip — tapping it opens
-  the **object tree**, whose per-indicator action menu carries an "Indicator settings"
-  entry, so everything the legend rows offered stays one tap away. The tree's rows carry
-  every study's values (see above), and its menu also opens a study's **source code**.
+- **The indicator legend is measured, not assumed** — in BOTH directions: the rows (title,
+  values, hide, ⚙, ×) show whenever the pane can hold them by height *and* by width (a
+  title stub plus the action cluster), exactly as on a desktop, and only a genuinely
+  cramped cell folds them behind a bordered count chip. There the chip is the door to the
+  **object tree** instead of an in-place unfold — its per-indicator action menu carries an
+  "Indicator settings" entry, so everything the rows offered stays one tap away. The tree's
+  rows carry every study's values (see above), and its menu also opens a study's
+  **source code**.
 - **The More sheet has a "Pine Editor — Open" row**: the editor is a panel on desktop, but
   on a phone it is a sheet over the chart, and this is its one-tap door (TradingView keeps
   its Pine Editor just as close on mobile). The dock's generic panel toggles do not repeat

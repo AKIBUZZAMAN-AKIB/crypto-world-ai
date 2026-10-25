@@ -2831,7 +2831,7 @@ export class VelaWorkspace {
             // The bottom-bar clock is authoritative: the cell's countdown chip ticks on the
             // same pulse, never on a renderer-private timer that could read another second.
             cell.chart.renderer.setWallClock(this.clock);
-            cell.setControlsSuspended(this.layoutCtl.current === 'mobile');
+            cell.setControlsCompact(this.layoutCtl.current === 'mobile');
             // The status line's marks are the marking ENTRY POINT: tap the emoji on a
             // chart and the sync sheet opens with THAT chart active (a phone cannot
             // hover a chart to pick it, so the badge has to be the picker).
@@ -5123,15 +5123,16 @@ export class VelaWorkspace {
         for (const cell of this.cellsById.values()) {
             cell.chart.renderer.closeDialogs();
             cell.chart.renderer.setLayoutMode(mode);
-            cell.setControlsSuspended(mode === 'mobile'); // the mobile bar's maximize stop replaces the cluster
+            cell.setControlsCompact(mode === 'mobile'); // the cluster keeps its reset chip, drops the cursor-only verbs
         }
         this.syncCellPresentation(); // the legend's overview override is mode-scoped
     }
 
     /** Push the layout-shape-dependent chrome onto every cell: multi-cell grids keep
-     *  the status line on one row (segments that don't fit hide), and on MOBILE their
-     *  legends' fold chip routes to the object tree instead of unfolding in place —
-     *  per-indicator controls live there (the legend rows have no room in a grid cell). */
+     *  the status line on one row (segments that don't fit hide), and on MOBILE a legend
+     *  that has genuinely run out of room routes its count chip to the object tree —
+     *  where per-indicator controls also live — instead of unfolding into nothing. A
+     *  cell with room keeps its rows: the fold is measured, never assumed (R59). */
     private syncCellPresentation(): void {
         const multi = this.def.cells.length > 1;
         const overview = multi && this.layoutCtl.current === 'mobile' ? (): void => this.dock.toggle('objects', true) : null;

@@ -13,6 +13,12 @@ import type { Vela } from '../Vela';
  *  mirrors the scroll-to-realtime button's proximity radius. */
 export const CELL_CONTROLS_PROXIMITY_PX = 120;
 
+/** The compact (touch) cluster's own inset from the cell's left edge — clear of the
+ *  price/volume axes, level with the scroll-to-latest button on the other corner. */
+const COMPACT_LEFT_PX = 8;
+/** Its one button's box: a real finger target (WCAG 2.5.8 floor is 24px). */
+const COMPACT_BTN_PX = 24;
+
 /** px the renderer reserves for a time axis (mirrors NativeRenderer's TIME_AXIS_H). */
 const TIME_AXIS_H = 22;
 /** Cluster bottom inset — above the time axis, level with the scroll button. */
@@ -101,9 +107,10 @@ export class CellControls {
     /** A grip drag is underway — the proximity reveal must not hide the cluster
      *  while captured pointer moves sweep across the whole grid. */
     private dragging = false;
-    /** Mobile: the proximity reveal is meaningless without a cursor — the mobile
-     *  bar's maximize stop replaces the cluster. */
-    private suspended = false;
+    /** Touch form: there is no cursor to hover with, so the cluster shrinks to its one
+     *  essential verb (reset) and stays out instead of hiding behind a proximity reveal —
+     *  the same "show it while there is room" rule the desktop follows on hover. */
+    private compact = false;
 
     constructor(
         private readonly host: HTMLElement,
@@ -133,9 +140,27 @@ export class CellControls {
         this.refresh();
     }
 
-    /** Rebuild the buttons (the multi-cell gate or the maximized state changed). */
+    /** Rebuild the buttons (the multi-cell gate, the maximized state or the touch form changed). */
     refresh(): void {
         this.root.textContent = '';
+        if (this.compact) {
+            // A finger gets the door it cannot otherwise find: RESET, always out. Zoom comes
+            // from the pinch, maximize from the mobile bar's own stop, and the grip needs a
+            // cursor — none of them belong in a chip a thumb might land on while panning.
+            const chip = this.button('reset', 'Reset chart', () => {
+                this.glider.stop(); // a running zoom glide must not fight the reset
+                this.deps.reset();
+            });
+            // Inline sizing (not a stylesheet class): the cluster is themed per instance and
+            // the shell may mount it into a shadow-less host with no document styles of its own.
+            chip.style.width = `${COMPACT_BTN_PX}px`;
+            chip.style.height = `${COMPACT_BTN_PX}px`;
+            this.root.appendChild(chip);
+            Object.assign(this.root.style, { left: `${COMPACT_LEFT_PX}px`, transform: 'none' });
+            this.setNear(true); // out from the start — not a hover reveal
+            return;
+        }
+        Object.assign(this.root.style, { left: CLUSTER_LEFT_CSS, transform: 'translateX(-50%)' });
         const multi = this.deps.multiCell();
         const maximized = multi && this.deps.isMaximized();
         // The drag handle only exists when there is somewhere to move to: never on a
@@ -218,10 +243,17 @@ export class CellControls {
         btn.addEventListener('pointercancel', onCancel);
     }
 
-    /** Mobile flips the cluster off entirely (and hides it if currently revealed). */
-    setSuspended(on: boolean): void {
-        this.suspended = on;
-        if (on) this.setNear(false);
+    /** Touch-first compact form (the shell's mobile layout). Idempotent. */
+    setCompact(on: boolean): void {
+        if (on === this.compact) return;
+        this.compact = on;
+        if (!on) {
+            // Back on a pointer: the hover reveal owns the cluster again, and a stale
+            // "near" must not leave it out until the cursor happens to move.
+            this.setNear(false);
+            this.root.style.display = 'none';
+        }
+        this.refresh();
     }
 
     /** Live renderer gutters on the cell host (0 when unpublished — a test stub). */
@@ -236,7 +268,7 @@ export class CellControls {
     }
 
     private readonly onHostMove = (e: PointerEvent): void => {
-        if (this.suspended) return;
+        if (this.compact) return; // the compact chip is not a proximity reveal
         if (this.dragging) return; // captured drag moves sweep the grid — keep the cluster up
         const rect = this.host.getBoundingClientRect();
         this.setNear(nearBottomCenter(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, CELL_CONTROLS_PROXIMITY_PX, this.hostGutters()));
@@ -248,6 +280,7 @@ export class CellControls {
     };
 
     private setNear(near: boolean): void {
+        if (this.compact) near = true; // always out in the touch form
         if (near === this.near) return;
         this.near = near;
         this.root.style.display = near ? 'flex' : 'none';
