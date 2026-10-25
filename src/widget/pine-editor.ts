@@ -15,6 +15,7 @@ import { injectStyles } from '../ui/styles';
 import { iconEl } from '../ui/icons';
 import { Tooltip } from '../ui/components/tooltip';
 import { isDarkColor } from '../core/color';
+import { SYNTAX_DARK, SYNTAX_LIGHT, WARNING } from '../core/palette';
 import type { Vela } from '../Vela';
 import type { IndicatorHandle } from '../core/IndicatorHandle';
 import {
@@ -217,18 +218,18 @@ const CSS = `
 /* The palette is chosen for the SURFACE the panel sits on (data-surface is set from the
    live --vela-bg), not for a fixed VS Code theme: the same tokens must stay legible on
    the light chart a trader switched to at noon and on the dark one at night. */
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-str { color: #ce9178; }
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-num { color: #b5cea8; }
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-kw { color: #c586c0; }
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-fn { color: #dcdcaa; }
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-ns { color: #4ec9b0; }
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-const { color: #9cdcfe; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-str { color: #a31515; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-num { color: #098658; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-kw { color: #af00db; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-fn { color: #795e26; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-ns { color: #267f99; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-const { color: #0070c1; }
+.vela-pe[data-surface='dark'] .vela-pe-hl .tk-str { color: ${SYNTAX_DARK.string}; }
+.vela-pe[data-surface='dark'] .vela-pe-hl .tk-num { color: ${SYNTAX_DARK.number}; }
+.vela-pe[data-surface='dark'] .vela-pe-hl .tk-kw { color: ${SYNTAX_DARK.keyword}; }
+.vela-pe[data-surface='dark'] .vela-pe-hl .tk-fn { color: ${SYNTAX_DARK.call}; }
+.vela-pe[data-surface='dark'] .vela-pe-hl .tk-ns { color: ${SYNTAX_DARK.namespace}; }
+.vela-pe[data-surface='dark'] .vela-pe-hl .tk-const { color: ${SYNTAX_DARK.constant}; }
+.vela-pe[data-surface='light'] .vela-pe-hl .tk-str { color: ${SYNTAX_LIGHT.string}; }
+.vela-pe[data-surface='light'] .vela-pe-hl .tk-num { color: ${SYNTAX_LIGHT.number}; }
+.vela-pe[data-surface='light'] .vela-pe-hl .tk-kw { color: ${SYNTAX_LIGHT.keyword}; }
+.vela-pe[data-surface='light'] .vela-pe-hl .tk-fn { color: ${SYNTAX_LIGHT.call}; }
+.vela-pe[data-surface='light'] .vela-pe-hl .tk-ns { color: ${SYNTAX_LIGHT.namespace}; }
+.vela-pe[data-surface='light'] .vela-pe-hl .tk-const { color: ${SYNTAX_LIGHT.constant}; }
 
 /* The 80-character ruler — the same guide TradingView's editor draws (its editor
    settings call it "vertical ruler at the 80-character mark"): a faint line under the
@@ -410,7 +411,7 @@ const CSS = `
     border-radius: 9px;
 }
 .vela-pe-clear:hover { background: var(--vela-hover); color: var(--vela-fg); }
-.vela-pe-msg[data-level='warn'] { color: var(--vela-warning, #f0b90b); }
+.vela-pe-msg[data-level='warn'] { color: var(--vela-warning, ${WARNING}); }
 
 /* ── history / scripts popover ────────────────────────────────────────────────── */
 .vela-pe-pop {

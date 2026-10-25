@@ -83,3 +83,25 @@ export function categoricalColor(key: string): string {
     for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
     return CATEGORICAL[h % CATEGORICAL.length]!;
 }
+
+/** The code editor's syntax palette — one pair of sets, chosen per SURFACE so the same
+ *  tokens stay legible on the dark chart and on the light one (the editor picks the set
+ *  from the panel's own background). Fixed, because syntax colour is a convention code
+ *  readers already know; it does not follow the brand accent. */
+export const SYNTAX_DARK = {
+    string: '#ce9178',
+    number: '#b5cea8',
+    keyword: '#c586c0',
+    call: '#dcdcaa',
+    namespace: '#4ec9b0',
+    constant: '#9cdcfe',
+} as const;
+
+export const SYNTAX_LIGHT = {
+    string: '#a31515',
+    number: '#098658',
+    keyword: '#af00db',
+    call: '#795e26',
+    namespace: '#267f99',
+    constant: '#0070c1',
+} as const;
