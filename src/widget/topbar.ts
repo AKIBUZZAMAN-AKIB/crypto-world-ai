@@ -25,7 +25,10 @@ const CSS = `
     display: flex;
     align-items: center;
     gap: var(--vela-space-1);
-    padding: var(--vela-space-1) var(--vela-space-2);
+    /* No horizontal padding on the STRIP itself: the pinned ends carry their own inset
+       (see the overflow block below), so a scrolled chip can never peek out beside the
+       pair or past the tools — the sticky layer covers the strip edge to edge. */
+    padding: var(--vela-space-1) 0;
     border-bottom: 1px solid var(--vela-border-soft);
     color: var(--vela-fg);
     font-size: var(--vela-font-size-md);
@@ -52,6 +55,7 @@ const CSS = `
     letter-spacing: 0.3px;
     padding: 0 10px;
     gap: 7px;
+    margin-left: var(--vela-space-2);
 }
 .vela-widget-tf, .vela-widget-style, .vela-widget-indicators, .vela-widget-templates, .vela-widget-action-left {
     color: var(--vela-fg-bright);
@@ -112,7 +116,7 @@ const CSS = `
 }
 /* The right side of the bar — whatever the composition puts there rides this one
    auto-margin push (the flow-actions host used to carry it; composition can omit it). */
-.vela-topbar-right { margin-left: auto; display: inline-flex; align-items: center; gap: var(--vela-space-1); }
+.vela-topbar-right { margin-left: auto; margin-right: var(--vela-space-2); display: inline-flex; align-items: center; gap: var(--vela-space-1); }
 .vela-widget-actions { display: inline-flex; gap: var(--vela-space-1); }
 /* Left-aligned contributed actions — the primary-chrome cluster after the dropdowns. */
 .vela-widget-actions-left { display: inline-flex; align-items: center; gap: var(--vela-space-1); }
@@ -209,6 +213,58 @@ const CSS = `
 }
 /* The chip and its save button travel as one slot: no hairline between them. */
 .vela-widget-layoutgroup { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; flex: 0 1 auto; min-width: 0; }
+/* ── WHEN THE CHROME IS WIDER THAN THE WINDOW ─────────────────────────────────
+   A desktop window is not always a wide one: favourite intervals, a long layout
+   name and the docked-panel toggles add up, and the bar used to push its last
+   tools (and the page) off the right edge with nothing to grab. The bar is now
+   ONE scrollable strip — it never wraps and never widens the page — with the
+   pair pinned at the start and the tools pinned at the end, so identity and the
+   actions stay on screen while the middle slides under them. Drag it, wheel it,
+   or Tab into it; the pinned ends read as layers, not as a cut. */
+.vela-widget-topbar {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.vela-widget-topbar::-webkit-scrollbar { width: 0; height: 0; }
+.vela-widget-topbar[data-scroll='1'] { cursor: grab; }
+.vela-widget-topbar[data-dragging='1'] { cursor: grabbing; -webkit-user-select: none; user-select: none; }
+.vela-widget-symbol { position: sticky; left: 0; z-index: 3; margin-right: 8px; }
+.vela-topbar-right { position: sticky; right: 0; z-index: 3; }
+/* The pinned ends are opaque over the strip, and their own hover fill is mixed
+   onto that same surface so a translucent hover token can never show content
+   through them. */
+.vela-widget-symbol, .vela-topbar-right { background: var(--vela-bg); }
+.vela-widget-symbol:hover, .vela-widget-symbol:focus-visible {
+    background: linear-gradient(var(--vela-hover), var(--vela-hover)), var(--vela-bg);
+}
+/* A soft edge on the side content slides under — off at the ends of the run. */
+.vela-widget-symbol::after, .vela-topbar-right::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 16px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 120ms linear;
+}
+.vela-widget-symbol::after {
+    left: 100%;
+    /* Solid for the first third, then a 24px dissolve — a chip sliding past reads as
+       passing BEHIND the pair, never as a cut beside its last letter. */
+    width: 26px;
+    background: linear-gradient(to right, var(--vela-bg) 34%, transparent);
+}
+.vela-topbar-right::before {
+    right: 100%;
+    width: 26px;
+    background: linear-gradient(to left, var(--vela-bg) 34%, transparent);
+}
+.vela-widget-topbar[data-edge-start='1'] .vela-widget-symbol::after,
+.vela-widget-topbar[data-edge-end='1'] .vela-topbar-right::before { opacity: 1; }
 `;
 
 const BUILTIN_STYLE_LABELS: Record<string, string> = {
@@ -477,6 +533,104 @@ export class Topbar {
     };
     private hairlineRo: ResizeObserver | null = null;
     private hairlineRaf = 0;
+    /** Watches the STRIP's content (tools appearing, a longer layout name) so the
+     *  overflow state is re-measured without waiting for a window resize. */
+    private overflowRo: ResizeObserver | null = null;
+    private overflowMo: MutationObserver | null = null;
+    /** An in-flight drag-scroll of the strip (pointer id, origin x, origin scrollLeft). */
+    private drag: { id: number; x: number; start: number; moved: boolean } | null = null;
+
+    private get win(): Window | null {
+        return this.el.ownerDocument.defaultView;
+    }
+
+    /**
+     * Re-measure the strip: is it scrollable, and is either end scrolled away from?
+     * Three data attributes drive the CSS (cursor, edge fades) — the state lives in the
+     * DOM so a host can style it and a probe can read it.
+     */
+    private syncOverflow(): void {
+        const el = this.el;
+        const max = el.scrollWidth - el.clientWidth;
+        const scrollable = max > 1;
+        el.dataset.scroll = scrollable ? '1' : '0';
+        el.dataset.edgeStart = scrollable && el.scrollLeft > 1 ? '1' : '0';
+        el.dataset.edgeEnd = scrollable && el.scrollLeft < max - 1 ? '1' : '0';
+    }
+
+    private readonly onBarScroll = (): void => this.syncOverflow();
+
+    /** A wheel over the bar moves the STRIP (a toolbar's natural axis), not the page. */
+    private readonly onBarWheel = (e: WheelEvent): void => {
+        const el = this.el;
+        if (el.scrollWidth - el.clientWidth <= 1) return;
+        const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        if (delta === 0) return;
+        el.scrollLeft += delta;
+        e.preventDefault();
+    };
+
+    /** Press-and-drag anywhere on the strip to slide it — the gesture the phone bar
+     *  already has (it scrolls there), now on the desktop bar too. A press that never
+     *  moves is a CLICK on whatever it landed on: the 4px threshold keeps every
+     *  button working, and a real drag swallows the click it would have finished. */
+    private readonly onBarPointerDown = (e: PointerEvent): void => {
+        if (e.button !== 0 || e.pointerType === 'touch') return; // touch scrolls natively
+        const el = this.el;
+        if (el.scrollWidth - el.clientWidth <= 1) return;
+        const target = e.target as HTMLElement | null;
+        if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+        this.drag = { id: e.pointerId, x: e.clientX, start: el.scrollLeft, moved: false };
+        try {
+            el.setPointerCapture(e.pointerId); // a fast drag keeps feeding the strip
+        } catch {
+            // a synthetic/already-released pointer cannot be captured — the move/up pair still works
+        }
+    };
+
+    private readonly onBarPointerMove = (e: PointerEvent): void => {
+        const d = this.drag;
+        if (!d || d.id !== e.pointerId) return;
+        const dx = e.clientX - d.x;
+        if (!d.moved && Math.abs(dx) < 4) return;
+        d.moved = true;
+        this.el.dataset.dragging = '1';
+        this.el.scrollLeft = d.start - dx;
+    };
+
+    private readonly onBarPointerUp = (e: PointerEvent): void => {
+        const d = this.drag;
+        if (!d || d.id !== e.pointerId) return;
+        this.drag = null;
+        delete this.el.dataset.dragging;
+        try {
+            this.el.releasePointerCapture(e.pointerId);
+        } catch {
+            // already released
+        }
+        if (!d.moved) return;
+        // Swallow the click this drag would otherwise finish (releasing over a button
+        // must not press it). The click fires before the cleanup timer below.
+        const swallow = (ev: Event): void => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            cleanup();
+        };
+        const cleanup = (): void => {
+            this.el.removeEventListener('click', swallow, true);
+            if (timer) this.win?.clearTimeout(timer);
+        };
+        const timer = this.win?.setTimeout(cleanup, 0) ?? 0;
+        this.el.addEventListener('click', swallow, true);
+    };
+
+    private readonly onBarFocusIn = (e: FocusEvent): void => {
+        const t = e.target as HTMLElement | null;
+        if (!t || t === this.el) return;
+        if (this.el.scrollWidth - this.el.clientWidth <= 1) return;
+        // Tab into a control the strip has slid past and it comes back into view.
+        t.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    };
 
     constructor(host: HTMLElement, opts: TopbarOptions) {
         this.opts = opts;
@@ -787,6 +941,20 @@ export class Topbar {
         this.hairlineRo = new ResizeObserver(this.onHairlineSync);
         this.hairlineRo.observe(this.el);
         doc.defaultView?.addEventListener('resize', this.onHairlineSync);
+        // Overflow plumbing: the strip scrolls (wheel / drag / keys) and keeps its ends
+        // pinned, so a narrow desktop window never loses a tool off the right edge.
+        this.el.addEventListener('scroll', this.onBarScroll, { passive: true });
+        this.el.addEventListener('wheel', this.onBarWheel, { passive: false });
+        this.el.addEventListener('pointerdown', this.onBarPointerDown);
+        this.el.addEventListener('pointermove', this.onBarPointerMove);
+        this.el.addEventListener('pointerup', this.onBarPointerUp);
+        this.el.addEventListener('pointercancel', this.onBarPointerUp);
+        this.el.addEventListener('focusin', this.onBarFocusIn);
+        this.overflowRo = new ResizeObserver(() => this.syncOverflow());
+        this.overflowRo.observe(this.el);
+        this.overflowMo = new MutationObserver(() => this.syncOverflow());
+        this.overflowMo.observe(this.el, { childList: true });
+        this.syncOverflow();
         this.renderActions();
 
         this.tooltips.push(new Tooltip(this.tfCaret, { content: 'Timeframe', triggerId: 'vela-topbar-tf', host }));
@@ -1130,6 +1298,15 @@ export class Topbar {
 
     destroy(): void {
         this.hairlineRo?.disconnect();
+        this.overflowRo?.disconnect();
+        this.overflowMo?.disconnect();
+        this.el.removeEventListener('scroll', this.onBarScroll);
+        this.el.removeEventListener('wheel', this.onBarWheel);
+        this.el.removeEventListener('pointerdown', this.onBarPointerDown);
+        this.el.removeEventListener('pointermove', this.onBarPointerMove);
+        this.el.removeEventListener('pointerup', this.onBarPointerUp);
+        this.el.removeEventListener('pointercancel', this.onBarPointerUp);
+        this.el.removeEventListener('focusin', this.onBarFocusIn);
         const win = this.el.ownerDocument.defaultView;
         win?.removeEventListener('resize', this.onHairlineSync);
         if (this.hairlineRaf) win?.cancelAnimationFrame(this.hairlineRaf);
@@ -1159,6 +1336,7 @@ export class Topbar {
 
     /** Paint each `.vela-sep` as exactly one device pixel, snapped to the pixel grid. */
     private syncHairlines(): void {
+        this.syncOverflow(); // the same reflow decides whether the strip scrolls
         const win = this.el.ownerDocument.defaultView;
         if (!win) return;
         const dpr = win.devicePixelRatio || 1;

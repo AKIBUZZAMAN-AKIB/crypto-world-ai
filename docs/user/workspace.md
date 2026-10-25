@@ -540,6 +540,15 @@ they work from the very first keystroke, before any click.
   [contributed actions](../contributing/plugin-sdk.md#widget-actions--registerwidgetaction)
   in the right-hand cluster. The whole bar is composable — see
   [Composing the topbar](#composing-the-topbar).
+
+  When the chrome is wider than the window — a narrow desktop, many starred
+  intervals, a long layout name, every panel toggle docked — the bar is **one
+  scrollable strip**: it never wraps and never widens the page, the pair stays
+  pinned at the start and the tools pinned at the end, and the middle slides
+  under them (a soft edge marks the side that still has more). Drag it with the
+  mouse, wheel it, or Tab into it — a control the strip has slid past scrolls
+  itself back into view. A press that never moves is still a click, so every
+  button works as before.
 - **Status line** — symbol + OHLC and change of the hovered bar (resting on the latest
   live bar), stacked above the renderer's indicator legend and dressed like its rows:
   hovering outlines the chip, and while the chart's price series is hidden the line

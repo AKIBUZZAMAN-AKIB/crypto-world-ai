@@ -118,6 +118,21 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **The desktop topbar scrolls instead of losing its last tools.** A window narrower
+  than the chrome (many starred intervals, a long layout name, every panel toggle
+  docked) used to push the trailing tools — and the page — off the right edge, with
+  nothing to grab: the controls were not "collapsed", they were simply out of reach.
+  The bar is now one scrollable strip: no wrap, no page-wide horizontal scroll, the
+  pair pinned at the start and the right-hand cluster pinned at the end (both opaque,
+  with a soft edge on the side that has more content), and the middle slides under
+  them by **drag** (4px threshold, so a press that never moves is still a click and
+  every button keeps working), by **wheel** (the wheel moves the strip, not the page),
+  or by **Tab** (focusing a control scrolls it back into view). `data-scroll`,
+  `data-edge-start`/`data-edge-end` and `data-dragging` on the bar expose the state,
+  so a host can restyle it. `test/browser/sync-topbar-overflow.mjs` proves a 940px
+  window with seven favourite intervals and four docked panels: nothing past the right
+  edge, no page pan, drag and wheel both move the strip, the ends stay pinned, and a
+  plain click on Templates still opens it; a 1600px window has nothing to scroll.
 - **Chart chrome answers to SPACE, not to the device.** A phone showed neither the
   indicator legend nor the bottom chart controls however empty the plot was: the renderer
   folded every legend the moment the shell turned narrow (`setLayoutMode('mobile')`
