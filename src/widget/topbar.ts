@@ -31,7 +31,7 @@ const CSS = `
     font-size: var(--vela-font-size-md);
     flex: none;
 }
-.vela-widget-symbol, .vela-widget-tf, .vela-widget-style, .vela-widget-indicators, .vela-widget-action-left {
+.vela-widget-symbol, .vela-widget-tf, .vela-widget-style, .vela-widget-indicators, .vela-widget-templates, .vela-widget-action-left {
     all: unset;
     display: inline-flex;
     align-items: center;
@@ -53,10 +53,10 @@ const CSS = `
     padding: 0 10px;
     gap: 7px;
 }
-.vela-widget-tf, .vela-widget-style, .vela-widget-indicators, .vela-widget-action-left {
+.vela-widget-tf, .vela-widget-style, .vela-widget-indicators, .vela-widget-templates, .vela-widget-action-left {
     color: var(--vela-fg-bright);
 }
-.vela-widget-symbol:hover, .vela-widget-tf:hover, .vela-widget-style:hover, .vela-widget-indicators:hover, .vela-widget-action-left:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-widget-symbol:hover, .vela-widget-tf:hover, .vela-widget-style:hover, .vela-widget-indicators:hover, .vela-widget-templates:hover, .vela-widget-action-left:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
 /* Timeframe cluster: duration-sorted favorite chips, highlight in place, caret
    opening the full dropdown. With no favorites the caret is the merged trigger
    (label + chevron). An unstarred current value sits as an extra chip by the caret. */
@@ -191,6 +191,18 @@ const CSS = `
 @media (max-width: 900px) {
     .vela-widget-indicators .vela-widget-btnlabel { display: none; }
     .vela-widget-indicators { gap: 0; padding: 0 8px; }
+}
+/* The Templates dropdown is a LABELLED control in TradingView ("Templates ▾"), the
+   Indicators button's twin — same height, same padding, its own caret. It is NOT the
+   32px icon tile the right-hand cluster uses. */
+.vela-widget-templates { width: auto; font-size: 13px; }
+.vela-widget-tplcaret { display: inline-flex; align-items: center; margin-left: -2px; opacity: 0.8; }
+.vela-widget-tplcaret .vela-icon, .vela-widget-templates > .vela-icon { width: 14px; height: 14px; }
+@media (max-width: 900px) {
+    /* Glyph only: the fixed 32px tile, exactly like the icon tools around it. */
+    .vela-widget-templates .vela-widget-btnlabel { display: none; }
+    .vela-widget-templates { width: 32px; padding: 0; justify-content: center; }
+    .vela-widget-tplcaret { display: none; }
 }
 /* The chip and its save button travel as one slot: no hairline between them. */
 .vela-widget-layoutgroup { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; flex: 0 1 auto; min-width: 0; }
@@ -518,9 +530,19 @@ export class Topbar {
             btn.className = 'vela-widget-tool vela-widget-templates';
             btn.setAttribute('aria-haspopup', 'dialog');
             btn.setAttribute('aria-expanded', 'false');
+            // The word, exactly as Indicators carries it: TradingView's own Templates
+            // dropdown is LABELLED, and an icon-only glyph left traders hunting for a
+            // "Templates" option that was on screen all along. Same narrow-desktop rule —
+            // the glyph keeps the door, the word goes first.
             btn.setAttribute('aria-label', 'Chart templates');
             btn.title = 'Chart templates';
-            btn.appendChild(iconEl('templates', doc));
+            const tplLabel = doc.createElement('span');
+            tplLabel.className = 'vela-widget-btnlabel';
+            tplLabel.textContent = 'Templates';
+            const caret = doc.createElement('span');
+            caret.className = 'vela-widget-tplcaret';
+            caret.appendChild(iconEl('chevron-down', doc));
+            btn.append(iconEl('templates', doc), tplLabel, caret);
             this.templatesBtn = btn;
             this.templatesMenu = new TemplatesMenu({
                 templates: () => tpl.templates?.() ?? [],
