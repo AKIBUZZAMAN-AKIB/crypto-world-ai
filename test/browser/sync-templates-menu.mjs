@@ -228,6 +228,54 @@ try {
     }
     facts.widths = fits;
 
+    // ── 10. the PHONE door: More → Templates (the topbar is hidden there) ────────
+    const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    const mp = await phone.newPage();
+    const phoneErrors = [];
+    mp.on('pageerror', (e) => phoneErrors.push(String(e)));
+    await mp.goto(OFFLINE, { waitUntil: 'domcontentloaded' });
+    await mp.waitForFunction(() => window.__ws?.cells().length >= 1, null, { timeout: 60000 });
+    await mp.waitForTimeout(1000);
+    await mp.evaluate(() => window.__ws.saveTemplate('Phone set', false));
+    const topbarWidth = await mp.evaluate(() => {
+        const b = document.querySelector('.vela-widget-templates');
+        return b ? Math.round(b.getBoundingClientRect().width) : null;
+    });
+    await mp.locator('button[aria-label="More"]').first().click();
+    await mp.waitForTimeout(700);
+    await mp.locator('.vela-md button:has-text("Templates"), .vela-drawer button:has-text("Templates")').first().click();
+    await mp.waitForTimeout(500);
+    const phoneFacts = await mp.evaluate(() => {
+        const row = document.querySelector('[data-template="Phone set"]');
+        const r = row?.getBoundingClientRect();
+        const sheet = document.querySelector('.vela-md, .vela-drawer');
+        return {
+            row: !!row,
+            h: r ? Math.round(r.height) : null,
+            over: Math.round(document.documentElement.scrollWidth - innerWidth),
+            sheetOver: sheet ? Math.round(sheet.scrollWidth - sheet.clientWidth) : null,
+        };
+    });
+    facts.phone = { ...phoneFacts, topbarWidth };
+    assert(topbarWidth === 0, 'the phone hides the topbar (so the drawer is the only door)', topbarWidth);
+    assert(phoneFacts.row && phoneFacts.h >= 44, 'the phone lists the template on a 44px touch row', phoneFacts);
+    assert(phoneFacts.over <= 0 && phoneFacts.sheetOver <= 0, 'the phone sheet does not scroll sideways', phoneFacts);
+    await mp.locator('[data-template="Phone set"]').first().click();
+    await mp.waitForTimeout(700);
+    const phoneApplied = await mp.evaluate(() => {
+        const sheet = document.querySelector('.vela-md, .vela-drawer');
+        return {
+            closed: sheet ? sheet.hasAttribute('hidden') : true,
+            toast: document.body.textContent.includes('applied'),
+            indicators: window.__ws.cell('a').chart.indicators().length,
+        };
+    });
+    facts.phoneApplied = phoneApplied;
+    assert(phoneApplied.closed === true, 'applying from the phone closes the sheet', phoneApplied);
+    assert(phoneApplied.toast === true, 'and the phone says it applied', phoneApplied);
+    assert(phoneErrors.length === 0, 'no page errors on the phone', phoneErrors);
+    await phone.close();
+
     facts.errors = errors;
     assert(errors.length === 0, 'no page errors', errors);
 } finally {
