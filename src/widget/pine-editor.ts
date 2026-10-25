@@ -16,6 +16,7 @@ import { iconEl } from '../ui/icons';
 import { Tooltip } from '../ui/components/tooltip';
 import { isDarkColor } from '../core/color';
 import { SYNTAX_DARK, SYNTAX_LIGHT, WARNING } from '../core/palette';
+import { classicPineEntries } from '../core/native-indicators/classics/pine-source';
 import type { Vela } from '../Vela';
 import type { IndicatorHandle } from '../core/IndicatorHandle';
 import {
@@ -323,6 +324,38 @@ const CSS = `
 .vela-pe-ac-kind { margin-left: auto; font-size: 10px; opacity: 0.6; }
 
 /* ── console ───────────────────────────────────────────────────────────────────── */
+/* Built-in source view (TradingView's read-only { } view): a banner that explains the
+   lock and offers the one way out — create a working copy. */
+.vela-pe-builtin {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid color-mix(in srgb, ${WARNING} 45%, transparent);
+    background: color-mix(in srgb, ${WARNING} 14%, transparent);
+    color: var(--vela-fg);
+    font-size: 11.5px;
+    line-height: 1.35;
+}
+.vela-pe-builtin[hidden] { display: none; }
+.vela-pe-builtin b { font-weight: 600; }
+.vela-pe-builtin button {
+    margin-left: auto;
+    flex: none;
+    padding: 3px 9px;
+    border: 1px solid var(--vela-border);
+    border-radius: 4px;
+    background: var(--vela-bg);
+    color: var(--vela-fg);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.vela-pe-builtin button:hover { background: var(--vela-hover); }
+.vela-pe-input[readonly] { caret-color: transparent; }
+.vela-pe-builtin-list { max-height: 260px; overflow-y: auto; }
+
 .vela-pe-status {
     flex: none;
     display: flex;
@@ -512,6 +545,15 @@ export class PineEditor extends SidePanel {
 
 
     private readonly pop: HTMLDivElement;
+    /** The banner shown while a BUILT-IN script is open (read-only, like TradingView). */
+    private readonly builtinBar: HTMLDivElement;
+    private readonly builtinCopy: HTMLButtonElement;
+    /**
+     * The built-in script currently on screen, or null when the editor edits a library
+     * script. A built-in is READ-ONLY: TradingView opens the study's source in the editor
+     * but never lets an edit touch the study — you make a copy first.
+     */
+    private builtin: { title: string; source: string } | null = null;
 
     constructor(host: HTMLElement) {
         super(host, 'Pine editor', 'vela-pe', {
@@ -614,7 +656,18 @@ export class PineEditor extends SidePanel {
         this.pop.className = 'vela-pe-pop';
         this.pop.hidden = true;
 
-        this.body.append(this.grip, this.wrap, this.autocompleteEl, this.statusEl, this.consoleEl, this.pop);
+        this.builtinBar = doc.createElement('div');
+        this.builtinBar.className = 'vela-pe-builtin';
+        this.builtinBar.hidden = true;
+        const builtinText = doc.createElement('span');
+        builtinText.innerHTML = '<b>Built-in script</b> — read-only. Create a working copy to edit it.';
+        this.builtinCopy = doc.createElement('button');
+        this.builtinCopy.type = 'button';
+        this.builtinCopy.textContent = 'Make a copy';
+        this.builtinCopy.addEventListener('click', () => this.makeWorkingCopy());
+        this.builtinBar.append(builtinText, this.builtinCopy);
+
+        this.body.append(this.grip, this.builtinBar, this.wrap, this.autocompleteEl, this.statusEl, this.consoleEl, this.pop);
 
         this.bind();
         this.syncSurface();
@@ -676,7 +729,20 @@ export class PineEditor extends SidePanel {
      * action). Reuses the library entry with the same text, or adopts the code as a new
      * script — never edits a different script behind the trader's back.
      */
-    openSource(source: string, title?: string): void {
+    openSource(source: string, title?: string, opts: { readOnly?: boolean } = {}): void {
+        if (opts.readOnly) {
+            // A built-in study's source: shown, never edited. `render()` reads `builtin`
+            // instead of `active`, so the library and its versions are untouched.
+            this.builtin = { title: title || 'Built-in script', source };
+            this.input.readOnly = true;
+            this.builtinBar.hidden = false;
+            this.render();
+            this.focus();
+            return;
+        }
+        this.builtin = null;
+        this.input.readOnly = false;
+        this.builtinBar.hidden = true;
         const existing = this.library.scripts.find((s) => s.code === source);
         this.active = existing ?? (() => {
             const created = createScript('indicator', title || 'Chart script');
@@ -702,6 +768,9 @@ export class PineEditor extends SidePanel {
         const doc = this.body.ownerDocument;
 
         this.input.addEventListener('input', (event) => {
+            // A built-in's text is read-only; the textarea is `readOnly`, so this only fires
+            // for a programmatic paste — refuse it rather than editing the study.
+            if (this.builtin) return;
             this.active = editCode(this.active, this.input.value);
             this.commitActive();
             this.paint();
@@ -1288,6 +1357,10 @@ export class PineEditor extends SidePanel {
 
     /** The split button's main action: add the script, or push it to the live copy. */
     private async runPrimary(): Promise<void> {
+        if (this.builtin) {
+            this.makeWorkingCopy();
+            return;
+        }
         await this.run(this.handle ? 'update' : 'add');
     }
 
@@ -1380,13 +1453,38 @@ export class PineEditor extends SidePanel {
     // ── rendering ──────────────────────────────────────────────────────────────────
 
     private render(): void {
-        this.nameLabel.textContent = this.active.name;
-        this.versionTag.textContent = versionLabel(this.active);
-        this.dirtyDot.hidden = !isDirty(this.active);
-        this.primary.textContent = this.live ? 'Update on chart' : 'Add to chart';
-        if (this.input.value !== this.active.code) this.input.value = this.active.code;
+        const builtin = this.builtin;
+        this.nameLabel.textContent = builtin ? builtin.title : this.active.name;
+        this.versionTag.textContent = builtin ? 'built-in' : versionLabel(this.active);
+        this.dirtyDot.hidden = builtin ? true : !isDirty(this.active);
+        this.primary.textContent = builtin ? 'Make a copy' : this.live ? 'Update on chart' : 'Add to chart';
+        const code = builtin ? builtin.source : this.active.code;
+        if (this.input.value !== code) this.input.value = code;
+        this.builtinBar.hidden = !builtin;
+        this.input.readOnly = builtin !== null;
         this.paint();
         this.paintStatus();
+    }
+
+    /**
+     * TradingView's "create a working copy": the built-in's text becomes a NEW library
+     * script (the built-in itself is never modified), and the editor switches to it.
+     */
+    makeWorkingCopy(): void {
+        const builtin = this.builtin;
+        if (!builtin) return;
+        const created = createScript('indicator', `${builtin.title} copy`);
+        const copy = { ...created, code: builtin.source, versions: [{ ...created.versions[0]!, code: builtin.source }] };
+        this.library = { ...this.library, scripts: [...this.library.scripts, copy], activeId: copy.id };
+        this.active = copy;
+        this.builtin = null;
+        this.input.readOnly = false;
+        this.builtinBar.hidden = true;
+        this.syncHandle();
+        this.render();
+        this.persist();
+        this.pushMessage('info', `Working copy of “${builtin.title}” created — edit and add it to the chart.`);
+        this.focus();
     }
 
     /** Repaint the highlight layer, the gutter and the console — not the textarea value. */
@@ -1546,7 +1644,7 @@ export class PineEditor extends SidePanel {
     }
 
     /** One popover, four contents — a second click on the same trigger closes it. */
-    private openPop(kind: 'scripts' | 'history' | 'run' | 'more' | 'settings'): void {
+    private openPop(kind: 'scripts' | 'history' | 'run' | 'more' | 'settings' | 'builtin'): void {
         this.hideAutocomplete();
         if (!this.pop.hidden && this.pop.dataset.kind === kind) {
             this.pop.hidden = true;
@@ -1555,6 +1653,7 @@ export class PineEditor extends SidePanel {
         this.pop.dataset.kind = kind;
         this.pop.hidden = false;
         if (kind === 'scripts') this.renderScripts();
+        else if (kind === 'builtin') this.renderBuiltins();
         else if (kind === 'history') this.renderHistory();
         else if (kind === 'run') this.renderRunMenu();
         else if (kind === 'settings') this.renderSettings();
@@ -1612,6 +1711,9 @@ export class PineEditor extends SidePanel {
             this.actionRow('Rename…', () => this.openPop('scripts')),
             this.actionRow('New indicator', () => this.addScript('indicator')),
             this.actionRow('New strategy', () => this.addScript('strategy')),
+            // TradingView's "Open → Built-in script…": browse the studies whose own Pine
+            // code we can show, and open one read-only.
+            this.actionRow('Open built-in script…', () => this.openPop('builtin'), { hint: String(classicPineEntries().length) }),
             this.popSep(),
             this.actionRow('Remove from chart', () => this.removeFromChart(), { disabled: !this.live }),
             ...(this.onApplyToLayout
@@ -1676,8 +1778,53 @@ export class PineEditor extends SidePanel {
             this.popSep(),
             this.actionRow('New indicator', () => this.addScript('indicator')),
             this.actionRow('New strategy', () => this.addScript('strategy')),
+            this.actionRow('Built-in scripts…', () => this.openPop('builtin'), { hint: String(classicPineEntries().length) }),
         );
         // Focus without selecting: the caret lands after the name, ready to append.
+        requestAnimationFrame(() => field.focus());
+    }
+
+    /**
+     * TradingView's "Create new → Built-in…": the catalog of built-in studies that have a
+     * Pine implementation. Picking one opens it READ-ONLY (the study itself is never edited).
+     */
+    private renderBuiltins(): void {
+        const doc = this.body.ownerDocument;
+        const field = doc.createElement('input');
+        field.className = 'vela-pe-rename';
+        field.placeholder = 'Search built-ins';
+        field.setAttribute('aria-label', 'Search built-in scripts');
+        field.spellcheck = false;
+        const list = doc.createElement('div');
+        list.className = 'vela-pe-builtin-list';
+        const entries = classicPineEntries();
+        const paint = (): void => {
+            const query = field.value.trim().toLowerCase();
+            const rows: Node[] = entries
+                .filter((e) => query === '' || e.title.toLowerCase().includes(query))
+                .map((entry) => {
+                    const row = doc.createElement('button');
+                    row.className = 'vela-pe-row';
+                    row.type = 'button';
+                    const label = doc.createElement('span');
+                    label.className = 'vela-pe-row-label';
+                    label.textContent = entry.title;
+                    const meta = doc.createElement('span');
+                    meta.className = 'vela-pe-row-meta';
+                    meta.textContent = 'built-in';
+                    row.append(label, meta);
+                    row.addEventListener('click', () => {
+                        this.pop.hidden = true;
+                        this.openSource(entry.source, entry.title, { readOnly: true });
+                    });
+                    return row;
+                });
+            if (rows.length === 0) rows.push(doc.createTextNode('No built-in matches that name.'));
+            list.replaceChildren(...rows);
+        };
+        field.addEventListener('input', paint);
+        paint();
+        this.pop.replaceChildren(this.popTitle('Built-in scripts'), field, list);
         requestAnimationFrame(() => field.focus());
     }
 

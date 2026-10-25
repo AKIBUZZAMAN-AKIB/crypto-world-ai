@@ -25,6 +25,7 @@ import {
     type NativeIndicatorInfo,
     type NativeIndicatorOutput,
 } from '../native-indicators/NativeIndicator';
+import { classicPineSource } from '../native-indicators/classics/pine-source';
 import { LiveSession } from './LiveSession';
 import { IndicatorHandleImpl, type IndicatorController } from './IndicatorHandleImpl';
 import { inspectModels, type SceneInspection } from './inspect';
@@ -1963,14 +1964,36 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
      */
     addNativeIndicator(type: string, options: { inputs?: Record<string, InputValue> } = {}): IndicatorHandle {
         const descriptor = getNativeIndicator(type);
+        const pineSource = classicPineSource(type);
+        const sameType = (r: { native?: { type: string }; builtinType?: string }): boolean => r.native?.type === type || r.builtinType === type;
         if (!descriptor?.multiInstance) {
-            const existing = this.registry.all().find((r) => r.native?.type === type);
-            if (existing) return this.handles.get(existing.id) ?? new IndicatorHandleImpl(existing.id, existing.title, this, undefined, type);
+            const existing = this.registry.all().find(sameType);
+            if (existing) return this.handles.get(existing.id) ?? new IndicatorHandleImpl(existing.id, existing.title, this, pineSource, type);
+        }
+
+        // A built-in that HAS a Pine implementation runs that implementation: the values on
+        // screen are produced by the study's own Pine code (TradingView's built-ins are Pine
+        // too), while the handle keeps the built-in's identity so the legend, the settings
+        // dialog, layout persistence and the `{ }` source view all still see a built-in.
+        // A study whose visuals are not expressible as Pine (volume profile, compare, the
+        // layer-backed column studies) has no source and keeps the core-computed path.
+        if (pineSource !== undefined && descriptor !== undefined && this.hasEngine()) {
+            const id = this.registry.nextId('native', (candidate) => this.handles.has(candidate));
+            const builtinHandle = new IndicatorHandleImpl(id, descriptor.title, this, pineSource, type);
+            this.handles.set(id, builtinHandle);
+            const language = this.defaultLanguage;
+            const scriptOptions: AddIndicatorOptions = { title: descriptor.title, language, ...(options.inputs ? { inputs: { ...options.inputs } } : {}) };
+            this.registry.add({ id, title: descriptor.title, source: pineSource, options: scriptOptions, inputValues: { ...(options.inputs ?? {}) }, propValues: {}, builtinType: type });
+            void this.startIndicator(id, pineSource, scriptOptions, builtinHandle);
+            return builtinHandle;
         }
 
         const id = this.registry.nextId('native', (candidate) => this.handles.has(candidate));
         const title = descriptor?.title ?? type;
-        const handle = new IndicatorHandleImpl(id, title, this, undefined, type);
+        // A native study that HAS a Pine implementation carries it, so the legend can offer
+        // "Source code" exactly like TradingView's built-ins (a study without one — a volume
+        // profile, a layer-backed study — keeps `source` undefined and shows no icon).
+        const handle = new IndicatorHandleImpl(id, title, this, pineSource, type);
         this.handles.set(id, handle);
         if (!descriptor) {
             console.warn(`[vela] addNativeIndicator("${type}") — no native indicator registered for this type.`);
@@ -1988,7 +2011,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
     presentNativeIndicators(): string[] {
         return this.registry
             .all()
-            .map((r) => r.native?.type)
+            .map((r) => r.native?.type ?? r.builtinType)
             .filter((t): t is string => !!t);
     }
 
@@ -2963,6 +2986,13 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
     private applyModel(id: string, model: IndicatorModel): boolean {
         const record = this.registry.get(id);
         if (!record || record.hidden) return true; // a model arriving for a just-hidden indicator is dropped
+
+        // A PINE-BACKED BUILT-IN is a built-in to the rest of the chart (legend styling,
+        // ordering, `inspect()`, the object tree) even though its model came from the engine:
+        // stamp the catalog type the record stands for onto the model.
+        if (record.builtinType !== undefined && model.native === undefined) {
+            model.native = { type: record.builtinType };
+        }
 
         // A model arriving MID-SWITCH was computed over the outgoing market (a run already
         // in flight when setMarket quiesced — every poke is gated and the re-executions

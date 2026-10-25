@@ -1095,11 +1095,13 @@ export class VelaWorkspace {
             // native indicator has no text to show, so the action never appears there.
             this.editorLegendOff = registerLegendAction({
                 id: 'pine.source',
-                icon: 'code',
+                icon: 'braces',
                 tooltip: 'Source code',
                 order: -10,
                 when: (ind) => ind.source !== undefined,
-                run: (_ctx, ind) => this.openEditor(ind.source, ind.title),
+                // A NATIVE study's source is the built-in's own script: TradingView opens it
+                // read-only and offers a working copy. A script indicator opens editable.
+                run: (_ctx, ind) => this.openEditor(ind.source, ind.title, { readOnly: ind.nativeType !== undefined }),
             });
         } else {
             this.editorLegendOff = null;
@@ -1515,9 +1517,9 @@ export class VelaWorkspace {
      * on whatever the trader last had. Resolves false when the shell has no editor — no
      * scripting engine was configured, so there is nothing to run.
      */
-    openEditor(source?: string, title?: string): boolean {
+    openEditor(source?: string, title?: string, opts: { readOnly?: boolean } = {}): boolean {
         if (!this.pineEditor) return false;
-        if (source !== undefined) this.pineEditor.openSource(source, title);
+        if (source !== undefined) this.pineEditor.openSource(source, title, opts);
         this.dock.toggle('pineEditor', true);
         return true;
     }

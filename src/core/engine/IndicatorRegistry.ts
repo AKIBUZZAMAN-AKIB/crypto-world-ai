@@ -31,6 +31,14 @@ export interface IndicatorRecord {
      * showing it must START the fresh instance instead of resuming the old market's compute.
      */
     native?: { type: string; instance: NativeIndicator; descriptor: NativeIndicatorDescriptor; stale?: boolean; started?: boolean };
+    /**
+     * Set on a PINE-BACKED BUILT-IN: the catalog type (`'sma'`, `'rsi'`, …) whose own Pine
+     * implementation this record runs. Such a record is an ordinary script (`engine` /
+     * `prepared` / `session` drive it) that ALSO knows the built-in it stands for — the values
+     * on the chart come from the built-in's Pine code, exactly like TradingView's own studies.
+     * Absent on both a plain script and a core-computed native.
+     */
+    builtinType?: string;
     /** Routing/inputs options from addIndicator (used to re-route on a fresh first model). */
     options?: AddIndicatorOptions;
     /** The engine selected for this indicator's language. */

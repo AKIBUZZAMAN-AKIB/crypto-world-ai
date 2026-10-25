@@ -333,9 +333,12 @@ export interface LegendIndicatorInfo {
     id: string;
     title: string;
     /** The script source the indicator runs NOW (read at click time, so an in-place code
-     *  update shows through); undefined for a NATIVE (core-computed) indicator. The usual
-     *  `when` gate for source-centric actions. */
+     *  update shows through). A NATIVE study carries the Pine source of its built-in
+     *  implementation (read-only); a study with no Pine implementation carries none. */
     source?: string;
+    /** The registered type of a NATIVE (core-computed) study — `undefined` for a script.
+     *  Source-centric actions read it to open the built-in READ-ONLY, TradingView-style. */
+    nativeType?: string;
 }
 
 /**
@@ -385,7 +388,12 @@ export function legendActions(): LegendActionDescriptor[] {
 export function legendActionsProviderFor(chart: Vela, context: () => WidgetContext): (indicatorId: string) => LegendActionView[] {
     return (indicatorId) => {
         const find = (): IndicatorHandle | undefined => chart.indicators().find((h) => h.id === indicatorId);
-        const infoOf = (h: IndicatorHandle): LegendIndicatorInfo => ({ id: h.id, title: h.title, ...(h.source !== undefined ? { source: h.source } : {}) });
+        const infoOf = (h: IndicatorHandle): LegendIndicatorInfo => ({
+            id: h.id,
+            title: h.title,
+            ...(h.source !== undefined ? { source: h.source } : {}),
+            ...(h.nativeType !== undefined ? { nativeType: h.nativeType } : {}),
+        });
         const handle = find();
         if (!handle) return [];
         const info = infoOf(handle);

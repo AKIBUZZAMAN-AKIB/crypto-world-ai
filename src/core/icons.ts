@@ -131,6 +131,11 @@ registerIcon(
     'code',
     S('<path d="M5.4 4.6 2 8l3.4 3.4M10.6 4.6 14 8l-3.4 3.4"/><path d="M9.3 3.4 6.7 12.6" opacity="0.55"/>'),
 );
+// TradingView's "Source code" chip: literal braces, the icon its own built-ins show.
+registerIcon(
+    'braces',
+    S('<path d="M6.6 2.4c-1.3 0-2 .7-2 2v1.9c0 .9-.5 1.4-1.4 1.7.9.3 1.4.8 1.4 1.7v1.9c0 1.3.7 2 2 2"/><path d="M9.4 2.4c1.3 0 2 .7 2 2v1.9c0 .9.5 1.4 1.4 1.7-.9.3-1.4.8-1.4 1.7v1.9c0 1.3-.7 2-2 2"/>'),
+);
 registerIcon('camera', S('<path d="M5.5 4 6.5 2.5h3L10.5 4h3A1 1 0 0 1 14.5 5v7.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><circle cx="8" cy="8.5" r="2.6"/>'));
 registerIcon(
     'gear',

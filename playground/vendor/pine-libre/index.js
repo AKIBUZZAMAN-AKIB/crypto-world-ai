@@ -3349,6 +3349,18 @@ var Frame = class {
   get(name) {
     return this.slots.get(name);
   }
+  /**
+   * Start a fresh evaluation of this frame: locals lose their CURRENT value (they are
+   * recomputed on every call) but KEEP their committed history.
+   *
+   * Pine's "locals do not survive a call unless declared `var`" rule is about values, not
+   * about series: `f(src, len) => ta.sma(src, len)` reads `src[1]`, `src[2]`… from the
+   * parameter's OWN history, so dropping the slot would leave every windowed builtin
+   * inside a user function permanently warm-up (`na` on every bar).
+   */
+  resetTransient() {
+    for (const slot of this.slots.values()) if (!slot.persistent) slot.current = null;
+  }
 };
 
 // src/runtime/builtins/types.ts
@@ -8591,12 +8603,7 @@ var Runtime = class _Runtime {
   endBar() {
     for (const [path, frame] of this.frames) {
       for (const slot of frame.slots.values()) slot.commit();
-      if (path !== "") {
-        for (const [name, slot] of [...frame.slots]) {
-          if (!slot.persistent) frame.slots.delete(name);
-        }
-        if (frame.slots.size === 0) this.frames.delete(path);
-      }
+      if (path !== "") frame.resetTransient();
     }
   }
   seedBarSeries(bar, index) {
@@ -9394,7 +9401,7 @@ var Runtime = class _Runtime {
       frame = new Frame(path);
       this.frames.set(path, frame);
     }
-    for (const [name, slot] of [...frame.slots]) if (!slot.persistent) frame.slots.delete(name);
+    frame.resetTransient();
     const offset = preEvaluated ? preEvaluated.length : 0;
     const provided = fn.params.map((param, i) => {
       if (preEvaluated && i < preEvaluated.length) return { value: preEvaluated[i] };

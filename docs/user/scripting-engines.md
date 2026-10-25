@@ -104,9 +104,39 @@ new VelaWorkspace('#app', {
 - **Version history** (⋯ → *Version history*) — every version with its time and whether it
   came from a save or from a chart update. Restoring one loads it as a **draft**; Save
   turns it into a new version, so history is append-only.
-- **Source code** — every legend row backed by a *script* carries a code chip on hover; it
-  opens that source in the editor. Native indicators have no source, so the chip never
-  appears on their rows (`registerLegendAction` with `when: (ind) => ind.source !== undefined`).
+- **Source code** — every legend row whose study has Pine code carries the `{ }` chip on
+  hover, exactly like TradingView's built-ins; it opens that source in the editor. A *script*
+  opens editable. A **built-in** opens **read-only**, with an amber banner and *Make a copy*
+  (the copy is a new library script — the built-in itself is never modified); the code chip
+  and the banner sit behind `registerLegendAction` with `when: (ind) => ind.source !== undefined`.
+- **Open → Built-in script…** (⋯ menu, or *Built-in scripts…* in the script list) — the
+  catalog of built-in studies that have a Pine implementation, searchable, each opening
+  read-only. Studies whose visuals are not Pine (a volume profile, a compare overlay) have
+  no code, so they appear in neither place — TradingView's own rule: no `{ }`, no source.
+
+### Built-ins run their Pine code
+
+A built-in study that has a Pine implementation is **executed** through the registered
+engine: `chart.addNativeIndicator('sma')` compiles and runs the SMA script from
+`src/core/native-indicators/classics/pine-source.ts`, and the plotted values are that
+script's values. The handle still reports `nativeType: 'sma'`, so the legend keeps the
+built-in's short title, layout persistence restores it by type, the picker's *present*
+state and `inspect()` all behave as before.
+
+- The script declares `shorttitle` from the catalog, so the legend reads **SMA**, not
+  *Simple Moving Average* — the same label TradingView shows.
+- Inputs come from the script's `input.*` declarations (the settings dialog edits them and
+  the chart re-runs), so the defaults are the study's own: `hlc3` for CCI and VWAP, `close`
+  for the rest.
+- A study with **no** Pine implementation (`volume`, `vpvr`, `compare`, the session
+  studies) keeps the core-computed path and shows no `{ }` chip.
+- With no engine registered for the chart's default language, every built-in falls back to
+  the core compute, so a host with candles only still gets its indicators.
+
+`test/classic-pine.test.ts` is the contract: every script is a real catalog type, compiles,
+emits a drawable model, and declares the catalog's `overlay`. `test/pine-parity.test.ts`
+(opt-in, `PINE_PARITY=1`) runs a study both ways — native compute and Pine — and prints the
+drift, so a script that stops matching its built-in is visible rather than assumed.
 
 **Editor settings** (⋯ → *Editor settings*, the same block TradingView keeps there):
 suggestions as you type, the **minimap** (a click jumps), the **line-length guide** at the
