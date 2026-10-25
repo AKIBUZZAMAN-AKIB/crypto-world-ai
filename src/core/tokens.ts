@@ -56,6 +56,10 @@ export function themeTokens(t: VelaTheme): Record<string, string> {
         // the chart background — opaque, or candles read through the panel.
         '--vela-surface-elev': elevated,
         '--vela-surface-overlay': elevated,
+        // The card/panel surface — the same flattened wash, under the name the widget
+        // chrome reaches for (a phone bar, a preset tile, a menu card). Without it those
+        // rules resolved to nothing and the surface behind read straight through.
+        '--vela-panel': elevated,
         // Recessed fields (inputs, selects) read as cut INTO their panel, so they fall back
         // to the chart surface and are separated from the panel by their border alone.
         '--vela-surface-sunken': t.background,

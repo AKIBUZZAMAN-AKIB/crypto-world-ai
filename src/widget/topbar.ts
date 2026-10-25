@@ -2,6 +2,7 @@
 // every chart type registered through the plugin SDK, labels from the registry).
 import { Menu, type MenuItemDescriptor } from '../ui/components/menu';
 import { Tooltip } from '../ui/components/tooltip';
+import { LayoutMenu } from './layout-menu';
 import { LayoutPicker, type LayoutPickerShape } from './layout-picker';
 import { iconEl, iconMarkup, registerIcon } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
@@ -145,6 +146,53 @@ const CSS = `
     color: var(--vela-fg);
 }
 .vela-widget-action:hover { background: var(--vela-hover); }
+/* ── the layout NAME chip (after undo/redo) ────────────────────────────────────
+   TradingView's top toolbar ends in its layout name with a caret, and paints a save
+   sign under it the moment the chart drifts. The name is the status: it is the one
+   control that answers "is my work saved?" without a tooltip. */
+.vela-widget-layoutname {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    /* Auto, not the icon tool's 32px: this one is a LABEL with a caret. It may SHRINK
+       (min-width: 0 defeats the nowrap min-content floor) so a long layout name
+       ellipsises instead of pushing the page sideways on a narrow desktop. */
+    width: auto;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: min(190px, 26vw);
+    min-width: 44px;
+    height: 30px;
+    padding: 0 6px 0 9px;
+    border-radius: 4px;
+    color: var(--vela-fg-muted);
+    font-size: 12.5px;
+    font-weight: 550;
+    white-space: nowrap;
+}
+.vela-widget-layoutname:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-widget-layoutname[aria-expanded='true'] { background: var(--vela-hover-strong); color: var(--vela-fg-bright); }
+.vela-widget-layoutname-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.vela-widget-layoutname[data-untitled='1'] .vela-widget-layoutname-text { font-style: italic; color: var(--vela-fg-faint); }
+.vela-widget-layoutname .vela-icon { flex: none; font-size: 11px; opacity: 0.65; }
+.vela-layout-dot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--vela-accent);
+}
+.vela-layout-dot[hidden] { display: none !important; }
+.vela-widget-layoutsave[data-dirty='1'] { color: var(--vela-accent); }
+.vela-widget-layoutsave[data-dirty='1']:hover:not(:disabled) { background: var(--vela-hover); color: var(--vela-accent); }
+/* Narrow DESKTOP widows: the glyphs stay, the word beside the Indicators glyph goes —
+   chrome that would otherwise squeeze the layout name down to its caret. */
+@media (max-width: 900px) {
+    .vela-widget-indicators .vela-widget-btnlabel { display: none; }
+    .vela-widget-indicators { gap: 0; padding: 0 8px; }
+}
+/* The chip and its save button travel as one slot: no hairline between them. */
+.vela-widget-layoutgroup { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; flex: 0 1 auto; min-width: 0; }
 `;
 
 const BUILTIN_STYLE_LABELS: Record<string, string> = {
@@ -260,7 +308,9 @@ export interface TopbarOptions {
         onSaveChanges?: () => void;
         autosave?: () => boolean;
         onToggleAutosave?: (on: boolean) => void;
-        onDuplicateLayout?: (name: string) => void;
+        /** Duplicate a saved layout; returns the name the copy landed under (null when the
+         *  name list refused it) so the panel can report what happened. */
+        onDuplicateLayout?: (name: string) => string | null;
         templates?: () => Array<{ name: string; count: number; symbol?: string; timeframe?: string }>;
         onSaveTemplate?: (name: string, includeMarket: boolean) => boolean;
         onApplyTemplate?: (name: string, target: 'active' | 'all') => number;
@@ -326,6 +376,14 @@ export class Topbar {
     private layoutButton: HTMLElement | null = null;
     private layoutPicker: LayoutPicker | null = null;
     private layoutId: string | null = null;
+    /** The layout NAME chip + its save button (the 'layouts' slot); null when the host
+     *  supplied no layout block or the composition hides the entry. */
+    private layoutsChip: HTMLButtonElement | null = null;
+    private layoutsNameEl: HTMLElement | null = null;
+    private layoutsDot: HTMLElement | null = null;
+    private layoutSaveBtn: HTMLButtonElement | null = null;
+    private layoutMenu: LayoutMenu | null = null;
+    private layoutsGroup: HTMLElement | null = null;
     private readonly tfMenu: Menu;
     private readonly styleMenu: Menu;
     private readonly tooltips: Tooltip[] = [];
@@ -415,7 +473,13 @@ export class Topbar {
         if (opts.onIndicatorsClick && !topbarActionOverride('indicators')) {
             indicatorsBtn = doc.createElement('button');
             indicatorsBtn.className = 'vela-widget-indicators';
-            indicatorsBtn.append(iconEl('indicators', doc), doc.createTextNode('Indicators'));
+            // The word, in its own span: on a narrow desktop the toolbar keeps the glyph
+            // and gives up the label (TradingView's own behaviour) instead of squeezing
+            // the layout name to a chevron.
+            const indLabel = doc.createElement('span');
+            indLabel.className = 'vela-widget-btnlabel';
+            indLabel.textContent = 'Indicators';
+            indicatorsBtn.append(iconEl('indicators', doc), indLabel);
             indicatorsBtn.addEventListener('click', opts.onIndicatorsClick);
         }
 
@@ -465,6 +529,47 @@ export class Topbar {
             this.layoutButton = doc.createElement('button');
             this.layoutButton.className = 'vela-widget-style';
             this.renderLayoutButton(doc);
+        }
+
+        // ── the layout NAME chip (the 'layouts' slot) ──────────────────────────
+        // TradingView's layout manager lives in the top toolbar, right after undo/redo:
+        // the saved layout's name, a caret, and the save verb. The name IS the status —
+        // the dot beside it is the unsaved-changes sign the guide tells traders to watch.
+        if (opts.layout && vis('layouts')) {
+            const layout = opts.layout;
+            this.layoutsGroup = doc.createElement('span');
+            this.layoutsGroup.className = 'vela-widget-layoutgroup';
+            const chip = doc.createElement('button');
+            chip.type = 'button';
+            chip.className = 'vela-widget-tool vela-widget-layoutname';
+            chip.setAttribute('aria-haspopup', 'dialog');
+            chip.setAttribute('aria-expanded', 'false');
+            this.layoutsNameEl = doc.createElement('span');
+            this.layoutsNameEl.className = 'vela-widget-layoutname-text';
+            this.layoutsDot = doc.createElement('span');
+            this.layoutsDot.className = 'vela-layout-dot';
+            this.layoutsDot.hidden = true;
+            this.layoutsDot.setAttribute('aria-hidden', 'true');
+            chip.append(this.layoutsNameEl, this.layoutsDot, iconEl('chevron-down', doc));
+            this.layoutsChip = chip;
+            this.layoutMenu = new LayoutMenu({
+                layout,
+                onChange: () => this.setLayoutState(),
+                onOpenChange: (open) => chip.setAttribute('aria-expanded', String(open)),
+            });
+            chip.addEventListener('click', () => this.layoutMenu?.open(chip));
+            const save = this.toolButton('vela-widget-layoutsave', 'save', 'Save layout — Ctrl+S', () => {
+                // Untitled: there is nothing to overwrite, so the menu's naming flow is the
+                // only honest destination (the button must never mint a name on its own).
+                if (layout.activeLayout?.() === null || layout.activeLayout === undefined) {
+                    this.layoutMenu?.open(chip);
+                    return;
+                }
+                layout.onSaveChanges?.();
+                this.setLayoutState();
+            }, this.tooltips);
+            this.layoutSaveBtn = save;
+            this.layoutsGroup.append(chip, save);
         }
 
         const sep = (): HTMLElement => {
@@ -518,6 +623,8 @@ export class Topbar {
                     return left ? [this.leftActionsHost, this.leftActionsSep] : [this.actionsHost];
                 case 'undo-redo':
                     return [this.undoBtn, this.redoBtn];
+                case 'layouts':
+                    return this.layoutsGroup ? [this.layoutsGroup] : [];
                 case 'replay':
                     return this.replayBtn ? [this.replayBtn] : [];
                 case 'alerts':
@@ -645,6 +752,9 @@ export class Topbar {
                 : {}),
         });
         if (opts.styleFavorites) this.styleFavs = [...opts.styleFavorites];
+        // First paint of the layout chip: an empty name element would read as a blank
+        // button until the first save.
+        this.setLayoutState();
     }
 
     /** Open the layout popover (optionally on one chart's column) — the workspace's door
@@ -713,6 +823,37 @@ export class Topbar {
     }
 
     /** Reflect the current workspace layout (no-op without the layout dropdown). */
+    /**
+     * Repaint the layout name chip from the host's live state — the name, the unsaved dot
+     * and the save button's weight. Push it after every verb (save, open, rename, copy,
+     * autosave, delete) and after the document drifts.
+     */
+    setLayoutState(): void {
+        const layout = this.opts.layout;
+        const chip = this.layoutsChip;
+        if (!layout || !chip || !this.layoutsNameEl) return;
+        const name = layout.activeLayout?.() ?? null;
+        const rows = layout.savedLayouts?.() ?? [];
+        const dirty = rows.some((r) => r.active && r.dirty === true);
+        this.layoutsNameEl.textContent = name ?? 'Untitled layout';
+        if (name) delete chip.dataset.untitled;
+        else chip.dataset.untitled = '1';
+        chip.title = name ? `Layout — ${name}` : 'Layout — untitled';
+        // The name is spoken with its state: a screen reader hears the same answer the
+        // dot gives the eye.
+        chip.setAttribute(
+            'aria-label',
+            `${name ?? 'Untitled layout'}${dirty ? ', unsaved changes' : ''}. Open the layout menu`,
+        );
+        if (this.layoutsDot) this.layoutsDot.hidden = !dirty;
+        if (this.layoutSaveBtn) {
+            if (dirty) this.layoutSaveBtn.dataset.dirty = '1';
+            else delete this.layoutSaveBtn.dataset.dirty;
+        }
+        this.layoutMenu?.refresh();
+        this.layoutPicker?.refresh();
+    }
+
     setLayout(id: string): void {
         if (!this.layoutButton) return;
         this.layoutId = id;
@@ -854,6 +995,7 @@ export class Topbar {
         this.tfMenu.destroy();
         this.styleMenu.destroy();
         this.layoutPicker?.destroy();
+        this.layoutMenu?.destroy();
         for (const t of [...this.tooltips, ...this.panelTooltips, ...this.actionTooltips]) t.destroy();
         this.el.remove();
     }

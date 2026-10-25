@@ -6,6 +6,21 @@ All notable changes to Vela, newest first.
 
 ### Added
 
+- **The layout menu, where TradingView keeps it: right after undo/redo.** The topbar
+  grows a **saved-layout chip** — the active layout's name, a dot while it has unsaved
+  changes, and a **Save** button beside it — that opens the panel the name implies: the
+  name and live status (*Unsaved changes* / *Autosave is writing…* / *All changes
+  saved*), a primary **Save layout** wearing its `Ctrl`/`⌘ S` chord (or *Name and save…*
+  while the set is still *Untitled layout*), **Autosave** as a switch (on: each edit is
+  written ~2 s after it settles and the manual Save stands down, TradingView's own
+  behaviour), **Save as…**, **Make a copy** (the duplicate opens as its own layout; a
+  taken name is refused, never overwritten), **Rename…**, **Share link** (`#l1=…`, the
+  same codec as a whole-workspace link, carrying this one layout), **Export chart data**
+  (CSV), and an **Open layout** list — every saved layout with its dirty dot, chart and
+  indicator counts, the active row checked and a kebab for open / rename / copy / share /
+  export / **delete**, which arms on the first tap and deletes on the second. Escape
+  returns focus to the chip; the panel portals into the shell so it wears the theme's
+  surface, border and shadow. Composition id `'layouts'`, last in the default `left`.
 - **Hidden charts have names.** A smaller layout parks the charts it no longer shows;
   on a phone the **More** stop now carries a count badge, and one tap into the sheet
   lists them by symbol and interval (plus their indicator count). Tapping one brings
@@ -48,6 +63,9 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **`--vela-panel` is a token now.** Chrome surfaces had been painting `var(--vela-panel)`
+  against a token no theme defined — the mobile bar's band, the More drawer and the new
+  layout menu — so they showed the page through. It aliases the elevated surface.
 - **The phone bar is a toolbar in three zones, not one strip that ran out of room.**
   TradingView's phone chrome and Apple's HIG toolbar guidance agree on the shape: a
   leading title and trailing actions stay put, and everything else moves into a

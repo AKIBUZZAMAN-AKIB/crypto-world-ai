@@ -570,6 +570,10 @@ export class VelaWorkspace {
     private readonly savedFingerprints = new Map<string, string>();
     /** Pending autosave (debounced; a burst of edits writes once). */
     private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+    /** Last layout-chip signature pushed to the top bar (name|dirty|autosave|count). */
+    private layoutChipSig = '';
+    /** Trailing repaint of that chip after a burst of document changes. */
+    private layoutChipTimer: ReturnType<typeof setTimeout> | null = null;
     /** Inside a click-driven time alignment: viewport echoes are the controller's own. */
     private timeBusy = false;
     // ── persistence (state surface + adapter plumbing) ──
@@ -2374,12 +2378,38 @@ export class VelaWorkspace {
         if (this.destroyed || !this.booted) return;
         this.docRevision += 1;
         this.scheduleAutosave();
+        this.scheduleLayoutChip();
         if (this.stateTimer != null) clearTimeout(this.stateTimer);
         this.stateTimer = setTimeout(() => {
             this.stateTimer = null;
             this.events.emit('state:changed', undefined);
             this.persistNow();
         }, 500);
+    }
+
+    /**
+     * Keep the top bar's layout NAME honest: the saved name, the unsaved-changes dot, and
+     * the autosave state. Cheap to call — the signature guard means the DOM is only
+     * touched when one of those four things actually moved, so a rename repaints at once
+     * while a drag that dirties the document costs one repaint after it settles.
+     */
+    private syncLayoutChip(): void {
+        if (this.destroyed) return;
+        const name = this.activeSavedLayout;
+        const dirty = this.isActiveLayoutDirty();
+        const sig = `${name ?? ''}|${dirty ? 1 : 0}|${this.autosaveEnabled() ? 1 : 0}|${this.savedLayouts.size}`;
+        if (sig === this.layoutChipSig) return;
+        this.layoutChipSig = sig;
+        this.topbar?.setLayoutState();
+    }
+
+    /** A document change is a reason to LOOK at the dot — not to fingerprint every edit. */
+    private scheduleLayoutChip(): void {
+        if (this.destroyed || this.layoutChipTimer != null) return;
+        this.layoutChipTimer = setTimeout(() => {
+            this.layoutChipTimer = null;
+            this.syncLayoutChip();
+        }, 350);
     }
 
     /**
@@ -3438,6 +3468,7 @@ export class VelaWorkspace {
         this.markStateDirty();
         if (on && this.activeSavedLayout) this.saveLayout(this.activeSavedLayout, { silent: true });
         this.events.emit('layout:prefs', undefined);
+        this.syncLayoutChip();
         this.toast(on ? 'Autosave on — the open layout follows every change' : 'Autosave off — save when you are ready', 'info');
     }
 
@@ -3486,6 +3517,7 @@ export class VelaWorkspace {
         const meta = this.layoutMeta.get(name);
         if (meta) this.layoutMeta.set(copy, { ...meta });
         this.markStateDirty();
+        this.syncLayoutChip();
         this.toast(`Layout “${copy}” created`, 'success');
         return copy;
     }
@@ -3555,6 +3587,8 @@ export class VelaWorkspace {
         // the snapshot is. A thumbnail, when one was captured, is preserved.
         const prev = this.layoutMeta.get(trimmed) ?? {};
         this.layoutMeta.set(trimmed, { ...prev, savedAt: Date.now() });
+        // The chip must lose its dot the instant the write lands, not 350ms later.
+        this.syncLayoutChip();
     }
 
     /**
@@ -3580,6 +3614,7 @@ export class VelaWorkspace {
         this.activeSavedLayout = name;
         // applyState reports its own changes; from here the doc matches the snapshot.
         this.savedRevision = this.docRevision;
+        this.syncLayoutChip();
         this.toast(`Layout “${name}” opened`, 'info');
     }
 
@@ -3593,6 +3628,7 @@ export class VelaWorkspace {
         this.savedFingerprints.delete(name);
         if (this.activeSavedLayout === name) this.activeSavedLayout = null;
         this.markStateDirty();
+        this.syncLayoutChip();
     }
 
     /**
@@ -3624,6 +3660,7 @@ export class VelaWorkspace {
             this.savedFingerprints.set(name, print);
         }
         this.markStateDirty();
+        this.syncLayoutChip();
         this.toast(`Layout “${from}” renamed to “${name}”`, 'success');
         return true;
     }

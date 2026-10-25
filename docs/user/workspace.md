@@ -528,7 +528,8 @@ they work from the very first keystroke, before any click.
   opens the full list — or the combined label+caret when nothing is starred),
   chart-style dropdown (built-ins ∪ [plugin chart types](../contributing/plugin-sdk.md),
   with their icons and labels), the layout dropdown (multi-chart grids only),
-  Indicators picker, undo/redo (same history as Ctrl+Z / Ctrl+Y), alerts bell,
+  Indicators picker, undo/redo (same history as Ctrl+Z / Ctrl+Y), the saved-layout
+  chip and its Save button (see [The layout menu](#the-layout-menu)), alerts bell,
   data-window and object-tree panel toggles, then any
   [contributed actions](../contributing/plugin-sdk.md#widget-actions--registerwidgetaction)
   in the right-hand cluster. The whole bar is composable — see
@@ -620,6 +621,32 @@ they work from the very first keystroke, before any click.
   before the settings entry at the bottom of the menu (see [Right-click menu
   actions](../contributing/plugin-sdk.md#right-click-menu-actions)).
 
+### The layout menu
+
+The chip after undo/redo reads the active layout's name — *Untitled layout* until it has
+one — and lights a dot the moment there is something to save. Its **Save** button is the
+same verb as the panel's primary row (and `Ctrl`/`⌘ S`): a named layout is written in
+place, an untitled one opens the naming dialog first. Pressing the chip opens the panel
+TradingView keeps in this spot:
+
+- the name and its status — *Unsaved changes*, *Autosave is writing…*, *All changes saved*;
+- **Save layout**, wearing its chord — or *Name and save…* on an untitled set;
+- **Save as…** — a copy under a new name, which becomes the active layout;
+- **Make a copy…** — duplicates the active layout and opens the duplicate;
+- **Rename…** — the dialog refuses a name another layout already holds;
+- **Share link** — copies a `#l1=…` URL that opens this one layout;
+- **Export chart data** — the active layout's series as CSV;
+- **Autosave** — a switch; while it is on every edit is written about two seconds after it
+  settles and the manual Save stands down, as in TradingView's own autosave;
+- **Open layout · N** — every saved layout with a dirty dot, its chart and indicator
+  counts, a check on the active row, and a kebab holding open / rename / copy / share /
+  export / delete. Delete arms on the first tap and deletes on the second.
+
+The panel writes the same store the More drawer's layout pane and the layout picker read,
+so a layout saved from any of them appears in all three. Escape closes the panel and puts
+focus back on the chip, and every row is reachable from the keyboard. Composition id
+`'layouts'`; it renders on multi-chart shells only.
+
 ### Following menus and panels
 
 Every menu, popover, dialog, drawer and side panel announces itself with a DOM event on its
@@ -709,6 +736,7 @@ Entries come from one shared vocabulary:
 | `'timeframes'` | The favorite chips + timeframe dropdown group. |
 | `'style'` | The chart-style dropdown. |
 | `'layout'` | The layout dropdown (renders on multi-chart shells only). |
+| `'layouts'` | The saved-layout chip — name, unsaved dot, Save — and the [layout menu](#the-layout-menu) it opens (multi-chart shells only; default last in `left`). |
 | `'indicators'` | The Indicators slot — the built-in button, or a plugin's [slot override](../contributing/plugin-sdk.md#replacing-a-built-in-button--slot-overrides). Omitting it removes the button, the mobile stop, the `/` shortcut, and skips the picker dialog. |
 | `'undo-redo'` | The undo/redo pair. |
 | `'replay'` | The bar-replay button — opens the replay menu (Select bar / Select date / Random bar). Renders only when the shell runs the replay chrome (`replay: false` removes it, and the mobile bar has no counterpart). |

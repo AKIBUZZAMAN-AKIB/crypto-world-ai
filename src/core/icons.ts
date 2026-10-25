@@ -200,6 +200,9 @@ registerIcon('unlock', S('<rect x="3.2" y="7" width="9.6" height="6.6" rx="1.2"/
 // they read at 13px beside the row label.
 registerIcon('download', S('<path d="M8 2.4v7.6M4.8 6.8 8 10l3.2-3.2"/><path d="M2.6 12.6h10.8"/>'));
 registerIcon('upload', S('<path d="M8 10.4V2.8M4.8 6 8 2.8 11.2 6"/><path d="M2.6 12.6h10.8"/>'));
+// Save is a disk, not an arrow: the layout verbs sit beside download/upload, and a
+// second arrow pair there would be ambiguous at 13px.
+registerIcon('save', S('<path d="M2.8 2.8h7.8l2.6 2.6v7.4a.8.8 0 0 1-.8.8H2.8a.8.8 0 0 1-.8-.8V3.6a.8.8 0 0 1 .8-.8Z"/><path d="M5.2 2.8v3.1h4.4V2.8"/><path d="M4.9 9h6.2v4.6H4.9Z"/>'));
 // A share link is a chain, not a page-with-an-arrow: the arrow verbs above mean
 // file in/out, and a link is neither.
 registerIcon('link', S('<path d="M6.4 9.6a2.6 2.6 0 0 0 3.7 0l2.3-2.3a2.6 2.6 0 0 0-3.7-3.7l-1.2 1.2"/><path d="M9.6 6.4a2.6 2.6 0 0 0-3.7 0L3.6 8.7a2.6 2.6 0 0 0 3.7 3.7l1.2-1.2"/>'));
