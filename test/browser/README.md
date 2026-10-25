@@ -46,6 +46,7 @@ Environment knobs:
 | `sync-links.mjs` | crosshair (leader's bar on every follower), click-to-align time, style prefs, tab link across two real pages |
 | `sync-responsive.mjs` | 560–720 px (phone sheet below 640, desktop popover above), coarse-pointer target sizes |
 | `sync-saved-layouts.mjs` | save → inline rename → download a `.json` → import (name collision) → open |
+| `sync-pine-subpane.mjs` | an `overlay=false` Pine study lands in its OWN pane: the 70/30 `fill(hline, hline)` wash, the RSI line and a divergence label pill are all measured as pixels |
 
 `playground/offline.html` feeds every cell the SAME synthetic bars over a provider that
 resolves any ticker, so instants, click times and visible ranges mean the same thing on
