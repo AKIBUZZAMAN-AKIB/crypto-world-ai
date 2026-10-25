@@ -10,6 +10,7 @@
 // chart, hands it over, and paints the result. Kept in sync via the chart's event bus, and
 // rebound to each new chart instance after a widget rebuild.
 import type { Vela } from '../Vela';
+import type { DataWindowRow } from '../core/ports/IChartRenderer';
 import type { IndicatorHandle } from '../core/IndicatorHandle';
 import type { SerializedDrawing } from '../core/drawings/Drawing';
 import { injectStyles } from '../ui/styles';
@@ -144,6 +145,47 @@ const CSS = `
 .vela-ot-btn:hover:not(:disabled) { background: var(--vela-active); color: var(--vela-fg-bright); }
 /* The last plot value of an indicator row — the legend's readout, which a phone never sees
    (the grid folds every legend row away). Tabular figures so the column does not jitter. */
+.vela-ot-fold {
+    all: unset;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-right: -2px;
+    border-radius: 4px;
+    color: var(--vela-fg-muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.vela-ot-fold:hover { color: var(--vela-fg); background: var(--vela-hover); }
+.vela-ot-fold[data-open='1'] { color: var(--vela-fg); }
+/* The opened values block: the data window's rows, under the study that produced them. */
+.vela-ot-values {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 2px 8px 6px 34px;
+}
+.vela-ot-vrow {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+}
+.vela-ot-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--vela-fg-muted); }
+.vela-ot-vlabel {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--vela-fg-muted);
+}
+.vela-ot-vrow .vela-ot-val { max-width: none; color: var(--vela-fg); }
 .vela-ot-val {
     flex: none;
     max-width: 96px;
@@ -407,6 +449,14 @@ export class ObjectTree extends SidePanel {
     private pass: Pass | null = null;
     /** Live value spans by indicator id, plus the frame that will refresh them. */
     private readonly valueSpans = new Map<string, HTMLElement>();
+    /**
+     * Indicator rows showing their WHOLE readout: the data window's rows for that study,
+     * one line per plot. A phone never shows the legend, so this is where a trader reads
+     * every value of a study without opening its settings.
+     */
+    private readonly openValues = new Set<string>();
+    /** Value spans inside an opened row, in readout-row order. */
+    private readonly blockSpans = new Map<string, HTMLElement[]>();
     private valueFrame = 0;
     private menu: Menu | null = null;
     private menuActions = new Map<string, () => void>();
@@ -417,6 +467,9 @@ export class ObjectTree extends SidePanel {
         /** The price row's avatar icon URL for a raw symbol — routed by the shell to the
          *  owning provider's `resolveSymbolIcon`. Absent ⇒ the initials badge. */
         private readonly iconFor?: (symbol: string) => string | undefined,
+        /** Host seam for the row's "Source code" entry — the legend chip's twin, and on a
+         *  phone the only way to a study's code from the tree. */
+        private readonly opts: { onSource?: (source: string, title: string, readOnly: boolean) => void } = {},
     ) {
         super(host, 'Object tree', 'vela-ot');
         injectStyles(STYLE_ID, CSS, host.ownerDocument);
@@ -447,6 +500,9 @@ export class ObjectTree extends SidePanel {
         // The readout follows the live bar; only the value TEXT is rewritten (see
         // refreshValues) so the list is never rebuilt on a tick.
         this.unsubs.push(chart.on('bar', () => this.refreshValues()));
+        // …and it follows the CROSSHAIR: scrubbing the chart reads every study's value at
+        // that bar here, which is the phone's only readout (the legend is folded away).
+        this.unsubs.push(chart.renderer.onCrosshairMove(() => this.refreshValues()));
         // Selection both stores and repaints, in that order: a refresh triggered before the id
         // is recorded would paint the previous selection and never come back to fix it.
         this.unsubs.push(
@@ -507,14 +563,24 @@ export class ObjectTree extends SidePanel {
     /** One indicator's newest plot value, pre-formatted by the renderer. Empty when the
      *  chart has no readout for it (a hidden or not-yet-run indicator). */
     private valueFor(id: string): string {
+        return this.readoutRows(id)[0]?.value ?? '';
+    }
+
+    /**
+     * One indicator's readout rows — every plot the data window shows, in its order.
+     * Matched by ID first (two studies can share a title), then by title for a renderer
+     * that predates `DataWindowGroup.id`.
+     */
+    private readoutRows(id: string): DataWindowRow[] {
         const chart = this.chart;
-        if (!chart) return '';
+        if (!chart) return [];
         const readout = chart.renderer.dataWindowReadout?.();
-        if (!readout) return '';
+        if (!readout) return [];
+        const byId = readout.groups.find((g) => g.id === id);
+        if (byId) return byId.rows;
         const title = chart.indicators().find((h) => h.id === id)?.title;
-        if (title === undefined) return '';
-        const group = readout.groups.find((g) => g.name === title);
-        return group?.rows[0]?.value ?? '';
+        if (title === undefined) return [];
+        return readout.groups.find((g) => g.name === title)?.rows ?? [];
     }
 
     /** Rewrite the value spans in place — no re-render, so the list never jumps while a
@@ -539,10 +605,18 @@ export class ObjectTree extends SidePanel {
             const next = this.valueFor(id);
             if (span.isConnected && span.textContent !== next) span.textContent = next;
         }
+        for (const [id, spans] of this.blockSpans) {
+            const rows = this.readoutRows(id);
+            spans.forEach((span, i) => {
+                const next = rows[i]?.value ?? '';
+                if (span.isConnected && span.textContent !== next) span.textContent = next;
+            });
+        }
     }
 
     private render(): void {
         this.valueSpans.clear();
+        this.blockSpans.clear();
         if (this.el.hidden || !this.chart) return;
         const chart = this.chart;
         this.prune(chart);
@@ -715,6 +789,8 @@ export class ObjectTree extends SidePanel {
             return el;
         }
         const handle = pass.handle(row.id);
+        const readoutRows = this.readoutRows(row.id);
+        const canExpand = readoutRows.length > 1;
         const el = this.row(
             iconEl('indicators', doc),
             row.label,
@@ -739,7 +815,21 @@ export class ObjectTree extends SidePanel {
                 },
             ],
             row.ownScale ? 'scale' : undefined,
-            { value: this.valueFor(row.id), more: true },
+            canExpand
+                ? {
+                      value: this.valueFor(row.id),
+                      more: true,
+                      disclosure: {
+                          open: this.openValues.has(row.id),
+                          title: this.openValues.has(row.id) ? 'Hide all values' : `Show all ${readoutRows.length} values`,
+                          run: () => {
+                              if (this.openValues.has(row.id)) this.openValues.delete(row.id);
+                              else this.openValues.add(row.id);
+                              this.render();
+                          },
+                      },
+                  }
+                : { value: this.valueFor(row.id), more: true },
         );
         el.dataset.rowKind = 'indicator';
         el.dataset.id = row.id;
@@ -752,7 +842,37 @@ export class ObjectTree extends SidePanel {
             el.dataset.drag = '1';
             el.title = pass.repanable ? 'Drag to another pane, or between panes for a new one' : 'Drag to change what draws in front';
         }
-        return el;
+        if (!this.openValues.has(row.id) || readoutRows.length === 0) return el;
+        // The opened row becomes a WRAPPER: the row itself plus one line per plot, indented
+        // under it — the data window's readout, read where the trader already is.
+        const wrap = doc.createElement('div');
+        wrap.className = 'vela-ot-rowgroup';
+        wrap.dataset.forId = row.id;
+        wrap.appendChild(el);
+        const block = doc.createElement('div');
+        block.className = 'vela-ot-values';
+        block.dataset.pane = pane.id;
+        const spans: HTMLElement[] = [];
+        for (const readoutRow of readoutRows) {
+            const line = doc.createElement('div');
+            line.className = 'vela-ot-vrow';
+            const dot = doc.createElement('span');
+            dot.className = 'vela-ot-dot';
+            if (readoutRow.color) dot.style.background = readoutRow.color;
+            const label = doc.createElement('span');
+            label.className = 'vela-ot-vlabel';
+            label.textContent = readoutRow.label;
+            label.title = readoutRow.label;
+            const value = doc.createElement('span');
+            value.className = 'vela-ot-val';
+            value.textContent = readoutRow.value;
+            line.append(dot, label, value);
+            block.appendChild(line);
+            spans.push(value);
+        }
+        this.blockSpans.set(row.id, spans);
+        wrap.appendChild(block);
+        return wrap;
     }
 
     /** A group's header: fold arrow, its name (or the rename field), then actions that apply to
@@ -914,12 +1034,28 @@ export class ObjectTree extends SidePanel {
         visible: boolean,
         actions: readonly RowAction[],
         tag?: string,
-        extra: { value?: string; more?: boolean } = {},
+        extra: { value?: string; more?: boolean; disclosure?: { open: boolean; title: string; run: () => void } } = {},
     ): HTMLElement {
         const doc = this.el.ownerDocument;
         const el = doc.createElement('div');
         el.className = 'vela-ot-row';
         if (!visible) el.dataset.hidden = '1';
+        if (extra.disclosure) {
+            const fold = doc.createElement('button');
+            fold.type = 'button';
+            fold.className = 'vela-ot-fold';
+            fold.dataset.open = extra.disclosure.open ? '1' : '';
+            fold.title = extra.disclosure.title;
+            fold.setAttribute('aria-label', extra.disclosure.title);
+            fold.setAttribute('aria-expanded', extra.disclosure.open ? 'true' : 'false');
+            fold.appendChild(iconEl(extra.disclosure.open ? 'chevron-down' : 'chevron-right', el.ownerDocument));
+            fold.addEventListener('click', (event) => {
+                event.stopPropagation();
+                extra.disclosure?.run();
+            });
+            el.dataset.hasFold = '1';
+            el.append(fold);
+        }
         const name = doc.createElement('span');
         name.className = 'vela-ot-name';
         name.textContent = label;
@@ -1459,6 +1595,17 @@ export class ObjectTree extends SidePanel {
         // (mobile) or replaced by the overview chip (multi-chart grids).
         if (chart.renderer.supportsIndicatorSettings) {
             items.push(b.entry('Indicator settings', 'gear', () => chart.renderer.openIndicatorSettings(row.id)));
+        }
+        // The legend's `{ }` chip, reachable from the tree — on a phone the legend is folded
+        // away entirely, and the tree is where a study is managed.
+        const source = handle?.source;
+        if (source !== undefined && this.opts.onSource) {
+            const readOnly = handle?.nativeType !== undefined;
+            items.push(
+                b.entry(readOnly ? 'Source code (built-in)' : 'Source code', 'braces', () => {
+                    this.opts.onSource?.(source, handle?.title ?? row.label, readOnly);
+                }, true),
+            );
         }
         if (chart.panes.supported) {
             const moves = this.moveItems(b, pass, row.id, paneId);

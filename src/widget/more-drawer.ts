@@ -951,6 +951,12 @@ export interface MoreDrawerOptions {
     onCreateAlert?: () => void;
     /** Live price alerts (armed levels), newest first — shown above the log. */
     priceAlerts?: () => Array<{ id: string; label: string; state: 'active' | 'fired' | 'paused'; fires: number; offChart?: string | null; onDelete: () => void }>;
+    /**
+     * Open the script editor. A phone hides the docked panels behind this sheet, and the
+     * editor is the one panel a trader reaches for constantly (TradingView keeps its Pine
+     * Editor one tap away on mobile too) — so it gets a row of its own, not just a toggle.
+     */
+    onEditor?: () => void;
     /** "Reset chart view" — the desktop chart-body menu's one row a phone has no other
      *  door to (right-click is the crosshair hold here). Omitted ⇒ no row. */
     onResetView?: () => void;
@@ -1380,6 +1386,18 @@ export class MoreDrawer {
                     onClick: () => {
                         this.opts.onTogglePanel(panel.id);
                         this.drawer.hide();
+                    },
+                }),
+            );
+        }
+        if (this.opts.onEditor) {
+            list.appendChild(
+                this.row(doc, 'Pine Editor', {
+                    icon: 'code',
+                    value: 'Open',
+                    onClick: () => {
+                        this.drawer.hide();
+                        this.opts.onEditor?.();
                     },
                 }),
             );

@@ -556,7 +556,12 @@ they work from the very first keystroke, before any click.
   pane's column to set draw order, a drawing under the candles or between two indicators included
   — with a ghost label and a drop hint while the drag is live. An indicator's row carries
   everything the indicator paints: its plots, fills, script drawings and tables all move through
-  the stack together. Drawings can be multi-selected
+  the stack together. Every indicator row shows its **newest value**, and a study with more than
+  one plot has a chevron that opens the **full readout**: one line per plot, with the plot's own
+  colour and its value, updating in place as the crosshair moves or a bar closes. On a phone
+  that list is the readout — the legend is folded away there — so the tree is where a study's
+  numbers are read. Right-clicking an indicator also offers **Source code** (the legend's `{ }`
+  chip by another route): a built-in opens read-only, a script editable. Drawings can be multi-selected
   (Ctrl/Cmd-click) and bundled into a named group that hides, locks, deletes and drags as one
   block; groups live for as long as the chart and are not persisted. Kept in sync with the
   chart's events — a selection made on the chart (Ctrl/Cmd-click, a marquee) lights up every
@@ -759,7 +764,12 @@ What changes on mobile:
   *without* leaving the chart.
 - **The indicator legend starts collapsed** behind its count chip — tapping it opens
   the **object tree**, whose per-indicator action menu carries an "Indicator settings"
-  entry, so everything the legend rows offered stays one tap away.
+  entry, so everything the legend rows offered stays one tap away. The tree's rows carry
+  every study's values (see above), and its menu also opens a study's **source code**.
+- **The More sheet has a "Pine Editor — Open" row**: the editor is a panel on desktop, but
+  on a phone it is a sheet over the chart, and this is its one-tap door (TradingView keeps
+  its Pine Editor just as close on mobile). The dock's generic panel toggles do not repeat
+  it.
 - **Touch gestures**: one-finger pan (with the usual fling), two-finger pinch zoom
   anchored between the fingers, and a **long-press** that inspects with the crosshair —
   the view stays put while the finger drives the readout; lifting clears it. A

@@ -1065,7 +1065,11 @@ export class VelaWorkspace {
             context: () => this.context(),
             changed: () => this.markStateDirty(),
         });
-        this.objectTree = new ObjectTree(main, (sym) => this.feed.symbolIcon(sym));
+        this.objectTree = new ObjectTree(main, (sym) => this.feed.symbolIcon(sym), {
+            // The tree's "Source code" entry — the legend chip's twin, and on a phone the
+            // route to a study's code (a built-in opens read-only, a script editable).
+            onSource: (source, title, readOnly) => this.openEditor(source, title, { readOnly }),
+        });
         this.dataWindow = new DataWindow(main);
         this.strategyTester = new StrategyTester(main);
         this.dock.addBuiltIn({ id: 'dataWindow', title: 'Data window', icon: 'datawindow', order: 10, panel: this.dataWindow, onChart: (c) => this.dataWindow.onChart(c) });
@@ -4842,7 +4846,12 @@ export class VelaWorkspace {
             // One chart picker on the phone: the drawer's row raises the same sheet the
             // bar's chart-type stop does (a shell without the mobile bar keeps the list).
             ...(this.mobileBar ? { onChartType: () => this.mobileBar!.openSheet() } : {}),
-            panels: () => (has('panels') ? [...this.dock.list()] : []),
+            // The editor has its own row below ("Pine Editor — Open"), which opens it rather
+            // than merely toggling a panel — so it is not listed twice.
+            panels: () => (has('panels') ? [...this.dock.list()].filter((p) => p.id !== 'pineEditor') : []),
+            // The editor's own door on a phone: the More sheet opens it straight away
+            // (TradingView keeps the Pine Editor one tap from the mobile menu).
+            ...(this.pineEditor ? { onEditor: () => this.openEditor() } : {}),
             onTogglePanel: (id) => this.dock.toggle(id),
             ...(has('alerts')
                 ? {

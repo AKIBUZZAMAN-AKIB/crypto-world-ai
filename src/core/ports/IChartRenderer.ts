@@ -172,6 +172,11 @@ export interface DataWindowOHLC {
 
 /** One indicator's readout: its title plus a row per plot. */
 export interface DataWindowGroup {
+    /**
+     * The indicator's id. A panel pairs a group with its row by ID (a title can repeat —
+     * two SMA studies, a built-in and a copy of it); `name` stays the display title.
+     */
+    id?: string;
     name: string;
     rows: DataWindowRow[];
 }
