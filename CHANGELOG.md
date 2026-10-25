@@ -6,6 +6,13 @@ All notable changes to Vela, newest first.
 
 ### Added
 
+- **Hidden charts have names.** A smaller layout parks the charts it no longer shows;
+  on a phone the **More** stop now carries a count badge, and one tap into the sheet
+  lists them by symbol and interval (plus their indicator count). Tapping one brings
+  that chart back **into the active pane** — its market, interval, indicators and
+  drawings intact — while the chart that was there waits in the list in its place; the
+  grid keeps its shape. The layout pane's destructive counterpart is now *Remove hidden
+  charts*, so the two rows can no longer be read as the same thing.
 - **A real script editor, in the side panel.** TradingView moved its Pine editor into
   the side panel in August 2025; the shells now do the same. When a scripting engine is
   registered the dock grows a **Pine editor** panel (topbar toggle, phone bottom-bar
@@ -41,6 +48,17 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **The phone bar is a toolbar in three zones, not one strip that ran out of room.**
+  TradingView's phone chrome and Apple's HIG toolbar guidance agree on the shape: a
+  leading title and trailing actions stay put, and everything else moves into a
+  scrolling middle or the overflow menu. So the **pair** is pinned left (an 84px floor,
+  ellipsis, chevron to the symbol search), **More — wearing the hidden-chart badge — and
+  Settings** are pinned right at 44×44, and only the band between them scrolls:
+  interval → chart type → drawings → full/short screen → indicators → editor → whatever
+  the host contributes, in exactly that order, behind a mask on the edge that has more.
+  Nothing steps aside for being narrow any more (the ≤380px rule that dropped the
+  full/short-screen stop is gone), the stops sit flush so five of them fit a 430px
+  phone exactly, and the band is one tab stop with ←/→/Home/End moving inside it.
 - **The Symbol and Interval switches link cells; they no longer rewrite them.** Turning
   one on in the layout dropdown leaves every chart on the market it is showing right
   now — only changes made afterwards follow the link. Enabling a link from code keeps

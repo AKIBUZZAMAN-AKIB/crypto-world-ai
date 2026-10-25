@@ -2282,6 +2282,7 @@ export class VelaWorkspace {
         this.mobileBar?.setTimeframe(cell.timeframe);
         this.mobileBar?.setPriceStyle(cell.priceStyle);
         this.mobileBar?.setLayoutLabel(`${this.def.cols.length}×${this.def.rows.length}`);
+        this.syncMobileHidden(); // the More stop's badge follows the pool
         this.syncMobileMaximize(); // the new active cell may hold a maximized pane
         this.mobileBar?.onChart(cell.chart); // its drawings stop mirrors the ACTIVE cell's tool
         this.drawingPill?.onChart(cell.chart); // the pill mirrors the ACTIVE cell's tool state
@@ -4272,6 +4273,81 @@ export class VelaWorkspace {
     }
 
     /**
+     * The hidden charts by NAME — the list behind More → *Hidden charts*. A count tells a
+     * trader that something is waiting; a ticker tells them WHICH market is waiting, and
+     * that is the difference between a number and a door.
+     */
+    hiddenChartList(): Array<{ id: string; symbol: string; timeframe: string; indicators: number }> {
+        const label = (raw: string): string => (raw ? (this.feed.resolveSymbol(raw)?.ticker ?? raw.split(':').pop() ?? raw) : '');
+        return [...this.pool.entries()].map(([id, cs]) => ({
+            id,
+            symbol: label(cs.symbol ?? ''),
+            timeframe: timeframeLabel(cs.timeframe ?? ''),
+            indicators: (cs.indicators?.manifest?.length ?? 0) + (cs.indicators?.natives?.length ?? 0),
+        }));
+    }
+
+    /**
+     * Bring a HIDDEN chart back onto the grid: it takes the ACTIVE pane, and the chart
+     * that was there goes into the pool in its place — the same trade `setLayout` makes
+     * when it shrinks, done one chart at a time. The chart returns as itself (its own
+     * market, interval, indicators, drawings and alerts survive, because a pooled chart
+     * is a document, not a stub).
+     */
+    showHiddenChart(id: string): boolean {
+        if (this.destroyed) return false;
+        if (this.cellsById.has(id)) {
+            this.setActiveCell(id);
+            return true;
+        }
+        const state = this.pool.get(id);
+        if (!state) return false;
+        const outgoing = this.activeId;
+        const slot = outgoing ? this.order.indexOf(outgoing) : -1;
+        if (!outgoing || slot < 0) return false;
+        // Everything alive before the swap: the returning chart is not a newborn, so the
+        // newborn-alignment passes below must leave its market/style/drawings alone.
+        const preexisting = new Set([...this.cellsById.keys(), ...this.pool.keys()]);
+        const leaving = this.cellsById.get(outgoing);
+        // Take the returning chart's state OUT while the outgoing one is parked: `poolSet`
+        // trims the pool at the ceiling by eviction order, and the chart the user just
+        // asked for must not be the one evicted. It goes back in (newest) before the build
+        // reads it — `buildCells` hydrates a slot from the pool, so an absent entry would
+        // quietly mint a NEW chart with the boot defaults instead (the worst kind of bug:
+        // the right tab, the wrong market).
+        this.pool.delete(id);
+        if (leaving) {
+            this.cellsById.delete(outgoing);
+            this.events.emit('cell:destroyed', { id: outgoing });
+            this.pool.set(outgoing, leaving.dehydrate());
+            leaving.destroy();
+        }
+        this.pool.set(id, state); // newest, about to be consumed by the slot
+        // The two identities trade PLACES in the order, so neither loses its position and
+        // the grid keeps its shape (no layout change, exactly like a tab switch).
+        const home = this.order.indexOf(id);
+        if (home >= 0 && home !== slot) this.order[home] = outgoing;
+        else if (home < 0) this.order.push(outgoing);
+        this.order[slot] = id;
+        this.buildCells(); // hydrates `id` from the pool it just left
+        this.alignNewCellMarket(preexisting);
+        this.alignNewCellStyles(preexisting);
+        this.alignNewCellDrawings(preexisting);
+        this.syncCellPresentation();
+        this.refreshCellControls();
+        this.setActiveCell(id);
+        this.refreshRetention();
+        this.syncMobileHidden();
+        this.markStateDirty();
+        return true;
+    }
+
+    /** Re-project the phone bar's hidden-chart badge (More → Hidden charts). */
+    private syncMobileHidden(): void {
+        this.mobileBar?.setHiddenCount(this.hiddenChartCount);
+    }
+
+    /**
      * Forget every dormant (pooled) chart — the "remove hidden charts" housekeeping.
      * It REPLACES the previous batch's undo snapshot, so Undo always brings back the
      * batch that was just dropped (one level, the same contract as a toast's Undo).
@@ -4281,6 +4357,7 @@ export class VelaWorkspace {
         if (n === 0) return 0;
         this.pooledCleared = new Map(this.pool);
         this.pool.clear();
+        this.syncMobileHidden();
         this.refreshRetention();
         this.markStateDirty();
         this.toast(`Removed ${n} hidden chart${n === 1 ? '' : 's'} — Undo in the layout menu`, 'info');
@@ -4305,6 +4382,7 @@ export class VelaWorkspace {
             this.pool.delete(oldest);
             this.notePoolDrop();
         }
+        this.syncMobileHidden();
         this.refreshRetention();
         this.markStateDirty();
         this.toast(`Restored ${saved.size} hidden chart${saved.size === 1 ? '' : 's'}`, 'success');
@@ -4911,6 +4989,12 @@ export class VelaWorkspace {
                 drawingsScope: () => this.drawingsScope,
                 onToggleDrawingsScope: () => this.setDrawingsScope(this.drawingsScope === 'global' ? 'layout' : 'global'),
                 hiddenCharts: () => this.hiddenChartCount,
+                // The phone's More → *Hidden charts*: the parked charts by NAME, and a tap
+                // that trades one back onto the active pane.
+                hiddenList: () => this.hiddenChartList(),
+                onPickHidden: (id: string) => {
+                    this.showHiddenChart(id);
+                },
                 onClearPooled: () => this.clearPooled(),
                 clearedCharts: () => this.clearedChartCount,
                 onRestorePooled: () => this.restorePooled(),
@@ -6251,6 +6335,7 @@ export class VelaWorkspace {
             if (oldest != null) this.pool.delete(oldest);
             this.notePoolDrop();
         }
+        this.syncMobileHidden();
     }
 
     /**

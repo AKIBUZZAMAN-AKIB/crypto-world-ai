@@ -1025,6 +1025,11 @@ export interface MoreDrawerOptions {
         drawingsScope?: () => 'layout' | 'global';
         onToggleDrawingsScope?: () => void;
         hiddenCharts?: () => number;
+        /** The hidden charts BY NAME — what More → *Hidden charts* lists. Omitted ⇒ the
+         *  row keeps its old destructive-only shape. */
+        hiddenList?: () => Array<{ id: string; symbol: string; timeframe: string; indicators: number }>;
+        /** Bring one hidden chart back onto the grid (it takes the active pane). */
+        onPickHidden?: (id: string) => void;
         onClearPooled?: () => void;
         clearedCharts?: () => number;
         onRestorePooled?: () => void;
@@ -1083,7 +1088,7 @@ export interface MoreDrawerOptions {
     onOpenChange?: (open: boolean) => void;
 }
 
-type MoreView = 'main' | 'style' | 'layout' | 'alerts' | 'cursor';
+type MoreView = 'main' | 'style' | 'layout' | 'alerts' | 'cursor' | 'hidden';
 
 export class MoreDrawer {
     private readonly drawer: Drawer;
@@ -1164,7 +1169,7 @@ export class MoreDrawer {
             const back = doc.createElement('button');
             back.className = 'vela-md-back';
             back.appendChild(iconEl('chevron-left', doc));
-            const backLabel = this.view === 'style' ? 'Chart type' : this.view === 'cursor' ? 'Cursor' : 'Alerts';
+            const backLabel = this.view === 'style' ? 'Chart type' : this.view === 'cursor' ? 'Cursor' : this.view === 'hidden' ? 'More' : 'Alerts';
             back.appendChild(doc.createTextNode(backLabel));
             back.addEventListener('click', () => this.show('main'));
             this.drawer.body.appendChild(back);
@@ -1177,6 +1182,7 @@ export class MoreDrawer {
         else if (this.view === 'style') this.renderStyle(doc);
         else if (this.view === 'layout') this.renderLayout(doc, this.focus, this.focusCell);
         else if (this.view === 'cursor') this.renderCursor(doc);
+        else if (this.view === 'hidden') this.renderHidden(doc);
         else this.renderAlerts(doc);
         this.focus = undefined;
         this.focusCell = undefined;
@@ -1377,6 +1383,22 @@ export class MoreDrawer {
             const shape = this.opts.layout.shape();
             const value = shape ? `${shape.cols} × ${shape.rows}` : this.opts.layout.presets().find((p) => p.checked)?.label;
             list.appendChild(this.row(doc, 'Layout', { icon: 'layout', glyph: this.opts.layout.glyph?.(), value, chevron: true, onClick: () => this.show('layout') }));
+        }
+        // HIDDEN CHARTS, one tap from the stop whose badge counts them. The list is the
+        // non-destructive half of the subject (the layout pane keeps the destructive
+        // "Remove hidden charts"); it is only worth a row while something is parked.
+        {
+            const hidden = this.opts.layout?.hiddenCharts?.() ?? 0;
+            if (this.opts.layout?.hiddenList && hidden > 0) {
+                list.appendChild(
+                    this.row(doc, 'Hidden charts', {
+                        icon: 'pane-collapse',
+                        value: String(hidden),
+                        chevron: true,
+                        onClick: () => this.show('hidden'),
+                    }),
+                );
+            }
         }
         for (const act of this.opts.primaryActions?.() ?? []) list.appendChild(this.actionRow(doc, act));
         for (const panel of this.opts.panels()) {
@@ -1761,7 +1783,7 @@ export class MoreDrawer {
             // Two taps: the row destroys state the trader cannot see, so the first tap
             // arms it and the second one commits (the drawer re-renders in between).
             layoutsSec.append(
-                this.row(doc, this.poolArmed ? 'Hidden charts — tap to confirm' : 'Hidden charts', {
+                this.row(doc, this.poolArmed ? 'Remove hidden charts — tap to confirm' : 'Remove hidden charts', {
                     value: this.poolArmed ? `remove ${hidden}?` : `remove ${hidden}`,
                     ...(this.poolArmed ? { danger: true } : {}),
                     onClick: () => {
@@ -2668,6 +2690,45 @@ export class MoreDrawer {
             picker.click();
         });
         return b;
+    }
+
+    /**
+     * HIDDEN CHARTS: every chart a smaller layout set aside, by name. Tap a row and that
+     * chart takes the active pane — its own market, interval, indicators, drawings and
+     * alarms intact — while the chart that was there goes into the list in its place.
+     */
+    private renderHidden(doc: Document): void {
+        const layout = this.opts.layout;
+        const rows = layout?.hiddenList?.() ?? [];
+        this.drawer.body.appendChild(this.sectionLabel(doc, 'Hidden charts'));
+        const hint = doc.createElement('div');
+        hint.className = 'vela-md-empty vela-md-hhint';
+        hint.textContent =
+            rows.length === 0
+                ? 'Nothing is hidden right now — a smaller layout parks the charts it no longer shows, and they wait here.'
+                : 'Tap one to bring it back. It takes the active pane, and the chart that was there waits here instead.';
+        this.drawer.body.appendChild(hint);
+        if (rows.length === 0) return;
+        const list = doc.createElement('div');
+        list.className = 'vela-md-list vela-md-hlist';
+        for (const row of rows) {
+            const el = this.row(doc, row.symbol || row.id, {
+                value: row.timeframe,
+                chevron: true,
+                onClick: () => {
+                    layout?.onPickHidden?.(row.id);
+                    this.close();
+                },
+            });
+            if (row.indicators > 0) {
+                const sub = doc.createElement('span');
+                sub.className = 'vela-md-row-sub';
+                sub.textContent = `${row.indicators} ind`;
+                el.insertBefore(sub, el.lastElementChild);
+            }
+            list.appendChild(el);
+        }
+        this.drawer.body.appendChild(list);
     }
 
     private renderAlerts(doc: Document): void {
