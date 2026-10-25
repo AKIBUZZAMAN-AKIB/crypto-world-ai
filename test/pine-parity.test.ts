@@ -101,7 +101,7 @@ function compare(native: Array<number | null>, pine: Array<number | null>): { n:
     return { n, worst, at, abs, absAt };
 }
 
-const SAMPLE = ['sma', 'ema', 'rma', 'bollinger-bands', 'rsi', 'stochastic', 'average-true-range', 'macd', 'on-balance-volume', 'commodity-channel-index', 'williams-percent-r', 'money-flow-index'];
+const SAMPLE = classicSpecs.map((spec) => spec.type);
 
 const PARITY_ON = !!(globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.PINE_PARITY;
 
@@ -135,6 +135,13 @@ describe.skipIf(!PARITY_ON)('native vs Pine parity', () => {
                 }
                 const { n, worst, at, abs, absAt } = compare(nativeValues, pineValues);
                 rows.push(`${title}: n=${n} worst=${(worst * 100).toFixed(4)}%${at >= 0 ? ` @${at}` : ''} abs=${abs.toFixed(4)}${absAt >= 0 ? ` @${absAt}` : ''}`);
+            }
+            if (rows.length === 0) {
+                // Line- and marker-only studies (Zig Zag, Williams Fractal) have no value
+                // series to compare — nothing to measure, and nothing to report.
+                // eslint-disable-next-line no-console
+                console.log(`[parity] ${type}: no value series (lines/markers only)`);
+                return;
             }
             // eslint-disable-next-line no-console
             console.log(`[parity] ${type}\n  ${rows.join('\n  ')}`);
