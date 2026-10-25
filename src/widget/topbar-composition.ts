@@ -25,14 +25,15 @@ export interface TopbarComposition {
 
 /** The built-in entry vocabulary (everything else in a list is a contributed-action id).
  *  `'layout'` and `'layouts'` render only on shells with a layout manager (they are
- *  grid setup and the saved-layout name chip respectively), and `'indicators'` only while an
+ *  grid setup and the saved-layout name chip respectively), `'templates'` only while the
+ *  shell has chart templates to offer (it is the dropdown beside `'indicators'`), and `'indicators'` only while an
  *  indicator surface exists — the built-in picker (the deprecated `indicatorPicker:
  *  false` still removes it) or a slot OVERRIDE replacing it — so listing them is
  *  necessary but not sufficient. */
-export const TOPBAR_BUILTIN_IDS = ['symbol', 'timeframes', 'style', 'layout', 'layouts', 'indicators', 'actions', 'undo-redo', 'replay', 'alerts', 'panels', 'screenshot'] as const;
+export const TOPBAR_BUILTIN_IDS = ['symbol', 'timeframes', 'style', 'layout', 'layouts', 'indicators', 'templates', 'actions', 'undo-redo', 'replay', 'alerts', 'panels', 'screenshot'] as const;
 
 /** The default left side — the current shell composition, verbatim. */
-export const TOPBAR_DEFAULT_LEFT: readonly string[] = ['symbol', 'timeframes', 'style', 'layout', 'indicators', 'actions', 'undo-redo', 'layouts'];
+export const TOPBAR_DEFAULT_LEFT: readonly string[] = ['symbol', 'timeframes', 'style', 'layout', 'indicators', 'templates', 'actions', 'undo-redo', 'layouts'];
 
 /** The default right side (the `margin-left: auto` cluster). */
 export const TOPBAR_DEFAULT_RIGHT: readonly string[] = ['actions', 'replay', 'alerts', 'panels', 'screenshot'];

@@ -528,8 +528,10 @@ they work from the very first keystroke, before any click.
   opens the full list — or the combined label+caret when nothing is starred),
   chart-style dropdown (built-ins ∪ [plugin chart types](../contributing/plugin-sdk.md),
   with their icons and labels), the layout dropdown (multi-chart grids only),
-  Indicators picker, undo/redo (same history as Ctrl+Z / Ctrl+Y), the saved-layout
-  chip and its Save button (see [The layout menu](#the-layout-menu)), alerts bell,
+  Indicators picker and the chart-templates dropdown beside it (see
+  [Chart templates](#chart-templates)), undo/redo (same history as Ctrl+Z / Ctrl+Y),
+  the saved-layout chip and its Save button (see [The layout menu](#the-layout-menu)),
+  alerts bell,
   data-window and object-tree panel toggles, then any
   [contributed actions](../contributing/plugin-sdk.md#widget-actions--registerwidgetaction)
   in the right-hand cluster. The whole bar is composable — see
@@ -620,6 +622,30 @@ they work from the very first keystroke, before any click.
   Rows a plugin adds sort in with the built-in ones: by default after the built-in actions and
   before the settings entry at the bottom of the menu (see [Right-click menu
   actions](../contributing/plugin-sdk.md#right-click-menu-actions)).
+
+### Chart templates
+
+A **template** is a chart's *indicators, settings included* — not the chart: no drawings,
+and the symbol and timeframe only if you asked for them. TradingView keeps its own
+("Indicator templates") in a dropdown immediately beside the Indicators button, and so does
+this shell: the small templates glyph there opens
+
+- the saved templates, each with its indicator count (and the market, when it was saved
+  with one) — **clicking one applies it** here and closes the menu, replacing this chart's
+  indicators as TradingView's does;
+- the row's **star**, which makes that template the set **new charts open with** (the
+  heading says what that is), and the row's **kebab**: *Apply to all charts* (a multi-chart
+  layout only), *Rename…*, *Export*, *Delete* — delete arms on the first tap, deletes on
+  the second;
+- **Save template…** — a name, and a *Remember symbol & timeframe* box that is **off by
+  default**, because a template is meant to travel between markets;
+- **Import template file…** for a `.vela-template.json` written by *Export*.
+
+Escape closes the menu and returns focus to the button. The same store is behind the layout
+picker's Templates pane and the phone's More drawer, so a template saved in one shows up in
+all three, and `ws.saveTemplate` / `applyTemplate` / `renameTemplate` / `deleteTemplate` /
+`setDefaultTemplate` drive it from code. Composition id `'templates'`; it renders wherever
+the shell has templates to offer, single-chart mode included.
 
 ### The layout menu
 
@@ -737,6 +763,7 @@ Entries come from one shared vocabulary:
 | `'style'` | The chart-style dropdown. |
 | `'layout'` | The layout dropdown (renders on multi-chart shells only). |
 | `'layouts'` | The saved-layout chip — name, unsaved dot, Save — and the [layout menu](#the-layout-menu) it opens (multi-chart shells only; default last in `left`). |
+| `'templates'` | The chart-templates dropdown, drawn beside `'indicators'` (the two share one hairline, as in TradingView; a single-chart shell has it too). |
 | `'indicators'` | The Indicators slot — the built-in button, or a plugin's [slot override](../contributing/plugin-sdk.md#replacing-a-built-in-button--slot-overrides). Omitting it removes the button, the mobile stop, the `/` shortcut, and skips the picker dialog. |
 | `'undo-redo'` | The undo/redo pair. |
 | `'replay'` | The bar-replay button — opens the replay menu (Select bar / Select date / Random bar). Renders only when the shell runs the replay chrome (`replay: false` removes it, and the mobile bar has no counterpart). |

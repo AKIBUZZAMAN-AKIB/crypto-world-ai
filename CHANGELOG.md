@@ -6,6 +6,20 @@ All notable changes to Vela, newest first.
 
 ### Added
 
+- **Chart templates, where TradingView keeps them: beside Indicators.** The topbar grows
+  the templates dropdown the toolbar has always implied — the indicator set you trade
+  with, saved under a name and applied anywhere. A row carries the template's indicator
+  count (and the market, when it was saved with one), its **star** makes it the set
+  **new charts open with**, and its kebab holds *Apply to all charts* (multi-chart
+  layouts), *Rename…*, *Export* and a two-tap *Delete*. **Save template…** takes a name
+  and a *Remember symbol & timeframe* box that is off by default — a template is meant to
+  travel between markets — and **Import template file…** takes back what *Export* wrote.
+  Clicking a template applies it and closes the menu, replacing the chart's indicators the
+  way TradingView does; Escape closes it and returns focus to the button. The same store
+  feeds the layout picker's Templates pane and the phone's More drawer. Composition id
+  `'templates'`, right after `'indicators'` (they share one hairline, as in TV), and it
+  renders in single-chart mode too — a lone chart has templates even without a layout
+  manager.
 - **The layout menu, where TradingView keeps it: right after undo/redo.** The topbar
   grows a **saved-layout chip** — the active layout's name, a dot while it has unsaved
   changes, and a **Save** button beside it — that opens the panel the name implies: the

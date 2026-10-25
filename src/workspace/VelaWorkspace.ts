@@ -940,6 +940,8 @@ export class VelaWorkspace {
             onOpenChange: (open) => this.trackDialog(open),
         });
 
+        // Chart templates: the dropdown beside Indicators. Its own group, so a
+        // single-chart shell (no `layout` block) still carries it.
         // ── topbar (shared) — reflects the active cell; the layout dropdown reads the registry live ──
         this.topbar = new Topbar(this.root, {
             symbol: '',
@@ -1005,15 +1007,6 @@ export class VelaWorkspace {
                 autosave: () => this.autosaveEnabled(),
                 onToggleAutosave: (on) => this.setAutosave(on),
                 onDuplicateLayout: (name) => this.duplicateLayout(name),
-                templates: () => this.templateList(),
-                onSaveTemplate: (name, includeMarket) => this.saveTemplate(name, { includeMarket }),
-                onApplyTemplate: (name, target) => this.applyTemplate(name, target),
-                onDeleteTemplate: (name) => this.deleteTemplate(name),
-                onRenameTemplate: (from, to) => this.renameTemplate(from, to),
-                defaultTemplate: () => this.defaultTemplate(),
-                onSetDefaultTemplate: (name) => this.setDefaultTemplate(name),
-                onExportTemplate: (name) => this.exportTemplate(name),
-                onImportTemplate: (json) => this.importTemplate(json),
                 legend: () => this.groupLegend(),
                 onRenameGroup: (id, name) => this.setGroupName(id, name),
                 groupName: (id) => this.groupNames[id],
@@ -1032,6 +1025,21 @@ export class VelaWorkspace {
                 onLinkGroup: (tag) => this.setLinkGroup(tag),
                 glyph: () => layoutGlyph(this.def),
                 onOpenChange: (open) => this.setSyncSurfaceOpen(open),
+            },
+            // The templates dropdown beside Indicators. Outside the layout block on
+            // purpose: a single-chart shell has no layout manager, but it still saves and
+            // applies indicator templates.
+            templates: {
+                templates: () => this.templateList(),
+                onApplyTemplate: (name, target) => this.applyTemplate(name, target),
+                onSaveTemplate: (name, includeMarket) => this.saveTemplate(name, { includeMarket }),
+                onDeleteTemplate: (name) => this.deleteTemplate(name),
+                onRenameTemplate: (from, to) => this.renameTemplate(from, to),
+                onExportTemplate: (name) => this.exportTemplate(name),
+                onImportTemplate: (json) => this.importTemplate(json),
+                defaultTemplate: () => this.defaultTemplate(),
+                onSetDefaultTemplate: (name) => this.setDefaultTemplate(name),
+                chartCount: () => this.cellsById.size,
             },
             getContext: () => this.context(),
         });

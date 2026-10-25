@@ -3,6 +3,7 @@
 import { Menu, type MenuItemDescriptor } from '../ui/components/menu';
 import { Tooltip } from '../ui/components/tooltip';
 import { LayoutMenu } from './layout-menu';
+import { TemplatesMenu } from './templates-menu';
 import { LayoutPicker, type LayoutPickerShape } from './layout-picker';
 import { iconEl, iconMarkup, registerIcon } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
@@ -256,6 +257,23 @@ export interface TopbarOptions {
     onStyleFavorite?: (id: string, on: boolean) => void;
     /** The starred styles, read at build time (the host keeps them — see above). */
     styleFavorites?: readonly string[];
+    /** Saved chart TEMPLATES — the dropdown beside the Indicators button (TradingView's
+     *  "Indicator templates"). A template is an indicator set with its settings; the
+     *  symbol/timeframe travel only when the trader asked for it. Its own group, not part
+     *  of `layout`: a single-chart shell (`layout: false`) still has templates. */
+    templates?: {
+        templates: () => Array<{ name: string; count: number; symbol?: string; timeframe?: string }>;
+        onApplyTemplate?: (name: string, target: 'active' | 'all') => number;
+        onSaveTemplate?: (name: string, includeMarket: boolean) => boolean;
+        onDeleteTemplate?: (name: string) => void;
+        onRenameTemplate?: (from: string, to: string) => boolean;
+        onExportTemplate?: (name: string) => string | null;
+        onImportTemplate?: (json: string) => string | null;
+        defaultTemplate?: () => string | null;
+        onSetDefaultTemplate?: (name: string | null) => void;
+        /** Charts in the layout — gates "Apply to all charts". */
+        chartCount?: () => number;
+    };
     /** Optional workspace LAYOUT dropdown (rendered after the style dropdown when
      *  given) — the grid-canvas picker composing uniform grids, with the workspace
      *  SYNC switches beside it. Everything is read live, so plugin-registered
@@ -383,6 +401,9 @@ export class Topbar {
     private layoutsDot: HTMLElement | null = null;
     private layoutSaveBtn: HTMLButtonElement | null = null;
     private layoutMenu: LayoutMenu | null = null;
+    /** The templates dropdown, beside Indicators (see templates-menu.ts). */
+    private templatesBtn: HTMLButtonElement | null = null;
+    private templatesMenu: TemplatesMenu | null = null;
     private layoutsGroup: HTMLElement | null = null;
     private readonly tfMenu: Menu;
     private readonly styleMenu: Menu;
@@ -481,6 +502,37 @@ export class Topbar {
             indLabel.textContent = 'Indicators';
             indicatorsBtn.append(iconEl('indicators', doc), indLabel);
             indicatorsBtn.addEventListener('click', opts.onIndicatorsClick);
+        }
+        // TradingView keeps its chart templates in a dropdown IMMEDIATELY beside the
+        // Indicators button ("Indicator templates", top toolbar). The verbs already live
+        // on the workspace (saveTemplate / applyTemplate / …) — this is the door, not a
+        // second store. A dedicated option group, so a single-chart shell has templates
+        // even though it has no layout manager.
+        const tpl = opts.templates;
+        if (tpl?.templates && vis('templates')) {
+            const btn = doc.createElement('button');
+            btn.type = 'button';
+            btn.className = 'vela-widget-tool vela-widget-templates';
+            btn.setAttribute('aria-haspopup', 'dialog');
+            btn.setAttribute('aria-expanded', 'false');
+            btn.setAttribute('aria-label', 'Chart templates');
+            btn.title = 'Chart templates';
+            btn.appendChild(iconEl('templates', doc));
+            this.templatesBtn = btn;
+            this.templatesMenu = new TemplatesMenu({
+                templates: () => tpl.templates?.() ?? [],
+                ...(tpl.onApplyTemplate ? { onApply: (name: string, target: 'active' | 'all') => tpl.onApplyTemplate?.(name, target) ?? 0 } : {}),
+                ...(tpl.onSaveTemplate ? { onSave: (name: string, includeMarket: boolean) => tpl.onSaveTemplate?.(name, includeMarket) ?? false } : {}),
+                ...(tpl.onDeleteTemplate ? { onDelete: (name: string) => tpl.onDeleteTemplate?.(name) } : {}),
+                ...(tpl.onRenameTemplate ? { onRename: (from: string, to: string) => tpl.onRenameTemplate?.(from, to) ?? false } : {}),
+                ...(tpl.onExportTemplate ? { onExport: (name: string) => tpl.onExportTemplate?.(name) ?? null } : {}),
+                ...(tpl.onImportTemplate ? { onImport: (json: string) => tpl.onImportTemplate?.(json) ?? null } : {}),
+                ...(tpl.defaultTemplate ? { defaultTemplate: () => tpl.defaultTemplate?.() ?? null } : {}),
+                ...(tpl.onSetDefaultTemplate ? { onSetDefault: (name: string | null) => tpl.onSetDefaultTemplate?.(name) } : {}),
+                ...(tpl.chartCount ? { chartCount: () => tpl.chartCount?.() ?? 1 } : {}),
+                onOpenChange: (open: boolean) => btn.setAttribute('aria-expanded', String(open)),
+            });
+            btn.addEventListener('click', () => this.templatesMenu?.open(btn));
         }
 
         // Right-hand cluster: contributed actions, then icon-only tools — the side-panel
@@ -585,7 +637,7 @@ export class Topbar {
         // controls carry a trailing hairline (except as a side's last entry); `actions`
         // is the FLOW slot for unlisted contributed actions; any other unknown id is a
         // PINNED slot for the contributed action with that id (filled by renderActions).
-        const primaries = new Set(['symbol', 'timeframes', 'style', 'layout', 'indicators']);
+        const primaries = new Set(['symbol', 'timeframes', 'style', 'layout', 'indicators', 'templates']);
         const pinSlot = (id: string, left: boolean): HTMLElement[] => {
             const slot = doc.createElement('span');
             slot.className = 'vela-widget-action-pin';
@@ -619,6 +671,8 @@ export class Topbar {
                     return this.layoutButton ? [this.layoutButton] : [];
                 case 'indicators':
                     return overridden(id, left) ?? (indicatorsBtn ? [indicatorsBtn] : []);
+                case 'templates':
+                    return this.templatesBtn ? [this.templatesBtn] : [];
                 case 'actions':
                     return left ? [this.leftActionsHost, this.leftActionsSep] : [this.actionsHost];
                 case 'undo-redo':
@@ -637,13 +691,39 @@ export class Topbar {
                     return pinSlot(id, left);
             }
         };
+        // What a list entry will actually render — needed to look PAST an entry the host's
+        // composition hides when deciding whether a hairline still belongs there.
+        const willRender = (id: string): boolean => {
+            switch (id) {
+                case 'symbol': return !!this.symbolEl;
+                case 'timeframes': return true;
+                case 'style': return !!this.styleButton;
+                case 'layout': return !!this.layoutButton;
+                case 'indicators': return !!topbarActionOverride(id) || !!indicatorsBtn;
+                case 'templates': return !!this.templatesBtn;
+                case 'layouts': return !!this.layoutsGroup;
+                case 'replay': return !!this.replayBtn;
+                case 'screenshot': return !!topbarActionOverride(id) || !!screenshotBtn;
+                case 'undo-redo': return !!this.undoBtn;
+                default: return true;
+            }
+        };
+        const nextRendered = (list: readonly string[], from: number): string | null => {
+            for (let j = from; j < list.length; j += 1) {
+                const cand = list[j];
+                if (cand && willRender(cand)) return cand;
+            }
+            return null;
+        };
         const sideEls = (list: readonly string[], left: boolean): HTMLElement[] => {
             const out: HTMLElement[] = [];
             for (const [i, id] of list.entries()) {
                 const els = elementsFor(id, left);
                 if (els.length === 0) continue;
                 out.push(...els);
-                if (primaries.has(id) && i < list.length - 1) out.push(sep());
+                // The templates dropdown is Indicators' TWIN, not a sibling group: TV draws
+                // no divider between them, so the hairline lands after the pair.
+                if (primaries.has(id) && nextRendered(list, i + 1) !== null && nextRendered(list, i + 1) !== 'templates') out.push(sep());
             }
             return out;
         };
@@ -695,15 +775,15 @@ export class Topbar {
                 ...(layout.autosave ? { autosave: () => layout.autosave?.() === true } : {}),
                 ...(layout.onToggleAutosave ? { onToggleAutosave: (on: boolean) => layout.onToggleAutosave?.(on) } : {}),
                 ...(layout.onDuplicateLayout ? { onDuplicateLayout: (name: string) => layout.onDuplicateLayout?.(name) } : {}),
-                ...(layout.onRenameTemplate ? { onRenameTemplate: (from: string, to: string) => layout.onRenameTemplate?.(from, to) ?? false } : {}),
-                ...(layout.defaultTemplate ? { defaultTemplate: () => layout.defaultTemplate?.() ?? null } : {}),
-                ...(layout.onSetDefaultTemplate ? { onSetDefaultTemplate: (name: string | null) => layout.onSetDefaultTemplate?.(name) } : {}),
-                ...(layout.templates ? { templates: () => layout.templates?.() ?? [] } : {}),
-                ...(layout.onSaveTemplate ? { onSaveTemplate: (name: string, withMarket: boolean) => layout.onSaveTemplate?.(name, withMarket) ?? false } : {}),
-                ...(layout.onApplyTemplate ? { onApplyTemplate: (name: string, target: 'active' | 'all') => layout.onApplyTemplate?.(name, target) ?? 0 } : {}),
-                ...(layout.onDeleteTemplate ? { onDeleteTemplate: (name: string) => layout.onDeleteTemplate?.(name) } : {}),
-                ...(layout.onExportTemplate ? { onExportTemplate: (name: string) => layout.onExportTemplate?.(name) ?? null } : {}),
-                ...(layout.onImportTemplate ? { onImportTemplate: (json: string) => layout.onImportTemplate?.(json) ?? null } : {}),
+                ...(opts.templates?.onRenameTemplate ? { onRenameTemplate: (from: string, to: string) => opts.templates?.onRenameTemplate?.(from, to) ?? false } : {}),
+                ...(opts.templates?.defaultTemplate ? { defaultTemplate: () => opts.templates?.defaultTemplate?.() ?? null } : {}),
+                ...(opts.templates?.onSetDefaultTemplate ? { onSetDefaultTemplate: (name: string | null) => opts.templates?.onSetDefaultTemplate?.(name) } : {}),
+                ...(opts.templates?.templates ? { templates: () => opts.templates?.templates() ?? [] } : {}),
+                ...(opts.templates?.onSaveTemplate ? { onSaveTemplate: (name: string, withMarket: boolean) => opts.templates?.onSaveTemplate?.(name, withMarket) ?? false } : {}),
+                ...(opts.templates?.onApplyTemplate ? { onApplyTemplate: (name: string, target: 'active' | 'all') => opts.templates?.onApplyTemplate?.(name, target) ?? 0 } : {}),
+                ...(opts.templates?.onDeleteTemplate ? { onDeleteTemplate: (name: string) => opts.templates?.onDeleteTemplate?.(name) } : {}),
+                ...(opts.templates?.onExportTemplate ? { onExportTemplate: (name: string) => opts.templates?.onExportTemplate?.(name) ?? null } : {}),
+                ...(opts.templates?.onImportTemplate ? { onImportTemplate: (json: string) => opts.templates?.onImportTemplate?.(json) ?? null } : {}),
                 ...(layout.legend ? { legend: () => layout.legend?.() ?? [] } : {}),
                 ...(layout.onRenameGroup ? { onRenameGroup: (id: string, name: string | null) => layout.onRenameGroup?.(id, name) } : {}),
                 ...(layout.onSetGroupMark ? { onSetGroupMark: (id: string, glyph: string | null) => layout.onSetGroupMark?.(id, glyph) } : {}),
@@ -996,6 +1076,7 @@ export class Topbar {
         this.styleMenu.destroy();
         this.layoutPicker?.destroy();
         this.layoutMenu?.destroy();
+        this.templatesMenu?.destroy();
         for (const t of [...this.tooltips, ...this.panelTooltips, ...this.actionTooltips]) t.destroy();
         this.el.remove();
     }
