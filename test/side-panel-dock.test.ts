@@ -221,6 +221,9 @@ describe('SidePanel maximize', () => {
         let header: Parameters<Parameters<typeof registerSidePanel>[0]['mount']>[2] | null = null;
         const off = registerSidePanel({ id: 'm', title: 'M', icon: 'im', overlay: true, maximizable: true, mount: (_c, _b, h) => void (header = h) });
         d.refresh();
+        // A closed panel stays out of the document; its header shows up with the first open.
+        expect(find(root, 'vela-panel-max')).toBeUndefined();
+        d.toggle('m', true);
         expect(find(root, 'vela-panel-max')).toBeDefined();
         header!.setMaximized(true);
         expect(header!.maximized).toBe(true);
@@ -323,6 +326,10 @@ describe('PanelDock', () => {
         const { dock: d, root, changed } = dock();
         const off = registerSidePanel({ id: 'x', title: 'X', icon: 'ix', overlay: true, mount: () => {} });
         d.refresh();
+        // Its header exists once the column has been opened once (a closed panel stays out of
+        // the document); closed again, it keeps its nodes so the pin is still there.
+        d.toggle('x', true);
+        d.toggle('x', false);
         const pin = find(root, 'vela-panel-x')!.children.find((c) => c.className === 'vela-panel-header')!.children.find((c) => c.className === 'vela-panel-pin')!;
         const before = changed();
         pin.fire('click');
@@ -343,7 +350,9 @@ describe('PanelDock', () => {
         d.applyState({ pinned: ['late'] });
         registerSidePanel({ id: 'late', title: 'Late', icon: 'il', overlay: true, mount: () => {} });
         d.refresh();
+        d.toggle('late', true);
         expect(find(root, 'vela-panel-late')!.dataset.overlay).toBeUndefined();
+        d.toggle('late', false);
         unregisterSidePanel('late');
         d.refresh();
     });
@@ -381,6 +390,27 @@ describe('PanelDock', () => {
         d.refresh();
     });
 
+    it('a closed panel stays out of the document; the first open mounts it, once', () => {
+        const { dock: d, root } = dock();
+        const mount = vi.fn(() => ({}));
+        const off = registerSidePanel({ id: 'lazy', title: 'Lazy', icon: 'il', mount });
+        d.refresh();
+        // Docked (the button is there) but not in the document — nothing of its chrome is.
+        expect(d.list().map((p) => p.id)).toContain('lazy');
+        expect(find(root, 'vela-panel-lazy')).toBeUndefined();
+
+        d.toggle('lazy', true);
+        expect(find(root, 'vela-panel-lazy')).toBeDefined();
+        expect(mount).toHaveBeenCalledTimes(1);
+
+        d.toggle('lazy', false); // closing keeps its nodes, and its state
+        expect(find(root, 'vela-panel-lazy')).toBeDefined();
+        d.toggle('lazy', true);
+        expect(mount).toHaveBeenCalledTimes(1); // one build for the panel's whole life
+        off();
+        d.refresh();
+    });
+
     it('mounts contributed panels with their body, rebinds them, and keeps them open across a refresh', () => {
         const { dock: d, buttons, root } = dock();
         const onChart = vi.fn();
@@ -392,14 +422,18 @@ describe('PanelDock', () => {
         d.refresh();
         expect(buttons().map((b) => b.id)).toEqual(['a', 'b', 'x']); // default order lands last
         expect(mount).toHaveBeenCalledTimes(1);
-        // The descriptor's placement reaches the panel the dock builds.
-        expect(find(root, 'vela-panel-x')!.dataset.overlay).toBe('1');
+        // Docked but closed: mounted, not in the document.
+        expect(find(root, 'vela-panel-x')).toBeUndefined();
+
+        const chartPlaced = find; // keep the helper name for the read below
 
         const chart = {} as never;
         d.onChart(chart);
         expect(onChart).toHaveBeenCalledWith(chart);
 
         d.toggle('x');
+        // The descriptor's placement reaches the panel the dock builds.
+        expect(chartPlaced(root, 'vela-panel-x')!.dataset.overlay).toBe('1');
         d.refresh(); // a late registration elsewhere must not close the open panel
         expect(d.openId).toBe('x');
         expect(mount).toHaveBeenCalledTimes(1); // an unchanged descriptor stays mounted — its state survives
@@ -434,6 +468,7 @@ describe('PanelDock', () => {
             },
         });
         d.refresh();
+        d.toggle('h', true);
         const panel = find(root, 'vela-panel-h')!;
         expect(find(panel, 'vela-panel-title')!.textContent).toBe('My script'); // setTitle replaced the declared title
         expect(slotChildren).toBe(1); // the control landed in the slot

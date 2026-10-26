@@ -9,7 +9,7 @@ import { BASE, assert, report } from './helpers.mjs';
 import { chromium } from 'playwright';
 
 /** Ceilings with headroom — the point is "a few hundred, not a couple of thousand". */
-const BUDGET = { desktop: 800, phone: 620 };
+const BUDGET = { desktop: 730, phone: 530 };
 /** What a fresh 4-cell workspace used to cost before the audit (for the record). */
 const BEFORE = { desktop: 2302, phone: 1794 };
 

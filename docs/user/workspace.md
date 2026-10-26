@@ -687,7 +687,11 @@ the active chart onto it. The replay transport is mounted by the first replay se
 **Panels, dialogs and the layout picker mount when they open.** The Pine editor's surface,
 a dialog's scrim and panel, and the layout picker's matrix are built once and held outside
 the document until the first open — a workspace with four closed panels and three closed
-dialogs carries none of their nodes. The editor re-renders as it mounts, so its viewport and
+dialogs carries none of their nodes. A docked panel itself is in the same boat: its header,
+body and width handle are appended to the dock on the first open, so the four built-ins
+(Pine editor, data window, object tree, strategy tester) cost **nothing** until you reach for
+one, and closing it keeps the nodes it already has (state, scroll position and any lift of
+the header included) so reopening it is a `display` flip, not a rebuild. The editor re-renders as it mounts, so its viewport and
 syntax highlighting are measured against the real box rather than a detached one.
 
 Long lists stream instead of landing in one lump. The symbol picker's page of a hundred

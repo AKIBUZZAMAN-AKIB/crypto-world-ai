@@ -118,6 +118,17 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **A panel nobody has opened is not in the document.** The four built-in side panels — Pine
+  editor, data window, object tree, strategy tester — were mounted into the dock at boot and
+  merely `hidden`: 68 nodes of header, body and width handle that could not be seen or
+  reached until their topbar button was clicked. The panel is now appended on its **first
+  open** (the dock keeps the title, width, placement and the contributed body, so nothing
+  else had to move), which takes a closed four-panel workspace from **784 to 712 elements**
+  on a 1440×900 desktop and from **583 to 511** on a phone. Closing a panel keeps its nodes,
+  so reopening is the `display` flip it always was — the object tree still opens with live
+  values, the editor still re-renders on mount, and a restored `panels.open` still opens its
+  column the moment it docks. Held by `test/side-panel-dock.test.ts` (a closed panel is
+  absent, the first open mounts it once) and the budget probe.
 - **A phone no longer carries the desktop chrome at all.** The top bar, the shared drawing
   rail and the bottom bar used to be built for every workspace and merely `display:none` on
   a phone — 307 nodes nobody could see or reach. They are now kept out of the document while

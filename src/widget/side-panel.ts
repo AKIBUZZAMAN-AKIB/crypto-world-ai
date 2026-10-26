@@ -210,6 +210,11 @@ export class SidePanel {
      *  never on a programmatic {@link setOverlay}, for the same reason as widths. */
     onPlacementChange: ((overlay: boolean) => void) | null = null;
     protected readonly body: HTMLElement;
+    /** Where the panel mounts, remembered so mounting can wait for the first open. */
+    private readonly hostEl: HTMLElement;
+    /** In the document? A panel nobody has opened stays OUT of it — a workspace with four
+     *  closed panels carries none of their nodes (see {@link mount}). */
+    private mounted = false;
     private readonly heading: HTMLElement;
     private readonly slot: HTMLElement;
     private readonly declaredWidth: number;
@@ -284,7 +289,14 @@ export class SidePanel {
         this.body.className = 'vela-panel-body';
         this.el.append(header, this.body);
         if (opts.resizable) this.mountResizer(doc);
-        host.appendChild(this.el);
+        this.hostEl = host;
+    }
+
+    /** Put the panel in the document — once, on its first open. */
+    private mount(): void {
+        if (this.mounted) return;
+        this.mounted = true;
+        this.hostEl.appendChild(this.el);
     }
 
     get open(): boolean {
@@ -311,6 +323,7 @@ export class SidePanel {
         }
         this.isOpen = open;
         if (open) {
+            this.mount();
             if (this.exit) {
                 this.exit.cancel();
                 this.exit = null;
