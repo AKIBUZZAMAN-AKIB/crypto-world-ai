@@ -770,6 +770,11 @@ export class VelaWorkspace {
     /** Replay scope the entry menu holds ("Replay all charts"). */
     private replayScope: 'all' | 'cell' = 'all';
     private drawingPill: DrawingPill | null = null;
+    /** Desktop-only chrome — the top bar, the shared drawing rail and the bottom bar —
+     *  parked as an anchor + element pair. A mobile shell keeps all three OUT of the
+     *  document (their nodes are the bulk of what a phone would never show) and puts them
+     *  back exactly where they were when the layout returns to desktop. */
+    private readonly desktopChrome: Array<{ el: HTMLElement; anchor: Comment }> = [];
     private tfDrawer: TimeframeDrawer | null = null;
     private drawingsDrawer: DrawingsDrawer | null = null;
     private moreDrawer: MoreDrawer | null = null;
@@ -1099,6 +1104,7 @@ export class VelaWorkspace {
             },
             getContext: () => this.context(),
         });
+        this.anchorChrome(this.topbar.el);
 
         // ── main row: the shared drawing toolbar + the grid + the docked side panels ──
         const main = doc.createElement('div');
@@ -1122,6 +1128,7 @@ export class VelaWorkspace {
             toolbarHost = doc.createElement('div');
             toolbarHost.className = 'vela-ws-toolbar';
             main.appendChild(toolbarHost);
+            this.anchorChrome(toolbarHost);
         }
         this.gridEl = doc.createElement('div');
         this.gridEl.className = 'vela-ws-grid';
@@ -1336,6 +1343,7 @@ export class VelaWorkspace {
                       onSettingsClick: () => this.active.chart.renderer.openSettings(),
                   })
                 : null;
+        if (this.bottombar) this.anchorChrome(this.bottombar.el);
 
         this.mobileBar = null;
 
@@ -1413,6 +1421,8 @@ export class VelaWorkspace {
             }
         });
         if (this.layoutCtl.current === 'mobile') buildMobileChrome();
+        // Desktop-only chrome lives outside the document on a mobile shell.
+        this.applyChromeForLayout(this.layoutCtl.current);
 
         this.splitters = new SplitterLayer(this.gridEl, {
             tracks: () => this.currentTracks(),
@@ -5122,7 +5132,38 @@ export class VelaWorkspace {
     /** The mode flipped (container resized across the breakpoint, or a coarse-pointer
      *  change). Close the open surfaces — a desktop card must not linger over the
      *  mobile chrome (and vice versa) — and re-present every cell's own chrome. */
+    /** Remember where a piece of desktop chrome sits, so it can go back there. */
+    private anchorChrome(el: HTMLElement): void {
+        const doc = this.root.ownerDocument;
+        const anchor = doc.createComment('vela-chrome');
+        el.parentElement?.insertBefore(anchor, el.nextSibling);
+        this.desktopChrome.push({ el, anchor });
+    }
+
+    /**
+     * Attach or detach the desktop-only chrome for the layout in force. Detaching keeps the
+     * widgets alive — every reference, listener and piece of state survives — so a flip back
+     * is a re-attach plus a re-measure, not a rebuild.
+     */
+    private applyChromeForLayout(mode: LayoutMode): void {
+        const desktop = mode === 'desktop';
+        for (const { el, anchor } of this.desktopChrome) {
+            if (desktop) {
+                if (!el.isConnected && anchor.parentNode) anchor.parentNode.insertBefore(el, anchor);
+            } else if (el.isConnected) {
+                el.remove();
+            }
+        }
+        if (desktop) {
+            // The bar measured nothing while it was out of the document: re-read it, and
+            // repaint the rail's selected tool before the first frame it is back in.
+            this.topbar.syncChrome();
+            this.drawToolbar?.refreshChartTools();
+        }
+    }
+
     private onLayoutModeChange(mode: LayoutMode): void {
+        this.applyChromeForLayout(mode);
         this.symbolPicker.close();
         this.indicatorPicker?.close();
         this.tfDrawer?.close();

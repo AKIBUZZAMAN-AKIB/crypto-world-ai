@@ -673,6 +673,11 @@ that appears near the bottom-centre of a chart is built the first time it is rev
 with the chart — on a phone the compact reset chip is out from the start, because a thumb
 has no hover to wait for.
 
+**The desktop's chrome is not in a phone's document.** The top bar, the shared drawing rail
+and the bottom bar belong to the desktop size class: on a phone they are detached (not just
+hidden) and come back — in exactly the same place, with the same state — when the layout
+returns to desktop. Nothing is rebuilt on the flip; it is the same widgets re-attached.
+
 **Chrome that belongs to one size class is built by that class.** A desktop workspace does
 not construct the phone's bottom bar or the drawing dock above it, and a phone does not pay
 for them twice; a flip between the size classes builds what the new one needs and projects

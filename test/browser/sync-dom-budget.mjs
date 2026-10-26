@@ -9,7 +9,7 @@ import { BASE, assert, report } from './helpers.mjs';
 import { chromium } from 'playwright';
 
 /** Ceilings with headroom — the point is "a few hundred, not a couple of thousand". */
-const BUDGET = { desktop: 900, phone: 1060 };
+const BUDGET = { desktop: 800, phone: 620 };
 /** What a fresh 4-cell workspace used to cost before the audit (for the record). */
 const BEFORE = { desktop: 2302, phone: 1794 };
 
@@ -39,7 +39,9 @@ const census = (page) =>
     page.evaluate(() => {
         const rails = [...document.querySelectorAll('.vela-dtb')].map((d) => d.querySelectorAll('*').length);
         return {
-            nodes: document.querySelectorAll('*').length,
+            // Body elements — the same count the audit reports (head's styles/scripts are
+            // not the UI's weight).
+            nodes: document.body.querySelectorAll('*').length,
             listeners: window.__ls,
             menuRows: document.querySelectorAll('.vela-menu-item').length,
             menus: document.querySelectorAll('.vela-menu').length,
@@ -122,7 +124,36 @@ try {
         assert(m.nodes < BEFORE.phone * 0.8, 'and is materially lighter than the audited tree', { nodes: m.nodes, before: BEFORE.phone });
         assert(m.menuRows === 0, 'phone: no closed menu holds its rows', m.menus);
         assert(m.features.mobilebar && m.features.legendRows >= 1, 'phone: its own bar and legend are still there', m.features);
-        assert(m.rails.built === 1 && m.rails.biggest >= 100, 'phone: one full drawing rail, the rest unbuilt', m.rails);
+        // The desktop chrome is not merely hidden on a phone — it is not in the document.
+        assert(!m.features.topbar && !m.features.drawingRail && !m.features.bottombar, 'phone: no desktop chrome is carried', m.features);
+
+        // …and it comes back, correctly placed and working, when the layout becomes desktop.
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.waitForTimeout(800);
+        const flipped = await page.evaluate(() => {
+            const box = (sel) => { const e = document.querySelector(sel); if (!e) return null; const r = e.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top) }; };
+            return { layout: document.querySelector('[data-layout]')?.dataset.layout, topbar: box('.vela-widget-topbar'), rail: box('.vela-ws-toolbar'), bottombar: box('.vela-widget-bottombar'), mobilebar: box('.vela-mobilebar') };
+        });
+        facts.flipToDesktop = flipped;
+        assert(flipped.layout === 'desktop' && flipped.topbar && flipped.topbar.w > 600 && flipped.topbar.top === 0, 'flip: the top bar comes back, full width, at the top', flipped);
+        assert(flipped.rail && flipped.rail.w > 20 && flipped.bottombar && flipped.bottombar.w > 600, 'flip: the drawing rail and the bottom bar come back too', flipped);
+        assert(!flipped.mobilebar || flipped.mobilebar.w === 0, 'flip: the phone bar steps aside', flipped);
+        await page.click('.vela-widget-tf-caret');
+        await page.waitForTimeout(350);
+        const menuAfterFlip = await page.evaluate(() => [...document.querySelectorAll('.vela-menu')].map((m) => m.querySelectorAll('.vela-menu-item').length).filter((n) => n > 0));
+        facts.flipMenu = menuAfterFlip;
+        assert(menuAfterFlip.length === 1 && menuAfterFlip[0] >= 6, 'flip: the restored bar still opens its menus', menuAfterFlip);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(300);
+        // …and going back to the phone takes it out again.
+        await page.setViewportSize({ width: 390, height: 780 });
+        await page.waitForTimeout(800);
+        const back = await page.evaluate(() => ({ topbar: !!document.querySelector('.vela-widget-topbar'), rail: !!document.querySelector('.vela-ws-toolbar'), mobilebar: !!document.querySelector('.vela-mobilebar') }));
+        facts.flipBack = back;
+        assert(!back.topbar && !back.rail && back.mobilebar, 'flip back: the desktop chrome leaves again, the phone bar stays', back);
+        // The phone draws with its own dock (the pill above the bottom bar), not the
+        // desktop rail — which is not in the document at all.
+        assert(m.rails.built === 0, 'phone: no desktop drawing rail is carried', m.rails);
         await context.close();
     }
 

@@ -1184,6 +1184,12 @@ export class Topbar {
         this.styleButton.setAttribute('aria-label', `Chart style — ${priceStyleLabel(this.priceStyle)}`);
     }
 
+    /** Re-measure the strip (overflow state, hairlines) — after it is re-attached, or
+     *  after anything that changes what the bar holds without resizing the window. */
+    syncChrome(): void {
+        this.syncHairlines();
+    }
+
     /** Re-project the contributed topbar actions (call after registrations change).
      *  An action PINNED by the composition renders into its named slot (list position
      *  wins over `align`/`order`); the rest flow into the side's `actions` slot — or

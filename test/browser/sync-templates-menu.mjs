@@ -257,7 +257,9 @@ try {
         };
     });
     facts.phone = { ...phoneFacts, topbarWidth };
-    assert(topbarWidth === 0, 'the phone hides the topbar (so the drawer is the only door)', topbarWidth);
+    // A phone does not carry the desktop topbar in its document at all (R67), so "not shown"
+    // is either an absent control or a zero-width one.
+    assert(topbarWidth === null || topbarWidth === 0, 'the phone hides the topbar (so the drawer is the only door)', topbarWidth);
     assert(phoneFacts.row && phoneFacts.h >= 44, 'the phone lists the template on a 44px touch row', phoneFacts);
     assert(phoneFacts.over <= 0 && phoneFacts.sheetOver <= 0, 'the phone sheet does not scroll sideways', phoneFacts);
     await mp.locator('[data-template="Phone set"]').first().click();

@@ -118,6 +118,16 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **A phone no longer carries the desktop chrome at all.** The top bar, the shared drawing
+  rail and the bottom bar used to be built for every workspace and merely `display:none` on
+  a phone — 307 nodes nobody could see or reach. They are now kept out of the document while
+  the layout is mobile and put back (through anchors that remember their exact place) the
+  moment it returns to desktop, with the bar re-measured and the rail's selected tool
+  repainted before its first frame. Nothing is rebuilt on a flip: the same widgets, the same
+  listeners, the same state. A 390×780 workspace is **583 elements** (it was 1,794 three
+  rounds ago), and a flip back to 1440×900 restores a full 1440×39 bar whose menus open,
+  a 44px rail that still arms tools, and the bottom bar at its own height.
+
 - **A legend row's buttons arrive with the hover that reveals them.** Every indicator row
   was born with its eye / gear / move / contributed / ✕ cluster attached and hidden —
   24 nodes per row, 96 across a four-chart workspace, none of them reachable until the

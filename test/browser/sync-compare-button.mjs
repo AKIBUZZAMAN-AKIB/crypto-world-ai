@@ -101,7 +101,9 @@ try {
         };
     });
     facts.mobile = mobile;
-    assert(mobile.toolbar === 0, 'the phone hides the toolbar control', mobile.toolbar);
+    // The phone leaves the whole desktop toolbar out of the document (R67): absent counts
+    // as hidden, exactly like a zero-width control.
+    assert(mobile.toolbar === null || mobile.toolbar === 0, 'the phone hides the toolbar control', mobile.toolbar);
     assert(mobile.hasRow && mobile.rowH >= 40, 'the More drawer keeps a full-size Compare row', mobile);
     assert(mobile.over <= 0, 'the phone sheet does not scroll sideways', mobile.over);
     assert(phoneErrors.length === 0, 'no page errors on the phone', phoneErrors);
