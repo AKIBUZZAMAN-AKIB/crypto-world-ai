@@ -9,7 +9,7 @@ import { BASE, assert, report } from './helpers.mjs';
 import { chromium } from 'playwright';
 
 /** Ceilings with headroom — the point is "a few hundred, not a couple of thousand". */
-const BUDGET = { desktop: 620, phone: 410 };
+const BUDGET = { desktop: 600, phone: 390 };
 /** What a fresh 4-cell workspace used to cost before the audit (for the record). */
 const BEFORE = { desktop: 2302, phone: 1794 };
 
@@ -50,6 +50,7 @@ const census = (page) =>
             cellButtons: document.querySelectorAll('.vela-cc-btn').length,
             legendButtons: document.querySelectorAll('.vela-ind-ctl, .vela-ind-close').length,
             tooltips: document.querySelectorAll('.vela-tooltip').length,
+            axisChips: document.querySelectorAll('.vela-axis-btn').length,
             stateBound: document.querySelectorAll('.vela-watermark-replay, .vela-sl-replay-badge, .vela-sl-eye, button[aria-label="Scroll to most recent bar"]').length,
             gridCanvases: document.querySelectorAll('.vela-ws-grid canvas').length,
             cells: window.__ws.cells().length,
@@ -77,6 +78,7 @@ try {
         assert(m.legendButtons === 0, 'and no legend row carries its action cluster before it is revealed', m.legendButtons);
         assert(m.tooltips === 0, 'and the shell carries ONE shared tooltip surface — built by the first hover', m.tooltips);
         assert(m.stateBound === 0, 'and nothing that belongs to a replay, a scroll-back or a hidden chart is built', m.stateBound);
+        assert(m.axisChips === 0, 'no price scale carries its A/L chips before a cursor has hovered it', m.axisChips);
         assert(m.rails.built === 1, 'exactly ONE drawing rail is built (the workspace\'s shared bar)', m.rails);
         assert(m.features.drawingRail && m.features.topbar && m.features.legendRows >= 1 && m.features.bottombar, 'every surface is still there', m.features);
         assert(m.gridCanvases === 28 && m.cells === 4, 'the charts are untouched (4 cells, 28 chart canvases)', { canvases: m.gridCanvases, cells: m.cells });

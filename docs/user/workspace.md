@@ -668,6 +668,12 @@ values at rest; its eye, gear, move and ✕ are built the first time the row is 
 a hidden indicator gets its eye straight away). The fold measurement still counts the full
 cluster, so a row that would not fit still folds.
 
+**The price scale's A/L chips arrive with the hover that shows them.** The Auto and Log
+buttons that sit at the bottom of a pane's master scale column are built the first time a
+cursor actually reaches that column — six nodes per pane (the strip and its two chips) that
+a chart nobody has hovered does not carry. They still reflect the hovered pane's state the
+moment they appear, and a touch chart (no hover) never builds them at all.
+
 **A chart's own controls arrive with the cursor.** The small zoom/maximize/reset cluster
 that appears near the bottom-centre of a chart is built the first time it is revealed, not
 with the chart — on a phone the compact reset chip is out from the start, because a thumb

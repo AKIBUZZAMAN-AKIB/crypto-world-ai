@@ -118,6 +118,13 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **The price scale's A / L chips are built by the hover that reveals them.** Every pane
+  mounted the Auto and Log buttons at the bottom of its master scale column and kept them at
+  `display:none` until a cursor came near — six nodes a pane (the solid strip and its two
+  chips) for a control most charts never show. They are now built by that first hover, still
+  arrive showing the hovered pane's live state (active chip lit), still toggle autoscale and
+  log scale, and a touch chart never builds them at all. Desktop boot: **595 → 583** elements,
+  a phone **394 → 382**.
 - **Chrome that belongs to a state is built by that state.** Four surfaces were created with
   their chart and merely hidden: the *scroll to the latest bar* chip, the **REPLAY** watermark
   line, the status line's replay badge and its show-chart eye — 68 nodes across a four-chart

@@ -58,16 +58,28 @@ function ensureStyles(): void {
  * the plot, matching the pane-controls pattern.
  */
 export class AxisScaleButtons {
-    private readonly cluster: HTMLDivElement;
-    private readonly autoBtn: HTMLButtonElement;
-    private readonly logBtn: HTMLButtonElement;
+    /** The cluster — built by the FIRST hover over a pane's master scale column (see
+     *  {@link ensureCluster}). A chart whose scale nobody has hovered carries none of it,
+     *  which is every chart on a first frame: six nodes per pane, times every cell. */
+    private cluster: HTMLDivElement | null = null;
+    private autoBtn: HTMLButtonElement | null = null;
+    private logBtn: HTMLButtonElement | null = null;
     private readonly tipDisposers: Array<() => void> = [];
     private hoverPaneId: string | null = null;
 
     constructor(private readonly plot: HTMLElement, private theme: VelaTheme, private readonly deps: AxisScaleButtonsDeps) {
         ensureStyles();
-        this.cluster = document.createElement('div');
-        Object.assign(this.cluster.style, {
+        // Track hover on the PLOT so moving the cursor onto the buttons themselves — plot
+        // children above the canvas — keeps them revealed instead of flickering away.
+        this.plot.addEventListener('pointermove', this.onPlotMove);
+        this.plot.addEventListener('pointerleave', this.onPlotLeave);
+    }
+
+    /** Build the chip pair and its strip, once. */
+    private ensureCluster(): HTMLDivElement {
+        if (this.cluster) return this.cluster;
+        const cluster = document.createElement('div');
+        Object.assign(cluster.style, {
             position: 'absolute',
             display: 'none',
             justifyContent: 'center',
@@ -78,16 +90,15 @@ export class AxisScaleButtons {
             boxSizing: 'border-box',
             zIndex: '6',
             pointerEvents: 'auto',
+            background: this.theme.background, // re-tinted by applyTheme
         });
-        this.applyTheme();
+        this.cluster = cluster;
         this.autoBtn = this.button('A', 'Auto (fits data to screen)', () => this.deps.onToggleAuto(this.hoverPaneId ?? ''));
         this.logBtn = this.button('L', 'Logarithmic scale', () => this.deps.onToggleLog(this.hoverPaneId ?? ''));
-        this.cluster.append(this.autoBtn, this.logBtn);
-        this.plot.appendChild(this.cluster);
-        // Track hover on the PLOT so moving the cursor onto the buttons themselves — plot
-        // children above the canvas — keeps them revealed instead of flickering away.
-        this.plot.addEventListener('pointermove', this.onPlotMove);
-        this.plot.addEventListener('pointerleave', this.onPlotLeave);
+        cluster.append(this.autoBtn, this.logBtn);
+        this.applyTheme();
+        this.plot.appendChild(cluster);
+        return cluster;
     }
 
     private button(label: string, title: string, onClick: () => void): HTMLButtonElement {
@@ -140,7 +151,7 @@ export class AxisScaleButtons {
 
     /** The strip is SOLID chart background: the buttons cover axis labels, never blend with them. */
     private applyTheme(): void {
-        this.cluster.style.background = this.theme.background;
+        if (this.cluster) this.cluster.style.background = this.theme.background;
     }
 
     private setHoverPane(paneId: string | null): void {
@@ -153,21 +164,23 @@ export class AxisScaleButtons {
     reposition(): void {
         const pane = this.hoverPaneId ? this.deps.panes().find((p) => p.id === this.hoverPaneId) : undefined;
         if (!pane || pane.collapsed || pane.height < MIN_PANE_H) {
-            this.cluster.style.display = 'none';
+            if (this.cluster) this.cluster.style.display = 'none';
             return;
         }
+        // The hover that reaches this point is what BUILDS the pair (see ensureCluster).
+        const cluster = this.ensureCluster();
         // Flush with the pane's bottom edge, inset 1px from the axis frame so the scale
         // border stays visible. The extra PAD_TOP is the air above the letters.
-        this.cluster.style.right = `${this.deps.rightAxis() - AXIS_MASTER_W}px`;
-        this.cluster.style.top = `${pane.top + pane.height - CLUSTER_H}px`;
-        this.cluster.style.display = 'flex';
+        cluster.style.right = `${this.deps.rightAxis() - AXIS_MASTER_W}px`;
+        cluster.style.top = `${pane.top + pane.height - CLUSTER_H}px`;
+        cluster.style.display = 'flex';
         this.sync();
     }
 
     /** Reflect the hovered pane's current auto/log state on the buttons. */
     private sync(): void {
         const pane = this.deps.panes().find((p) => p.id === this.hoverPaneId);
-        if (!pane) return;
+        if (!pane || !this.autoBtn || !this.logBtn) return;
         this.autoBtn.classList.toggle('vela-axis-on', pane.auto);
         this.logBtn.classList.toggle('vela-axis-on', pane.log);
     }
@@ -177,6 +190,9 @@ export class AxisScaleButtons {
         this.plot.removeEventListener('pointerleave', this.onPlotLeave);
         for (const dispose of this.tipDisposers) dispose();
         this.tipDisposers.length = 0;
-        this.cluster.remove();
+        this.cluster?.remove();
+        this.cluster = null;
+        this.autoBtn = null;
+        this.logBtn = null;
     }
 }
