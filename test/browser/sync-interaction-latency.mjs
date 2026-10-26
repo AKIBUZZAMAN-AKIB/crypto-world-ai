@@ -69,7 +69,9 @@ await page.waitForTimeout(420);
         window.__s = { start: performance.now(), shown: -1, first: -1, full: -1, rows: 0 };
         const tick = () => {
             const s = window.__s;
-            const d = document.querySelector('.vela-dialog');
+            // The picker's own list, not "the first .vela-dialog in the document": the
+            // shell owns several dialogs and they are mounted when they open.
+            const d = document.querySelector('.vela-sp-list');
             if (d && d.getBoundingClientRect().height > 20 && s.shown < 0) s.shown = performance.now() - s.start;
             const n = list();
             if (n > 0 && s.first < 0) s.first = performance.now() - s.start;

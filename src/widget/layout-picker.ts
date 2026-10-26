@@ -914,7 +914,8 @@ export class LayoutPicker {
         });
         opts.trigger.setAttribute('aria-haspopup', 'true');
         opts.trigger.setAttribute('aria-expanded', 'false');
-        opts.host.appendChild(this.layer);
+        // NOT mounted here: a picker nobody has opened must not cost the page a node.
+        // `open()` mounts it — see `mounted`.
     }
 
     toggle(): void {
@@ -932,6 +933,9 @@ export class LayoutPicker {
     open(): void {
         if (this.isOpen) return;
         this.isOpen = true;
+        // Built in the constructor, mounted on the first open: the layout matrix, the sync
+        // switches and the footer are a closed picker's nodes until someone looks at them.
+        if (!this.layer.isConnected) this.opts.host.appendChild(this.layer);
         this.exit?.cancel();
         this.exit = null;
         this.hover = null;

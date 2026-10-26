@@ -554,6 +554,8 @@ export class PineEditor extends SidePanel {
      * but never lets an edit touch the study — you make a copy first.
      */
     private builtin: { title: string; source: string } | null = null;
+    /** The editor's surface, waiting for the first open. See the constructor. */
+    private pendingBody: HTMLElement[] | null = null;
 
     constructor(host: HTMLElement) {
         super(host, 'Pine editor', 'vela-pe', {
@@ -667,7 +669,10 @@ export class PineEditor extends SidePanel {
         this.builtinCopy.addEventListener('click', () => this.makeWorkingCopy());
         this.builtinBar.append(builtinText, this.builtinCopy);
 
-        this.body.append(this.grip, this.builtinBar, this.wrap, this.autocompleteEl, this.statusEl, this.consoleEl, this.pop);
+        // Built, but NOT appended: the editor's surface (gutter, code layer, console,
+        // autocomplete, run popover) is a hundred nodes, and a closed editor is a panel
+        // nobody is looking at. `mountBody()` puts it in on the first open.
+        this.pendingBody = [this.grip, this.builtinBar, this.wrap, this.autocompleteEl, this.statusEl, this.consoleEl, this.pop];
 
         this.bind();
         this.syncSurface();
@@ -691,8 +696,20 @@ export class PineEditor extends SidePanel {
      * the panel was closed must not give the trader dark-theme tokens on a white sheet.
      */
     override toggle(open = !this.open, instant = false): void {
+        if (open) this.mountBody();
         super.toggle(open, instant);
         if (open) this.syncSurface();
+    }
+
+    /** Put the editor's surface into the panel body — once, on the first open. */
+    private mountBody(): void {
+        const pending = this.pendingBody;
+        if (!pending) return;
+        this.pendingBody = null;
+        this.body.append(...pending);
+        // The code layer only has a size once it is attached: re-render so the viewport,
+        // the highlights and the scroll position are measured against the real box.
+        this.render();
     }
 
     /** Pick the syntax palette from the background actually painted behind the panel. */

@@ -122,7 +122,9 @@ export class Dialog {
             this.footer = null;
         }
         this.positioner.appendChild(this.panel);
-        host.append(this.backdrop, this.positioner);
+        // NOT attached here: a dialog that has never been opened must cost the page
+        // nothing. `show()` mounts the pair (see `mounted`).
+        this.hostEl = host;
         if (opts.closeOnBackdrop) {
             const closeOn = (e: Event): void => {
                 if (e.target !== this.backdrop && e.target !== this.positioner) return;
@@ -179,6 +181,10 @@ export class Dialog {
         });
     }
 
+    /** The layer the scrim + panel mount into, remembered until the first open. */
+    private readonly hostEl!: HTMLElement;
+    /** Mounted into the document? A closed, never-opened dialog is a detached tree. */
+    private mounted = false;
     private opener: HTMLElement | null = null;
     private wasOpen = false;
     /** The panel and scrim's exit animation after a close; a reopen cancels it. */
@@ -236,6 +242,10 @@ export class Dialog {
     }
 
     show(): void {
+        if (!this.mounted) {
+            this.mounted = true;
+            this.hostEl.append(this.backdrop, this.positioner);
+        }
         this.opener = this.panel.ownerDocument.activeElement as HTMLElement | null;
         this.ctrl.connect(this.handle.service).setOpen(true);
     }
