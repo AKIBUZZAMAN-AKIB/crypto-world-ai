@@ -663,7 +663,10 @@ desktop workspace costs ~1.3k nodes rather than ~2.3k, and a phone ~1.2k:
   still an empty, invisible span. The same painted path serves the renderer's own chrome
   (`iconGlyph`): the drawing rail's nine tool groups, the flyout badges, the favourite stars
   and the selected-row check are all masks now, so an open flyout holds **zero** SVG shapes
-  and the rail is 117 → 74 nodes without losing a tool.
+  and the rail is 117 → 56 nodes without losing a tool — the hover square that used to be a
+  `.vela-dtb-hit` span is now the button's own `::before`, so a tool button's only child is
+  its glyph. (A masked glyph is a data-URI document, so the mask carries the SVG namespace;
+  without it the mask decodes to nothing and every icon is silently invisible.)
 - **The rail's caret is drawn, not built.** A cell's little chevron — the hover target that
   opens a tool's flyout — used to be five elements (a button around a hit square around a
   wrapper span around an SVG around a path) and each icon paid for a wrapper span it did not

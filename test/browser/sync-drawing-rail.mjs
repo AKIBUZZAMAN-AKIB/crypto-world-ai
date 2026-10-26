@@ -35,7 +35,56 @@ try {
     assert(shape.w === 11 && shape.h === 22, 'it keeps its 11×22 hover target', shape);
     assert(shape.caret, 'the chevron is drawn by the stylesheet (::after content + size)', shape);
 
-    // 2. Reveal + flyout on a REAL pointer: hover the cell, click the caret.
+    // 2. The button's content is the glyph and nothing else: the hover square is the button's
+    //    own ::before, so no wrapper element sits between the button and its icon.
+    const icon = await page.evaluate(() => {
+        const b = document.querySelector('.vela-dtb-icon');
+        const glyph = b.querySelector(':scope > .vela-icon');
+        const cs = glyph ? getComputedStyle(glyph) : null;
+        const pill = getComputedStyle(b, '::before');
+        return {
+            glyph: !!glyph,
+            kids: b.children.length,
+            wrap: !!b.querySelector('.vela-dtb-hit'),
+            svg: !!b.querySelector('svg'),
+            masked: cs ? (cs.maskImage || cs.webkitMaskImage || 'none') !== 'none' : false,
+            box: glyph ? [Math.round(glyph.getBoundingClientRect().width), Math.round(glyph.getBoundingClientRect().height)] : null,
+            pill: { w: pill.width, h: pill.height, pos: pill.position, bg: pill.backgroundColor },
+        };
+    });
+    facts.icon = icon;
+    assert(icon.glyph && !icon.svg && !icon.wrap, 'the glyph is the button\'s only child — no hit-square wrapper', icon);
+    assert(icon.kids === 1 && icon.masked, 'the glyph owns no shapes and carries its mask', icon);
+    assert(icon.box[0] === 18 && icon.box[1] === 18, 'the glyph is 18px', icon);
+    assert(icon.pill.w === '22px' && icon.pill.h === '22px' && icon.pill.pos === 'absolute', 'the hover square is a 22px painted pill on the button', icon.pill);
+    assert(icon.pill.bg === 'rgba(0, 0, 0, 0)', 'the pill is invisible at rest', icon.pill);
+
+    // …and it tints on hover, WITHOUT covering the glyph it sits behind.
+    await page.locator('.vela-dtb-icon').first().hover();
+    await page.waitForTimeout(200);
+    const hoverPill = await page.evaluate(() => {
+        const b = document.querySelector('.vela-dtb-icon');
+        return { bg: getComputedStyle(b, '::before').backgroundColor, color: getComputedStyle(b).color };
+    });
+    facts.hoverPill = hoverPill;
+    assert(hoverPill.bg !== 'rgba(0, 0, 0, 0)', 'hovering the button tints the painted pill', hoverPill);
+    const gb = await page.locator('.vela-dtb-icon').first().boundingBox();
+    const gClip = { x: Math.floor(gb.x), y: Math.floor(gb.y), width: Math.ceil(gb.width), height: Math.ceil(gb.height) };
+    const painted = await page.screenshot({ clip: gClip });
+    const again = await page.screenshot({ clip: gClip });
+    await page.addStyleTag({ content: '.vela-dtb-icon > .vela-icon{opacity:0 !important;}' });
+    const withoutGlyph = await page.screenshot({ clip: gClip });
+    // The WHOLE png: an 18px crop is ~1 KB, and a header-only compare would be identical for
+    // every screenshot of the same size (which is how this assert lied once already).
+    const h = (buf) => buf.toString('base64');
+    facts.glyphAbovePill = { stable: h(painted) === h(again), differs: h(painted) !== h(withoutGlyph) };
+    assert(facts.glyphAbovePill.stable && facts.glyphAbovePill.differs, 'the glyph paints ABOVE its pill (hiding it changes the pixels)', facts.glyphAbovePill);
+    await page.locator('.vela-dtb-icon').first().hover();
+    await page.waitForTimeout(200);
+    const tint = await page.evaluate(() => getComputedStyle(document.querySelector('.vela-dtb-icon .vela-dtb-hit')).backgroundColor);
+    assert(tint !== 'rgba(0, 0, 0, 0)', 'hovering the icon still tints its hit square', { tint });
+
+    // 3. Reveal + flyout on a REAL pointer: hover the cell, click the caret.
     const cell = page.locator('.vela-dtb-cell').nth(2);
     const restOpacity = await page.evaluate(() => getComputedStyle(document.querySelector('.vela-dtb-cell .vela-dtb-arrow')).opacity);
     assert(restOpacity === '0', 'an unhovered cell hides its caret', { restOpacity });
@@ -73,28 +122,6 @@ try {
     assert(fly.shapes === 0, 'the flyout holds no SVG shapes at all', fly);
     assert(fly.badge, 'a row badge paints its glyph', fly);
 
-    // 3. The icon: one masked element inside the hit square, sized 18px, owning no shapes.
-    const icon = await page.evaluate(() => {
-        const b = document.querySelector('.vela-dtb-icon');
-        const glyph = b.querySelector('.vela-dtb-hit > .vela-icon');
-        const cs = glyph ? getComputedStyle(glyph) : null;
-        return {
-            glyph: !!glyph,
-            kids: glyph ? glyph.getElementsByTagName('*').length : -1,
-            svg: !!b.querySelector('svg'),
-            masked: cs ? (cs.maskImage || cs.webkitMaskImage || 'none') !== 'none' : false,
-            box: glyph ? [Math.round(glyph.getBoundingClientRect().width), Math.round(glyph.getBoundingClientRect().height)] : null,
-        };
-    });
-    facts.icon = icon;
-    assert(icon.glyph && !icon.svg, 'the glyph is a masked element — no inline <svg> in the cell', icon);
-    assert(icon.kids === 0 && icon.masked, 'the glyph owns no shapes and carries its mask', icon);
-    assert(icon.box[0] === 18 && icon.box[1] === 18, 'the glyph is 18px', icon);
-    await page.locator('.vela-dtb-icon').first().hover();
-    await page.waitForTimeout(200);
-    const tint = await page.evaluate(() => getComputedStyle(document.querySelector('.vela-dtb-icon .vela-dtb-hit')).backgroundColor);
-    assert(tint !== 'rgba(0, 0, 0, 0)', 'hovering the icon still tints its hit square', { tint });
-
     // 4. Cost: a cell is its two buttons, one hit square and the glyph's own paths — the
     //    three wrapper/pill spans the caret and the icon used to carry are gone.
     const cost = await page.evaluate(() => {
@@ -113,7 +140,7 @@ try {
         };
     });
     facts.cost = cost;
-    assert(cost.buttons === 2 && cost.hits === 1, "a cell is its two buttons and the icon's one hit square", cost);
+    assert(cost.buttons === 2 && cost.hits === 0, 'a cell is exactly its two buttons — no hit-square elements', cost);
     assert(cost.shapes === 0, 'a cell holds no SVG shapes at all', cost);
     assert(cost.stray === 0, 'nothing sits in a cell but buttons, the hit square and the glyph', cost);
 

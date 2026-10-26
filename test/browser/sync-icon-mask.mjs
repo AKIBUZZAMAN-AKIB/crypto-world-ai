@@ -38,15 +38,49 @@ try {
     // layout widget's live glyph is not masked at all), so rules ≤ icons.
     assert(census.sheets === 1 && census.rules > 0 && census.rules <= census.icons, 'one shared sheet, one rule per masked icon id', census);
 
-    // The paint is a glyph, not a filled square: strip the mask and the pixels change.
-    const icon = page.locator('.vela-icon').first();
-    const r = await icon.boundingBox();
-    const clip = { x: Math.floor(r.x), y: Math.floor(r.y), width: Math.ceil(r.width), height: Math.ceil(r.height) };
-    const masked = await page.screenshot({ clip });
+    // THE GLYPH MUST ACTUALLY PAINT. A data-URI mask is its own document: without the SVG
+    // namespace (or with a black token under luminance masking) it decodes to nothing and the
+    // icon is silently invisible — every computed style still looks correct. So this measures
+    // pixels: the icon's box must contain ink at rest, and its mask must be doing the shaping.
+    const inkOf = async () => {
+        const icon = page.locator('.vela-icon').first();
+        const r = await icon.boundingBox();
+        const clip = { x: Math.floor(r.x), y: Math.floor(r.y), width: Math.ceil(r.width), height: Math.ceil(r.height) };
+        const png = await page.screenshot({ clip });
+        const ink = await page.evaluate(async (b64) => {
+            const img = new Image();
+            img.src = `data:image/png;base64,${b64}`;
+            await img.decode();
+            const c = document.createElement('canvas');
+            c.width = img.width;
+            c.height = img.height;
+            const ctx = c.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const d = ctx.getImageData(0, 0, c.width, c.height).data;
+            // The icon box's own background differs from the ink when the glyph is drawn.
+            const counts = new Map();
+            for (let i = 0; i < d.length; i += 4) {
+                const k = `${d[i]},${d[i + 1]},${d[i + 2]}`;
+                counts.set(k, (counts.get(k) ?? 0) + 1);
+            }
+            const sorted = [...counts.values()].sort((a, b) => b - a);
+            const total = sorted.reduce((a, b) => a + b, 0);
+            return { colours: counts.size, inkShare: total ? 1 - sorted[0] / total : 0 };
+        }, png.toString('base64'));
+        return { png, ...ink };
+    };
+    const painted = await inkOf();
+    facts.paint = { inks: painted.inkShare.toFixed(3), colours: painted.colours };
+    assert(painted.colours >= 2 && painted.inkShare > 0.05, 'the glyph really paints (the icon box holds ink)', facts.paint);
+    const maskedPixels = hash(painted.png);
     await page.addStyleTag({ content: '.vela-icon{mask-image:none !important;-webkit-mask-image:none !important;}' });
-    const solid = await page.screenshot({ clip });
-    facts.paint = { masked: hash(masked), solid: hash(solid) };
-    assert(facts.paint.masked !== facts.paint.solid, 'the masked glyph paints a shape (unmasked it is a solid square)', facts.paint);
+    const solid = await inkOf();
+    facts.paint.masked = maskedPixels;
+    facts.paint.solid = hash(solid.png);
+    assert(facts.paint.masked !== facts.paint.solid, 'the mask is what shapes the ink (unmasked it is a solid square)', facts.paint);
+    // A glyph leaves the box's own colour behind it (two or more colours); unmasked, the box is
+    // one flat square of the icon's colour (the ink measure inverts, so colours is the proof).
+    assert(solid.colours <= 2, 'unmasked the box is a flat square — so the mask is the shape', { maskedColours: painted.colours, solidColours: solid.colours });
 
     // …and the shape is painted in the text colour: recolour the trigger, the glyph follows.
     const colour = await page.evaluate(() => {

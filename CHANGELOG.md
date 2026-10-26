@@ -118,6 +118,14 @@ All notable changes to Vela, newest first.
 
 ### Fixed
 
+- **Every icon in the shell really paints.** The masked glyphs (R75/R76) were inverted on the
+  way in: Chromium masks an SVG *image* by luminance, so a black token only ever *cut* the
+  icon out, and a data-URI mask without an SVG namespace decodes to nothing at all — the
+  computed styles looked perfect while the glyphs were invisible. The mask is now white (the
+  token replaced with `#fff`) and namespaced (`xmlns`), and `sync-icon-mask` no longer trusts
+  styles: it measures the icon's pixels, requires ink at rest, and proves that removing the
+  mask turns the box into a flat square.
+
 - **A crowded top bar can no longer hide a tool under its pinned cluster.** The strip pins
   the symbol at the start and the tools at the end, and the middle scrolls beneath them —
   but the scroll range ended exactly at the pinned edge, so the strip's last middle tool
@@ -135,6 +143,11 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **A drawing tool's button now holds only its glyph.** The hover/active square that used to
+  be a `.vela-dtb-hit` span is the button's own `::before` (a centered 22px pill, lifted
+  under the glyph), so the rail's eighteen buttons stopped paying a wrapper each: the rail is
+  74 → **56** nodes, and a cell is exactly two buttons and nothing else — same reveal, same
+  tint, same active state, same flyout.
 - **The renderer's chrome paints its glyphs too.** The drawing rail's tool cells, its
   collapse/cursor buttons, and the flyout's badges, favourite stars and selected check were
   still inline `<svg>` strings — the rail alone cost 117 nodes and every opened flyout

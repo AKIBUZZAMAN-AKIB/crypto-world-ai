@@ -367,8 +367,8 @@ export class DrawingToolbar {
     /** A cell: a full-width icon button (arms/toggles the primary action) plus, when
      *  {@link opts.multi} is set, a chevron button absolutely pinned to the right. The icon spans the
      *  whole cell so its glyph stays centered in the bar (aligned with the single-icon buttons); the
-     *  hover/active tint lives on a centered square (`.vela-dtb-hit`) that hugs the glyph, not the whole
-     *  row. The chevron is its own hover target — revealed on cell hover, tinted only on its own hover. */
+     *  hover/active tint lives on a centered square (the button's `::before`) that hugs the glyph,
+     *  not the whole row. The chevron is its own hover target — revealed on cell hover, tinted only on its own hover. */
     private makeCell(
         label: string,
         opts: { iconSvg?: string; multi: boolean; onIcon: () => void; onArrow?: () => void },
@@ -967,30 +967,33 @@ function ensureStyles(): void {
         document.head.appendChild(s);
     }
     s.textContent = `
-.vela-dtb-hit{width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:var(--vela-radius-md);transition:background var(--vela-dur-fast) ease,color var(--vela-dur-fast) ease;}
-.vela-dtb-hit svg{display:block;}
-.vela-dtb-btn{position:relative;width:100%;height:30px;flex:none;display:flex;align-items:center;justify-content:center;cursor:pointer;color:inherit;background:transparent;border:none;padding:0;transition:color var(--vela-dur-fast) ease;}
+/* The hover/active pill: a centered 22px square painted by the button itself, so no element
+   carries it. The glyph of a button is lifted above it. */
+.vela-dtb-btn,.vela-dtb-icon{position:relative;}
+.vela-dtb-btn::before,.vela-dtb-icon::before{content:'';position:absolute;left:50%;top:50%;width:22px;height:22px;transform:translate(-50%,-50%);border-radius:var(--vela-radius-md);background:transparent;pointer-events:none;transition:background var(--vela-dur-fast) ease;}
+.vela-dtb-btn>.vela-icon,.vela-dtb-icon>.vela-icon{position:relative;z-index:1;}
+.vela-dtb-btn{width:100%;height:30px;flex:none;display:flex;align-items:center;justify-content:center;cursor:pointer;color:inherit;background:transparent;border:none;padding:0;transition:color var(--vela-dur-fast) ease;}
 .vela-dtb-btn:hover{color:var(--vela-fg-bright);}
-.vela-dtb-btn:hover .vela-dtb-hit{background:var(--vela-hover);}
+.vela-dtb-btn:hover::before{background:var(--vela-hover);}
 .vela-dtb-btn[data-active='1']{color:var(--vela-fg-bright);}
-.vela-dtb-btn[data-active='1'] .vela-dtb-hit{background:var(--vela-active);}
+.vela-dtb-btn[data-active='1']::before{background:var(--vela-active);}
 .vela-dtb-cell{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:30px;}
 .vela-dtb-icon{flex:none;width:26px;height:30px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:inherit;cursor:pointer;padding:0;transition:color var(--vela-dur-fast) ease;}
 .vela-dtb-icon:hover{color:var(--vela-fg-bright);}
 .vela-dtb-cell[data-active='1'] .vela-dtb-icon{color:var(--vela-fg-bright);}
-.vela-dtb-cell[data-active='1'] .vela-dtb-icon .vela-dtb-hit{background:var(--vela-active);}
+.vela-dtb-cell[data-active='1'] .vela-dtb-icon::before{background:var(--vela-active);}
 .vela-dtb-arrow{position:absolute;right:1px;top:50%;transform:translateY(-50%);width:11px;height:22px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:inherit;cursor:pointer;padding:0;opacity:0;pointer-events:none;transition:opacity var(--vela-dur-fast) ease,color var(--vela-dur-fast) ease;}
 /* The pill (a hover/active target the caret sits in) and the caret itself. */
 .vela-dtb-arrow::before{content:'';position:absolute;inset:0;border-radius:var(--vela-radius-md);background:transparent;transition:background var(--vela-dur-fast) ease;}
-.vela-dtb-arrow::after{content:'';width:4px;height:4px;border-top:1.5px solid currentColor;border-right:1.5px solid currentColor;transform:translateX(1px) rotate(45deg);}
+.vela-dtb-arrow::after{content:'';position:relative;z-index:1;width:4px;height:4px;border-top:1.5px solid currentColor;border-right:1.5px solid currentColor;transform:translateX(1px) rotate(45deg);}
 .vela-dtb-cell:hover .vela-dtb-arrow,.vela-dtb-icon:hover~.vela-dtb-arrow,.vela-dtb-cell.vela-open .vela-dtb-arrow{opacity:1;pointer-events:auto;}
 .vela-dtb-arrow:hover{color:var(--vela-fg-bright);}
-.vela-dtb-icon:hover .vela-dtb-hit,.vela-dtb-arrow:hover::before{background:var(--vela-hover);}
+.vela-dtb-icon:hover::before,.vela-dtb-arrow:hover::before{background:var(--vela-hover);}
 .vela-dtb-cell.vela-open .vela-dtb-arrow::before{background:var(--vela-active);}
 .vela-dtb-cell.vela-open .vela-dtb-arrow:hover::before{background:var(--vela-hover);}
 .vela-dtb-collapse{margin-top:auto;}
 .vela-dtb[data-collapsed='1']>*:not(.vela-dtb-collapse){display:none;}
-.vela-dtb[data-collapsed='1'] .vela-dtb-collapse .vela-dtb-hit{width:14px;}
+.vela-dtb[data-collapsed='1'] .vela-dtb-collapse::before{width:14px;}
 .vela-dtb-item{background:transparent;border:none;transition:background var(--vela-dur-fast) ease;}
 .vela-dtb-item:hover{background:var(--vela-hover-strong);}
 .vela-dtb-badge{width:24px;height:24px;padding:3px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;flex:none;border-radius:var(--vela-radius-md);background:var(--vela-hover);border:1px solid var(--vela-border);color:var(--vela-fg-muted);transition:background var(--vela-dur-fast) ease,border-color var(--vela-dur-fast) ease,color var(--vela-dur-fast) ease;}
@@ -1036,14 +1039,14 @@ const CHECK_ICON = icon('check');
 const STAR_ICON = icon('star');
 const STAR_FILLED_ICON = icon('star-filled');
 
-/** A button's inner content: the glyph inside a centered square (`.vela-dtb-hit`) that carries the
- *  hover/active highlight, so the tint hugs the icon instead of stretching across the whole row.
- *  The glyph is a masked element (see `iconGlyph`), so the square owns exactly one child and that
- *  child owns nothing — an inline `<svg>` here used to cost three or four nodes per tool. */
+/** A button's content: the glyph, and NOTHING else. The hover/active highlight is a centered
+ *  square painted by the button's own `::before` (`.vela-dtb-pill` rules in the stylesheet), so
+ *  the tint still hugs the icon instead of filling the row — and each of the rail's eighteen
+ *  buttons stopped paying a wrapper element for it. `iconGlyph` is already shape-free (a mask). */
 function setHit(btn: HTMLElement, svg: string, iconSize = 18): void {
-    const doc = btn.ownerDocument;
-    const hit = doc.createElement('span');
-    hit.className = 'vela-dtb-hit';
-    hit.appendChild(iconGlyph(svg, iconSize, doc));
-    btn.replaceChildren(hit);
+    if (!svg.trim()) {
+        btn.replaceChildren();
+        return;
+    }
+    btn.replaceChildren(iconGlyph(svg, iconSize, btn.ownerDocument));
 }

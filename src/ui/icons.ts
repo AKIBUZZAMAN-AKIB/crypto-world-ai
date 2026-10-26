@@ -27,10 +27,16 @@ const sheets = new WeakMap<Document, IconSheet>();
 
 /** The icon's markup as a data URI: sized by `mask-size`, painted by its own alpha. */
 function maskUri(raw: string): string {
-    const svg = raw
+    let svg = raw
         .replace(/\swidth="[^"]*"/, '') // mask-size owns the box; the viewBox keeps the shape
         .replace(/\sheight="[^"]*"/, '')
-        .replace(/currentColor/g, '#000'); // a mask reads alpha only — the token must resolve
+        // WHITE, not black: Chromium treats an SVG image used as a mask by its LUMINANCE, so
+        // black shapes mask the element *out* completely. White is opaque under luminance
+        // masking and fully opaque under alpha masking, so it is correct either way.
+        .replace(/currentColor/g, '#fff');
+    // A data-URI image is its own DOCUMENT: without the SVG namespace the browser cannot
+    // decode it and the mask paints nothing (the icons are invisible, not merely unshaded).
+    if (!/xmlns=/.test(svg)) svg = svg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
     return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
