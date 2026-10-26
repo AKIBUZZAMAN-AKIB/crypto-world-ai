@@ -116,6 +116,23 @@ All notable changes to Vela, newest first.
   over `ws.replay`, so sessions started from code wear it too; `replay: false` keeps the
   API and drops the UI.
 
+### Fixed
+
+- **A crowded top bar can no longer hide a tool under its pinned cluster.** The strip pins
+  the symbol at the start and the tools at the end, and the middle scrolls beneath them —
+  but the scroll range ended exactly at the pinned edge, so the strip's last middle tool
+  finished underneath the cluster and could never be brought out: at 940px the Templates
+  button sat under the replay/settings cluster and a real click landed on the tool above it.
+  The strip now reserves the cluster's width as a spacer at its own end (`.vela-topbar-endpad`,
+  `aria-hidden`, only while the bar actually scrolls), so the full scroll brings every tool
+  clear, and `scroll-margin-inline-end` gives keyboard focus the same room. Two press-path
+  bugs surfaced with it: the drag to scroll captured the pointer on the press (which
+  retargeted the click to the strip — capture now waits for the first 4px of movement), and
+  a *pointer* press scrolled the strip through the `focusin` handler (it moved the button out
+  from under the held-down pointer, so the release landed on a different control — that
+  handler now acts on keyboard focus only). Every control in a crowded bar opens on the
+  first click.
+
 ### Changed
 
 - **A menu nobody has opened has no layer in the page.** Closed menus already held no rows,

@@ -548,7 +548,11 @@ they work from the very first keystroke, before any click.
   under them (a soft edge marks the side that still has more). Drag it with the
   mouse, wheel it, or Tab into it — a control the strip has slid past scrolls
   itself back into view. A press that never moves is still a click, so every
-  button works as before.
+  button works as before. The strip's scroll range ends **before** the pinned
+  cluster: it reserves that cluster's width as room at its own end, so scrolling
+  to the far side brings the last middle tool out from under the pinned tools
+  instead of ending with it still covered. (Keyboard focus gets the same room
+  through `scroll-margin-inline-end`.)
 - **Status line** — symbol + OHLC and change of the hovered bar (resting on the latest
   live bar), stacked above the renderer's indicator legend and dressed like its rows:
   hovering outlines the chip, and while the chart's price series is hidden the line

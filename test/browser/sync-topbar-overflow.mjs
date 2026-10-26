@@ -115,6 +115,29 @@ try {
         assert(wheeled.left < dragged.left, 'the wheel slides the strip back', { before: dragged.left, after: wheeled.left });
         assert(wheeled.pageOver === 0, 'and does not pan the page', wheeled.pageOver);
 
+        // …and scrolled to the very end, the LAST middle tool clears the pinned cluster:
+        // the strip reserves the cluster's width at its own end, so no tool can hide under
+        // it for good (it used to: the scroll range ended exactly at the pinned edge).
+        const reach = await page.evaluate(() => {
+            const bar = document.querySelector('.vela-widget-topbar');
+            bar.scrollLeft = bar.scrollWidth;
+            const cluster = document.querySelector('.vela-topbar-right').getBoundingClientRect();
+            const mids = [...bar.querySelectorAll('button')].filter((b) => !b.closest('.vela-topbar-right') && !b.closest('.vela-widget-symbol'));
+            const last = mids[mids.length - 1];
+            const r = last.getBoundingClientRect();
+            const out = {
+                last: (last.getAttribute('aria-label') || last.className).slice(0, 40),
+                lastRight: Math.round(r.right),
+                clusterLeft: Math.round(cluster.left),
+                clear: r.right <= cluster.left + 0.5,
+                pad: Math.round(document.querySelector('.vela-topbar-endpad').getBoundingClientRect().width),
+            };
+            bar.scrollLeft = 0;
+            return out;
+        });
+        facts.narrowReach = reach;
+        assert(reach.clear, 'at full scroll the last tool is clear of the pinned cluster (every tool is reachable)', reach);
+
         // …and a plain CLICK still presses its button (the drag threshold keeps clicks alive)
         await page.evaluate(() => {
             document.querySelector('.vela-widget-topbar').scrollLeft = 0;

@@ -232,6 +232,11 @@ const CSS = `
 .vela-widget-topbar[data-scroll='1'] { cursor: grab; }
 .vela-widget-topbar[data-dragging='1'] { cursor: grabbing; -webkit-user-select: none; user-select: none; }
 .vela-widget-symbol { position: sticky; left: 0; z-index: 3; margin-right: 8px; }
+/* A tool scrolled into view (by Tab or by the browser) stops clear of the pinned cluster —
+   the strip publishes that width as it measures (see syncOverflow). */
+.vela-widget-topbar > :not(.vela-topbar-right) { scroll-margin-inline-end: var(--vela-topbar-pin-end, 0px); }
+/* The reserved end room (see syncOverflow): never a control, never announced. */
+.vela-topbar-endpad { flex: 0 0 auto; align-self: stretch; width: 0; }
 .vela-topbar-right { position: sticky; right: 0; z-index: 3; }
 /* The pinned ends are opaque over the strip, and their own hover fill is mixed
    onto that same surface so a translucent hover token can never show content
@@ -537,6 +542,14 @@ export class Topbar {
      *  overflow state is re-measured without waiting for a window resize. */
     private overflowRo: ResizeObserver | null = null;
     private overflowMo: MutationObserver | null = null;
+    /** The pinned right cluster — its width is the room the strip must leave at its end so
+     *  a tool can always be scrolled clear of it (see {@link syncOverflow}). */
+    private rightCluster: HTMLElement | null = null;
+    /** The spacer reserved at the strip's end, in px (0 when it does not scroll) — see
+     *  {@link syncOverflow}. */
+    private endPad = 0;
+    /** The spacer element itself (before the pinned cluster). */
+    private endPadEl: HTMLElement | null = null;
     /** An in-flight drag-scroll of the strip (pointer id, origin x, origin scrollLeft). */
     private drag: { id: number; x: number; start: number; moved: boolean } | null = null;
 
@@ -551,6 +564,20 @@ export class Topbar {
      */
     private syncOverflow(): void {
         const el = this.el;
+        // The pinned tools sit ON the strip, so content sliding under them is unreachable:
+        // scrolling to the very end would still leave the last tool beneath the cluster.
+        // The strip therefore reserves that width at its own end (only while it actually
+        // scrolls), which is what makes "scroll through the bar" mean "every tool can be
+        // reached". `endPad` is what we applied last time, so the natural width is the
+        // scrollWidth minus it — the decision never feeds on its own padding.
+        const natural = el.scrollWidth - this.endPad;
+        const crowded = natural - el.clientWidth > 1;
+        const want = crowded && this.rightCluster ? Math.round(this.rightCluster.offsetWidth + 8) : 0;
+        if (want !== this.endPad && this.endPadEl) {
+            this.endPad = want;
+            this.endPadEl.style.width = want ? `${want}px` : '0';
+            el.style.setProperty('--vela-topbar-pin-end', `${want}px`);
+        }
         const max = el.scrollWidth - el.clientWidth;
         const scrollable = max > 1;
         el.dataset.scroll = scrollable ? '1' : '0';
@@ -581,11 +608,10 @@ export class Topbar {
         const target = e.target as HTMLElement | null;
         if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
         this.drag = { id: e.pointerId, x: e.clientX, start: el.scrollLeft, moved: false };
-        try {
-            el.setPointerCapture(e.pointerId); // a fast drag keeps feeding the strip
-        } catch {
-            // a synthetic/already-released pointer cannot be captured — the move/up pair still works
-        }
+        // NO pointer capture yet: capturing on the press retargets the pointerup to the
+        // strip, and the click that follows is then dispatched to the strip instead of the
+        // button that was pressed. Capture is taken by the first MOVE past the threshold
+        // (see onBarPointerMove) — a fast drag keeps feeding the strip from there on.
     };
 
     private readonly onBarPointerMove = (e: PointerEvent): void => {
@@ -593,7 +619,14 @@ export class Topbar {
         if (!d || d.id !== e.pointerId) return;
         const dx = e.clientX - d.x;
         if (!d.moved && Math.abs(dx) < 4) return;
-        d.moved = true;
+        if (!d.moved) {
+            d.moved = true;
+            try {
+                this.el.setPointerCapture(e.pointerId); // from here a fast drag never drops the strip
+            } catch {
+                // a synthetic/already-released pointer cannot be captured — move/up still work
+            }
+        }
         this.el.dataset.dragging = '1';
         this.el.scrollLeft = d.start - dx;
     };
@@ -628,7 +661,16 @@ export class Topbar {
         const t = e.target as HTMLElement | null;
         if (!t || t === this.el) return;
         if (this.el.scrollWidth - this.el.clientWidth <= 1) return;
-        // Tab into a control the strip has slid past and it comes back into view.
+        // KEYBOARD focus only. A press focuses its button too, and scrolling the strip out
+        // from under the held-down pointer moves the release onto a different control — the
+        // click is then dispatched to the strip and the pressed button never fires.
+        try {
+            if (!t.matches(':focus-visible')) return;
+        } catch {
+            return;
+        }
+        // Tab into a control the strip has slid past and it comes back into view, clear of
+        // the pinned cluster (scroll-margin-inline-end, see the stylesheet).
         t.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     };
 
@@ -933,7 +975,15 @@ export class Topbar {
         const right = doc.createElement('span');
         right.className = 'vela-topbar-right';
         right.append(...sideEls(this.comp.right, false));
-        this.el.append(...sideEls(this.comp.left, true), right);
+        this.rightCluster = right;
+        // Room at the end of the strip, kept between the last middle tool and the pinned
+        // cluster: without it the scroll range ends exactly at the pinned edge, so the last
+        // tool can never be brought out from under the cluster (see syncOverflow).
+        const endPad = doc.createElement('span');
+        endPad.className = 'vela-topbar-endpad';
+        endPad.setAttribute('aria-hidden', 'true');
+        this.endPadEl = endPad;
+        this.el.append(...sideEls(this.comp.left, true), endPad, right);
         host.appendChild(this.el);
         this.renderTfChips();
         // Snap after layout; RO catches later reflows (symbol / timeframe length).
