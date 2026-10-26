@@ -182,7 +182,8 @@ describe('the transport bar', () => {
     it('appears with the session, reads the clock and the remaining bars, and lights the slot', async () => {
         const ws = mountWorkspace();
         await flush();
-        expect(transport(ws)!.hidden).toBe(true);
+        // Mounted BY the session: a workspace that never replays carries none of its nodes.
+        expect(transport(ws)).toBeNull();
 
         await ws.replay.start({ from: T0 + 100 * HOUR });
         await flush();
@@ -336,6 +337,6 @@ describe('the replay chords', () => {
         key(ws, 'ArrowRight');
         await flush();
         expect(ws.replay.state.active).toBe(false);
-        expect(transport(ws)!.hidden).toBe(true);
+        expect(transport(ws)).toBeNull(); // still nothing mounted: no session ever started
     });
 });

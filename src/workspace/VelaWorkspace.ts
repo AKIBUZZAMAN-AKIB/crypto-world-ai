@@ -766,10 +766,10 @@ export class VelaWorkspace {
     // on the root, the drawers build lazily on first open and act on the ACTIVE cell) ──
     /** Writes `data-layout` on the root and pushes mode flips into every cell's renderer. */
     private layoutCtl!: LayoutModeController;
-    private readonly mobileBar: MobileBar | null;
+    private mobileBar: MobileBar | null = null;
     /** Replay scope the entry menu holds ("Replay all charts"). */
     private replayScope: 'all' | 'cell' = 'all';
-    private readonly drawingPill: DrawingPill | null;
+    private drawingPill: DrawingPill | null = null;
     private tfDrawer: TimeframeDrawer | null = null;
     private drawingsDrawer: DrawingsDrawer | null = null;
     private moreDrawer: MoreDrawer | null = null;
@@ -1194,7 +1194,9 @@ export class VelaWorkspace {
         this.stripsEl.className = 'vela-ws-strips';
         this.root.appendChild(this.stripsEl);
         this.toastHost = new Toast(this.gridEl);
-        this.mountReplayBar();
+        // The bar itself is mounted by a session (see syncReplayUi), but the FOLLOWING has
+        // to be live from the start — the first `replay:start` is what mounts the bar.
+        this.watchReplay();
 
         // ONE attribution mark for the whole grid (bottom-left, floating above the
         // bottom-left cell's time axis) — the cells disable their per-chart marks, and
@@ -1335,68 +1337,82 @@ export class VelaWorkspace {
                   })
                 : null;
 
-        // The mobile bar is the bottom bar of the mobile size class — the same chrome
-        // toggle governs both; CSS (data-layout) decides which one is visible. Every
-        // route acts on the ACTIVE cell, exactly like the topbar it replaces.
-        this.mobileBar =
-            opts.bottombar !== false
-                ? new MobileBar(this.root, {
-                      symbol: '',
-                      timeframe: '60',
-                      onSymbolClick: () => this.symbolPicker.open(),
-                      onTimeframeClick: () => this.openTimeframeDrawer(),
-                      // Same visibility truth as the desktop bar: composition-hidden
-                      // indicators lose their mobile stop too; an override takes it over.
-                      ...(topbarHas(this.topbarComp, 'indicators') && (picker || this.indicatorsOverride)
-                          ? { onIndicatorsClick: this.indicatorsOverride ? () => this.runOverride(this.indicatorsOverride!) : () => picker!.open() }
-                          : {}),
-                      getContext: () => this.context(),
-                      // The editor's phone door — the same panel, dragged up from the
-                      // bottom as a sheet (see the panel's mobile rules).
-                      ...(this.pineEditor ? { onEditorClick: () => this.openEditor() } : {}),
-                      ...(this.drawingsEnabled ? { onDrawingsClick: () => this.openDrawingsDrawer() } : {}),
-                      // Multi-chart only: the stop that isolates the ACTIVE chart (the
-                      // per-cell hover cluster has no cursor to reveal it on mobile).
-                      ...(this.monoLayout ? {} : { onMaximizeClick: () => this.toggleMobileMaximize() }),
-                      // The CHART-TYPE stop: glyph = the active cell's price style, tap =
-                      // the style sheet. It took the slot the layout count used to hold
-                      // (a number you read once vs. a shape you read constantly); layout
-                      // moved into the sheet's one quiet row, still one tap away.
-                      styleOptions: () => priceStyleIds().map((id) => ({ id, label: priceStyleLabel(id), icon: priceStyleMarkup(id) })),
-                      // EAGER: the bar reads this in its constructor, before the first
-                      // `setActiveCell` has run — resolve through the map, never `active`.
-                      currentStyle: () => this.cellsById.get(this.activeId ?? '')?.priceStyle ?? 'candles',
-                      onStyleSelect: (id) => this.active.setPriceStyle(id),
-                      // One star set for every surface: the bar's sheet, More, the topbar menu.
-                      styleFavorites: () => this.styleFavs,
-                      onStyleFavorite: (id, on) => this.setStyleFavorite(id, on),
-                      ...(this.monoLayout
-                          ? {}
-                          : {
-                                layoutLabel: () => `${this.def.cols.length}×${this.def.rows.length}`,
-                                layoutGlyph: () => layoutGlyph(this.def),
-                                onLayoutClick: () => this.openMoreDrawer('layout'),
-                            }),
-                      onMoreClick: () => this.openMoreDrawer(),
-                      onSettingsClick: () => this.active.chart.renderer.openSettings(),
-                  })
-                : null;
-        // One strip for the whole grid — rebound to the active cell on every projection.
-        // It docks in the flow ABOVE the bottom bar (never over the plot: the old floating
-        // pill covered the last row's time axis). Without a bottom bar it falls back to the
-        // grid, where CSS pins it to the bottom edge.
-        const drawHost =
-            this.mobileBar && this.mobileBar.el.parentElement === this.root
-                ? this.root.insertBefore(doc.createElement('div'), this.mobileBar.el)
-                : this.gridEl;
-        drawHost.className = this.mobileBar ? 'vela-ws-drawdock' : drawHost.className;
-        this.drawingPill = this.drawingsEnabled ? new DrawingPill(drawHost) : null;
+        this.mobileBar = null;
+
 
         hostEl.appendChild(this.root);
 
         // Measured AFTER the root is in the DOM so the first evaluation sees a real width.
         this.layoutCtl = new LayoutModeController(this.root, opts.layoutMode ?? 'auto');
-        this.layoutCtl.onChange((mode) => this.onLayoutModeChange(mode));
+        // The phone's own chrome (its bottom bar + the drawing dock that sits above it) is
+        // built when the layout is actually mobile — a desktop workspace used to carry 86
+        // hidden nodes for a bar it can never show. A flip to mobile builds it then.
+        const buildMobileChrome = (): void => {
+            if (this.mobileBar) return;
+            // The mobile bar is the bottom bar of the mobile size class — the same chrome
+            // toggle governs both; CSS (data-layout) decides which one is visible. Every
+            // route acts on the ACTIVE cell, exactly like the topbar it replaces.
+            if (opts.bottombar === false) return;
+            this.mobileBar = new MobileBar(this.root, {
+                          symbol: '',
+                          timeframe: '60',
+                          onSymbolClick: () => this.symbolPicker.open(),
+                          onTimeframeClick: () => this.openTimeframeDrawer(),
+                          // Same visibility truth as the desktop bar: composition-hidden
+                          // indicators lose their mobile stop too; an override takes it over.
+                          ...(topbarHas(this.topbarComp, 'indicators') && (picker || this.indicatorsOverride)
+                              ? { onIndicatorsClick: this.indicatorsOverride ? () => this.runOverride(this.indicatorsOverride!) : () => picker!.open() }
+                              : {}),
+                          getContext: () => this.context(),
+                          // The editor's phone door — the same panel, dragged up from the
+                          // bottom as a sheet (see the panel's mobile rules).
+                          ...(this.pineEditor ? { onEditorClick: () => this.openEditor() } : {}),
+                          ...(this.drawingsEnabled ? { onDrawingsClick: () => this.openDrawingsDrawer() } : {}),
+                          // Multi-chart only: the stop that isolates the ACTIVE chart (the
+                          // per-cell hover cluster has no cursor to reveal it on mobile).
+                          ...(this.monoLayout ? {} : { onMaximizeClick: () => this.toggleMobileMaximize() }),
+                          // The CHART-TYPE stop: glyph = the active cell's price style, tap =
+                          // the style sheet. It took the slot the layout count used to hold
+                          // (a number you read once vs. a shape you read constantly); layout
+                          // moved into the sheet's one quiet row, still one tap away.
+                          styleOptions: () => priceStyleIds().map((id) => ({ id, label: priceStyleLabel(id), icon: priceStyleMarkup(id) })),
+                          // EAGER: the bar reads this in its constructor, before the first
+                          // `setActiveCell` has run — resolve through the map, never `active`.
+                          currentStyle: () => this.cellsById.get(this.activeId ?? '')?.priceStyle ?? 'candles',
+                          onStyleSelect: (id) => this.active.setPriceStyle(id),
+                          // One star set for every surface: the bar's sheet, More, the topbar menu.
+                          styleFavorites: () => this.styleFavs,
+                          onStyleFavorite: (id, on) => this.setStyleFavorite(id, on),
+                          ...(this.monoLayout
+                              ? {}
+                              : {
+                                    layoutLabel: () => `${this.def.cols.length}×${this.def.rows.length}`,
+                                    layoutGlyph: () => layoutGlyph(this.def),
+                                    onLayoutClick: () => this.openMoreDrawer('layout'),
+                                }),
+                          onMoreClick: () => this.openMoreDrawer(),
+                          onSettingsClick: () => this.active.chart.renderer.openSettings(),
+                      })
+            // One strip for the whole grid — rebound to the active cell on every projection.
+            // It docks in the flow ABOVE the bottom bar (never over the plot: the old floating
+            // pill covered the last row's time axis). Without a bottom bar it falls back to the
+            // grid, where CSS pins it to the bottom edge.
+            const drawHost =
+                this.mobileBar && this.mobileBar.el.parentElement === this.root
+                    ? this.root.insertBefore(doc.createElement('div'), this.mobileBar.el)
+                    : this.gridEl;
+            drawHost.className = this.mobileBar ? 'vela-ws-drawdock' : drawHost.className;
+            this.drawingPill = this.drawingsEnabled ? new DrawingPill(drawHost) : null;
+        };
+
+        this.layoutCtl.onChange((mode) => {
+            this.onLayoutModeChange(mode);
+            if (mode === 'mobile') {
+                buildMobileChrome();
+                this.projectActiveCell(); // the bar it just built reads the ACTIVE cell
+            }
+        });
+        if (this.layoutCtl.current === 'mobile') buildMobileChrome();
 
         this.splitters = new SplitterLayer(this.gridEl, {
             tracks: () => this.currentTracks(),
@@ -5408,9 +5424,11 @@ export class VelaWorkspace {
     // contribution or a shortcut wears the same bar. Nothing here keeps replay state of
     // its own except the pace to resume on and whether "select bar" is armed.
 
-    /** Mount the floating transport bar and follow the session on it. */
+    /** Mount the floating transport bar and follow the session on it. Idempotent, and
+     *  called when a session actually starts: a workspace that never replays carries none
+     *  of the bar's nodes (it used to hold 36 hidden ones from the first frame). */
     private mountReplayBar(): void {
-        if (this.opts.replay === false) return;
+        if (this.opts.replay === false || this.replayBar) return;
         this.replayBar = new ReplayToolbar({
             host: this.gridEl,
             onPlayPause: () => this.toggleReplay(),
@@ -5420,18 +5438,23 @@ export class VelaWorkspace {
             onExit: () => this.replay.stop(),
             onCancelArm: () => this.disarmReplay(),
         });
+        this.syncReplayUi();
+    }
+
+    /** Follow replay sessions on the shell's chrome, whether or not a bar exists yet. */
+    private watchReplay(): void {
         for (const ev of ['replay:start', 'replay:step', 'replay:tick', 'replay:play', 'replay:pause', 'replay:end'] as const) {
             this.replay.on(ev, () => this.syncReplayUi());
         }
         // `state` reads the ACTIVE cell's chart — a new active cell means a new cursor.
         this.on('cell:active', () => this.syncReplayUi());
-        this.syncReplayUi();
     }
 
     /** Paint the session onto the chrome (bar + topbar slot). Idempotent. */
     private syncReplayUi(): void {
         if (this.destroyed) return;
         const s = this.replay.state;
+        if (s.active) this.mountReplayBar();
         this.topbar.setReplayActive(s.active);
         this.replayBar?.setState({
             active: s.active,
@@ -5537,6 +5560,7 @@ export class VelaWorkspace {
         if (this.replayArmed || this.destroyed) return;
         this.replayArmed = true;
         this.gridEl.dataset.replayArm = '1';
+        this.mountReplayBar();
         this.replayBar?.setArmed(true);
         for (const cell of this.cells()) {
             const renderer = cell.chart.renderer;
@@ -6261,7 +6285,9 @@ export class VelaWorkspace {
         }
         // Bar replay — the two chords TradingView's replay puts on the keyboard. Both are
         // no-ops outside a session (arming one is the topbar menu's job, not a shortcut's).
-        if (this.replayBar) {
+        // Registered whether or not the bar exists yet — it is mounted by the first session,
+        // and these two chords are what start one from the keyboard.
+        if (this.opts.replay !== false) {
             this.keymap.register({ id: 'replay.play-pause', keys: 'shift+arrowdown', label: 'Play / pause the bar replay', category: 'Replay', run: () => this.toggleReplay() });
             this.keymap.register({ id: 'replay.step', keys: 'shift+arrowright', label: 'Step the bar replay forward', category: 'Replay', run: () => this.stepReplay() });
         }

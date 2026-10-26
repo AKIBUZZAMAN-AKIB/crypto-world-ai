@@ -34,8 +34,8 @@ const MARKETS: Array<[string, string]> = [
     ['SOLUSDT', '240'],
     ['ADAUSDT', 'D'],
 ];
-function fourMarkets(): VelaWorkspace {
-    const ws = mount(FOUR);
+function fourMarkets(opts: Record<string, unknown> = {}): VelaWorkspace {
+    const ws = mount({ ...FOUR, ...opts });
     ws.cells().forEach((cell, i) => {
         cell.setSymbol(MARKETS[i]![0]);
         cell.setTimeframe(MARKETS[i]![1]);
@@ -98,7 +98,9 @@ describe('hidden charts have names', () => {
     });
 
     it('the phone bar’s More stop is told the count', () => {
-        const ws = fourMarkets();
+        // The phone bar is built by the mobile layout (it is not carried on a desktop one),
+        // so this test mounts the workspace the bar belongs to.
+        const ws = fourMarkets({ layoutMode: 'mobile' });
         ws.setLayout('1');
         const badge = ws.root.querySelector<HTMLElement>('.vela-mb-more .vela-mb-badge')!;
         expect(badge).not.toBeNull();
@@ -111,7 +113,7 @@ describe('hidden charts have names', () => {
     });
 
     it('removing the hidden charts clears the badge, and Undo puts the list back', () => {
-        const ws = fourMarkets();
+        const ws = fourMarkets({ layoutMode: 'mobile' });
         ws.setLayout('1');
         expect(ws.clearPooled()).toBe(3);
         expect(ws.hiddenChartList()).toEqual([]);
