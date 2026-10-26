@@ -86,6 +86,15 @@ export class Tooltip {
 Form-primitive views construct DOM once, subscribe to clicks/input themselves, and
 expose `setChecked` / `setValue` that call the controller's non-emitting `sync`.
 
+**One deliberate exception — `Tooltip`.** A tooltip is a label, not a surface anyone
+interacts with, and the shell has twenty-odd of them; one Zag machine (and one floating
+layer) per label made the chrome pay for tips nobody was hovering. `Tooltip` therefore does
+NOT run its own machine: it registers the trigger in a module-level map (one
+`data-vela-tip` attribute) and the page's **single** shared `.vela-tooltip` is built by the
+first open and moved between triggers. `tooltipController` still exists — a host that wants
+a machine-shaped tooltip can take it — but the kit's own view deliberately keeps the shared
+one, so the public constructor, `setContent` and `destroy` behave exactly as before.
+
 ## Rules (learned the hard way)
 
 - **Always pass a `machineId` to `spreadProps`** (the `mid` above). Two machines sharing

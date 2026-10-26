@@ -9,7 +9,7 @@ import { BASE, assert, report } from './helpers.mjs';
 import { chromium } from 'playwright';
 
 /** Ceilings with headroom — the point is "a few hundred, not a couple of thousand". */
-const BUDGET = { desktop: 730, phone: 530 };
+const BUDGET = { desktop: 680, phone: 480 };
 /** What a fresh 4-cell workspace used to cost before the audit (for the record). */
 const BEFORE = { desktop: 2302, phone: 1794 };
 
@@ -49,6 +49,7 @@ const census = (page) =>
             canvases: document.querySelectorAll('canvas').length,
             cellButtons: document.querySelectorAll('.vela-cc-btn').length,
             legendButtons: document.querySelectorAll('.vela-ind-ctl, .vela-ind-close').length,
+            tooltips: document.querySelectorAll('.vela-tooltip').length,
             gridCanvases: document.querySelectorAll('.vela-ws-grid canvas').length,
             cells: window.__ws.cells().length,
             features: {
@@ -69,10 +70,11 @@ try {
         facts.desktop = { ...m, before: BEFORE.desktop };
         assert(m.nodes <= BUDGET.desktop, `desktop boot stays inside the ${BUDGET.desktop}-node budget`, { nodes: m.nodes, before: BEFORE.desktop });
         assert(m.nodes < BEFORE.desktop * 0.75, 'and is at least a quarter lighter than the audited tree', { nodes: m.nodes, before: BEFORE.desktop });
-        assert(m.listeners < 1600, 'listener count is roughly halved too', m.listeners);
+        assert(m.listeners < 1300, 'listener count is roughly halved too', m.listeners);
         assert(m.menuRows === 0, 'no closed menu holds its rows', { menus: m.menus, rows: m.menuRows });
         assert(m.cellButtons === 0, 'no chart carries a control cluster nobody has hovered for', m.cellButtons);
         assert(m.legendButtons === 0, 'and no legend row carries its action cluster before it is revealed', m.legendButtons);
+        assert(m.tooltips === 0, 'and the shell carries ONE shared tooltip surface — built by the first hover', m.tooltips);
         assert(m.rails.built === 1, 'exactly ONE drawing rail is built (the workspace\'s shared bar)', m.rails);
         assert(m.features.drawingRail && m.features.topbar && m.features.legendRows >= 1 && m.features.bottombar, 'every surface is still there', m.features);
         assert(m.gridCanvases === 28 && m.cells === 4, 'the charts are untouched (4 cells, 28 chart canvases)', { canvases: m.gridCanvases, cells: m.cells });

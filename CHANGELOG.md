@@ -118,6 +118,23 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **One tooltip for the whole shell — built by the first hover.** Every tooltip used to be
+  its own floating layer and its own Zag state machine: a positioner, a content box and a
+  machine's listeners per control, left in the document hidden for the page's whole life.
+  A desktop workspace had 23 of them (every topbar tool, the panel toggles, the timeframe
+  caret, the alert and compare buttons, both status-line tips) — 46 nodes and ~350 listeners
+  that existed to show one line of text. `Tooltip` now registers its trigger (a
+  `data-vela-tip` marker and a map entry) and the shell's **single** surface is built by the
+  first open, moved to whichever trigger is hovered and emptied as it closes, so a rich tip
+  (the layout picker's `?`) leaves nothing behind either. The behaviour is Zag's: instant,
+  centred, **8px** off the trigger's side, flipped when that side would overflow and clamped
+  inside the viewport — measured bit-for-bit against the old geometry (`x=114, y=42` for the
+  timeframe caret; `x=253, y=75` for Market Open) — `role="tooltip"` with the trigger's
+  `aria-describedby` while open, `data-state` on both ends, Escape closes it, a press closes
+  it, keyboard focus opens it, and a touch pointer never does. Desktop boot goes from 712 to
+  **663 elements** and **943 → 590 listeners**; a phone from 511 to **462** and 982 → 629.
+  Held by the new `test/browser/sync-tooltip-surface.mjs` (nothing at rest, one node re-used
+  by a second trigger, both placements, ARIA, a rich tip, Escape/focus, no tip on a tap).
 - **A panel nobody has opened is not in the document.** The four built-in side panels — Pine
   editor, data window, object tree, strategy tester — were mounted into the dock at boot and
   merely `hidden`: 68 nodes of header, body and width handle that could not be seen or
