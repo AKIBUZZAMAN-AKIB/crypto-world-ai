@@ -274,17 +274,36 @@ describe("the grid keyboard (TradingView's two chords)", () => {
         cell.focus();
     };
 
-    it('Tab walks the active chart and wraps', () => {
+    // Tab walks the charts ONCE and then hands the keystroke back. Wrapping forever is a
+    // keyboard trap (WCAG 2.1.2): a canvas that owns every Tab keeps the only control
+    // that moves focus, so nothing after the grid is reachable going forward. Measured
+    // in the browser: from a chart, 39 consecutive Tabs never left the grid.
+    it('Tab walks the active chart and then lets go at the end of the grid', () => {
         const ws = mountWorkspace(PAGE);
         expect(ws.active.id).toBe('btc');
         focusChart(ws);
+        expect(press(ws, { key: 'Tab' })).toBe(true);
+        expect(ws.active.id).toBe('eth');
+        expect(press(ws, { key: 'Tab' })).toBe(true);
+        expect(press(ws, { key: 'Tab' })).toBe(true);
+        expect(ws.active.id).toBe('bnb');
+        // The last chart is the last tab stop the grid owns: the browser moves focus.
+        expect(press(ws, { key: 'Tab' })).toBe(false);
+        expect(ws.active.id).toBe('bnb');
+        expect(ws.active.id).not.toBe('btc');
+    });
+
+    it('…and the tab stop follows the chart it selected', () => {
+        const ws = mountWorkspace(PAGE);
+        focusChart(ws);
+        const focusedCell = (): string => (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('[data-cell-id], .vela-cell')?.getAttribute('data-cell-id') ?? '';
         press(ws, { key: 'Tab' });
         expect(ws.active.id).toBe('eth');
-        press(ws, { key: 'Tab' });
-        press(ws, { key: 'Tab' });
-        expect(ws.active.id).toBe('bnb');
-        press(ws, { key: 'Tab' });
-        expect(ws.active.id).toBe('btc'); // wrapped
+        // Selection alone is not a tab stop: leaving focus on the old canvas makes the
+        // browser's next Tab target disagree with the active chart.
+        expect(document.activeElement?.tagName).toBe('CANVAS');
+        expect(ws.active.host.contains(document.activeElement)).toBe(true);
+        expect(focusedCell()).not.toBe('');
     });
 
     it('Tab on a control does NOT cycle charts — focus moves instead', () => {

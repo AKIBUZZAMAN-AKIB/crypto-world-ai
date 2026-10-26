@@ -2210,15 +2210,26 @@ export class VelaWorkspace {
     }
 
     /**
-     * The next chart in slot order, wrapping at the end — `Tab`'s reducer. Skips nothing:
-     * a maximized grid still cycles (maximize follows the active cell on the next
-     * `maximizeCell`, so Tab while maximized simply selects).
+     * The next chart in slot order — `Tab`'s reducer. Skips nothing: a maximized grid
+     * still cycles (maximize follows the active cell on the next `maximizeCell`, so Tab
+     * while maximized simply selects).
+     *
+     * Focus FOLLOWS the chart. Selection alone is not a tab stop: with focus left behind
+     * on the canvas whose turn has passed, the browser's own Tab target and the active
+     * cell disagree, and the keystroke stays inside the same element forever.
      */
     private cycleActiveCell(): void {
         const ids = this.order.slice(0, this.def.cells.length);
         if (ids.length < 2) return;
         const at = this.activeId ? ids.indexOf(this.activeId) : -1;
         this.setActiveCell(ids[(at + 1) % ids.length] ?? ids[0]!);
+        this.refocusActive();
+    }
+
+    /** The LAST chart of the grid in slot order — where Tab stops cycling and lets go. */
+    private get lastSlotId(): string | null {
+        const ids = this.order.slice(0, this.def.cells.length);
+        return ids[ids.length - 1] ?? null;
     }
 
     /** The identity of the cell maximized over the whole grid, or null. */
@@ -6345,7 +6356,12 @@ export class VelaWorkspace {
             // leave the first control; WCAG 2.1.1). The chart-cycle stays, but only
             // where the chart itself owns the keystroke — everywhere else Tab moves
             // focus the way the platform says it should.
-            when: () => this.def.cells.length > 1 && this.tabBelongsToChart(),
+            // …and it STOPS at the end of the grid. Wrapping forever is a keyboard trap
+            // (WCAG 2.1.2): a chart that owns Tab for every press keeps the one control
+            // that moves focus, so everything after the grid — the bottom bar, the time
+            // zone chip, the footer — is unreachable going forward. Tab walks the charts
+            // once and then hands the keystroke back, exactly like leaving any widget.
+            when: () => this.def.cells.length > 1 && this.tabBelongsToChart() && this.activeId !== this.lastSlotId,
             run: () => this.cycleActiveCell(),
         });
         this.keymap.register({

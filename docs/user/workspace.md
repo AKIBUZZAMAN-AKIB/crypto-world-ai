@@ -657,6 +657,10 @@ desktop workspace costs ~1.3k nodes rather than ~2.3k, and a phone ~1.2k:
   ten-node inline `<svg>` for its 12px icon; it is now a masked element inside the same
   circle, tinted by the same `color`, with the same `role="img"` name. Each cell is 58 → 49
   nodes.
+- **Tab is never a trap.** `Tab` inside a chart walks the grid's charts, then lets go at
+  the last one so the browser can carry focus into the chrome — and the tab stop follows
+  the chart it selected. A canvas that keeps Tab for every press is a keyboard trap
+  (WCAG 2.1.2), not a shortcut.
 - **A saved PNG keeps its glyphs.** The screenshot exporter rasterizes the chart's DOM
   chrome by hand (it has no HTML renderer to call), so an icon has to be redrawn as shapes,
   not copied: the exporter decodes each icon's mask and strokes the same paths in the

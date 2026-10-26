@@ -20,7 +20,7 @@ export interface BuiltinTemplate {
     indicators: PersistedNativeEntry[];
 }
 
-const RIBBON = ['#5b9cf6', '#4fb3bf', '#3fb98d', '#8fbf4d', '#d0a83f'];
+const RIBBON = ['#5b9cf6', '#4fb3bf', '#3fb98d', '#8fbf4d', '#d0a83f']; // palette-exempt: the template ribbon is a fixed five-step series ramp (a design constant, not a semantic colour)
 
 const ema = (length: number, inputs: Record<string, InputValue> = {}): PersistedNativeEntry => ({
     type: 'ema',

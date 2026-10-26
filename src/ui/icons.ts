@@ -22,6 +22,8 @@ const STYLE_ID = 'vela-icon-styles';
 interface IconSheet {
     style: HTMLStyleElement;
     rules: Map<string, string>;
+    /** Whether the style element made it into the tree (a stub document has no head). */
+    attached: boolean;
 }
 const sheets = new WeakMap<Document, IconSheet>();
 
@@ -43,7 +45,11 @@ function maskUri(raw: string): string {
 /** The shared sheet: base geometry once, then one mask rule per icon actually used. */
 function ensureSheet(doc: Document): IconSheet {
     const found = sheets.get(doc);
-    if (found && found.style.isConnected) return found;
+    // A detached sheet is only rebuilt when it WAS attached and has since left the tree (a
+    // re-render dropped it). A document with nowhere to put one — the stub document a unit
+    // test hands in, with no <head> and no documentElement — keeps its sheet, so the rules
+    // of every icon used keep accumulating instead of one sheet per icon.
+    if (found && (!found.attached || found.style.isConnected)) return found;
     const style = doc.createElement('style');
     style.id = STYLE_ID;
     // No background here: an icon with NO mask (an unknown id) must paint nothing at all.
@@ -52,16 +58,26 @@ function ensureSheet(doc: Document): IconSheet {
         '.vela-icon{width:1em;height:1em;flex:none;display:inline-flex;' +
         '-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:contain;mask-size:contain;' +
         '-webkit-mask-position:center;mask-position:center;}';
-    (doc.head ?? doc.documentElement).appendChild(style);
-    const sheet: IconSheet = { style, rules: new Map() };
+    const root = doc.head ?? doc.documentElement;
+    if (root) root.appendChild(style);
+    const sheet: IconSheet = { style, rules: new Map(), attached: !!root };
     sheets.set(doc, sheet);
     return sheet;
+}
+
+/** Add the per-icon class. Written against the two spellings of `classList` a document can
+ *  hand back: the real one, and the shape a MINIMAL test stub returns (no classList at all —
+ *  the widget suites stub the DOM down to `className` + a style bag). */
+function addClass(span: HTMLElement, cls: string): void {
+    const list = (span as Partial<HTMLElement>).classList;
+    if (list) list.add(cls);
+    else span.className = `${span.className} ${cls}`.trim();
 }
 
 /** Mask AND paint — the two always travel together (the paint is `currentColor`, which is
  *  what makes `color` tint a glyph and its transitions animate). */
 function withPaint(span: HTMLElement): HTMLElement {
-    span.style.backgroundColor = 'currentColor';
+    if (span.style) span.style.backgroundColor = 'currentColor';
     return span;
 }
 
@@ -81,7 +97,7 @@ export function iconEl(id: string, doc: Document = document): HTMLElement {
     const raw = iconMarkup(id);
     if (raw) {
         addRule(ensureSheet(doc), id, maskUri(raw));
-        span.classList.add(`vela-ic-${id}`);
+        addClass(span, `vela-ic-${id}`);
         withPaint(span);
     }
     return span;
@@ -98,14 +114,16 @@ export function iconGlyph(markup: string, size: number, doc: Document = document
     const span = doc.createElement('span');
     span.className = 'vela-icon';
     span.setAttribute('aria-hidden', 'true');
-    span.style.width = `${size}px`;
-    span.style.height = `${size}px`;
+    if (span.style) {
+        span.style.width = `${size}px`;
+        span.style.height = `${size}px`;
+    }
     let raw = markup.trim();
     if (raw && !raw.startsWith('<')) {
         const fromId = iconMarkup(raw);
         if (fromId) {
             addRule(ensureSheet(doc), raw, maskUri(fromId));
-            span.classList.add(`vela-ic-${raw}`);
+            addClass(span, `vela-ic-${raw}`);
             withPaint(span);
             return span;
         }
@@ -116,11 +134,11 @@ export function iconGlyph(markup: string, size: number, doc: Document = document
     const id = iconIdOf(raw);
     if (id) {
         addRule(sheet, id, maskUri(raw));
-        span.classList.add(`vela-ic-${id}`);
+        addClass(span, `vela-ic-${id}`);
         return withPaint(span);
     }
     const uri = maskUri(raw);
-    span.style.setProperty('-webkit-mask-image', uri);
-    span.style.setProperty('mask-image', uri);
+    span.style?.setProperty('-webkit-mask-image', uri);
+    span.style?.setProperty('mask-image', uri);
     return withPaint(span);
 }

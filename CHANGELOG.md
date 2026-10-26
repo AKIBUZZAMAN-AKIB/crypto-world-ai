@@ -118,6 +118,26 @@ All notable changes to Vela, newest first.
 
 ### Fixed
 
+- **The chart no longer owns `Tab` forever.** `Tab` walks the charts (TradingView's chord),
+  but the walk WRAPPED: from a focused chart every press was swallowed by the grid, so
+  focus never left it — measured, 39 consecutive Tabs stayed inside one cell. That is a
+  keyboard trap (WCAG 2.1.2): everything after the grid (bottom bar, time zone chip,
+  footer) was unreachable going forward, only by walking backwards around the document.
+  The walk now **stops at the last chart and hands the keystroke back** — the browser moves
+  focus to the next control, which is what leaving any widget looks like. Focus also
+  FOLLOWS the chart it selected (selection alone is not a tab stop: with focus left on the
+  old canvas, the browser's next Tab target and the active chart disagreed).
+- **The PNG export keeps `box-shadow`.** A legend row's control cluster wears
+  `inset 0 0 0 1px`; the hand-written DOM rasterizer only knew backgrounds and borders, so
+  exporting the chart with a cluster out dropped the ring. Both phases are drawn now —
+  outer shadows behind the fill (clipped OUT of the element's own box, so the halo cannot
+  paint over what casts it) and inset ones clipped to the box and riding on top, in the
+  order the browser paints them. `sync-export-paint` measures the ring in the exported
+  pixels, not in CSS.
+- **`iconEl`/`iconGlyph` survive a minimal document.** They write through `classList` and
+  `style`; a document stub that only offers `className` (the widget suites') made the icon
+  helper throw — 21 panel tests went red. Both spellings are handled, and a document with
+  no `<head>` at all keeps its icon sheet instead of building one per glyph.
 - **The chart's own status bubble had lost its glyph, and the PNG export drew icons as
   squares.** Two faults from the masked-icon change, both invisible to computed styles:
   1. `CalloutBubble` (the status line's market / replay bubble, and every legend callout)

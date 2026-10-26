@@ -63,8 +63,8 @@ const CSS = `
 }
 .vela-wl-last { font-size: 12.5px; color: var(--vela-fg-bright); }
 .vela-wl-chg { font-size: 11px; color: var(--vela-fg-muted); }
-.vela-wl-chg[data-dir='up'] { color: var(--vela-up, #089981); }
-.vela-wl-chg[data-dir='down'] { color: var(--vela-down, #f23645); }
+.vela-wl-chg[data-dir='up'] { color: var(--vela-up, #089981); } /* palette-exempt: var() fallback for a panel portalled outside the token scope */
+.vela-wl-chg[data-dir='down'] { color: var(--vela-down, #f23645); } /* palette-exempt: var() fallback for a panel portalled outside the token scope */
 /* The remove chip is a HOVER affordance: present for the pointer and the keyboard, out of
    the way of the reading eye. */
 .vela-wl-del {
@@ -470,7 +470,7 @@ injectStyles(
 .vela-wl-sortcheck { flex: none; width: 13px; height: 13px; display: grid; place-items: center; color: var(--vela-accent); }
 .vela-wl-sortcheck .vela-icon { width: 13px; height: 13px; }
 .vela-wl-sortsep { height: 1px; margin: 4px 6px; background: var(--vela-border); }
-.vela-wl-sortrow--danger { color: var(--vela-danger, #f23645); }
+.vela-wl-sortrow--danger { color: var(--vela-danger, #f23645); } /* palette-exempt: var() fallback for a panel portalled outside the token scope */
 `,
     typeof document === 'undefined' ? undefined : document,
 );

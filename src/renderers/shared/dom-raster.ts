@@ -4,6 +4,8 @@
 // reach; what a chart overlay actually carries is text on (rounded) color chips, and
 // that subset rasterizes faithfully with plain canvas calls:
 //   - element backgrounds and borders (border-radius honored, '50%' reads as a circle),
+//     plus `box-shadow` — outer rings sit BEHIND the fill, inset ones are drawn clipped to
+//     the box (the legend's control cluster wears a 1px inset ring when it is out),
 //   - text nodes in their computed font/color, at their measured on-screen rects,
 //   - already-loaded <img>s (clipped by their radius) — but only when drawing them
 //     leaves the canvas untainted: a cross-origin ticker icon must not poison the
@@ -45,6 +47,105 @@ function tracePath(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
     ctx.beginPath();
     if (r > 0 && typeof ctx.roundRect === 'function') ctx.roundRect(x, y, w, h, r);
     else ctx.rect(x, y, w, h);
+}
+
+interface CanvasShadow {
+    inset: boolean;
+    x: number;
+    y: number;
+    blur: number;
+    spread: number;
+    color: string;
+}
+
+/** A computed `box-shadow` list, split on its TOP-LEVEL commas (colours carry commas). */
+function boxShadows(cs: CSSStyleDeclaration): CanvasShadow[] {
+    const raw = (cs.boxShadow ?? '').trim();
+    if (!raw || raw === 'none') return [];
+    const parts: string[] = [];
+    let depth = 0;
+    let from = 0;
+    for (let i = 0; i < raw.length; i++) {
+        const ch = raw[i]!;
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+        else if (ch === ',' && depth === 0) {
+            parts.push(raw.slice(from, i));
+            from = i + 1;
+        }
+    }
+    parts.push(raw.slice(from));
+    const out: CanvasShadow[] = [];
+    for (const part of parts) {
+        const inset = /(^|\s)inset(\s|$)/.test(part);
+        const color = /(rgba?\([^)]*\)|#[\da-f]{3,8}|\b(?:transparent|currentColor)\b)/i.exec(part)?.[0] ?? '';
+        if (!color || !hasInk(color)) continue;
+        const nums = (part.replace(color, '').match(/-?[\d.]+px/g) ?? []).map((v) => parseFloat(v));
+        const [x = 0, y = 0, blur = 0, spread = 0] = nums;
+        out.push({ inset, x, y, blur: Math.max(0, blur), spread, color });
+    }
+    return out;
+}
+
+/** Paint one element's `box-shadow` list. Outer shadows land BEFORE the fill (they sit
+ *  behind it), inset ones clip to the box and ride on top — the same order the browser
+ *  paints them, so a ring reads as a ring and not as a second border. */
+function paintShadows(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    radius: number,
+    shadows: CanvasShadow[],
+    alpha: number,
+    phase: 'outer' | 'inset',
+): void {
+    for (const sh of shadows) {
+        if (sh.inset !== (phase === 'inset')) continue;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        if (phase === 'outer') {
+            // Clip OUT the element's own box: the caster is the box, so only the halo it
+            // throws survives — an opaque box fill would otherwise paint the shadow over
+            // the very thing it belongs to.
+            if (typeof ctx.clip === 'function' && typeof ctx.roundRect === 'function') {
+                const both = new Path2D();
+                both.rect(x - 400, y - 400, w + 800, h + 800);
+                if (radius > 0) both.roundRect(x, y, w, h, radius);
+                else both.rect(x, y, w, h);
+                try {
+                    ctx.clip(both, 'evenodd');
+                } catch {
+                    /* an engine without the fill-rule form: draw the halo unclipped */
+                }
+            }
+            ctx.shadowColor = sh.color;
+            ctx.shadowBlur = sh.blur;
+            ctx.shadowOffsetX = sh.x;
+            ctx.shadowOffsetY = sh.y;
+            ctx.fillStyle = sh.color;
+            tracePath(ctx, x + sh.x - sh.spread, y + sh.y - sh.spread, w + sh.spread * 2, h + sh.spread * 2, Math.max(0, radius + sh.spread));
+            ctx.fill();
+        } else {
+            tracePath(ctx, x, y, w, h, radius);
+            ctx.clip();
+            ctx.shadowColor = sh.color;
+            ctx.shadowBlur = sh.blur;
+            ctx.shadowOffsetX = sh.x;
+            ctx.shadowOffsetY = sh.y;
+            ctx.strokeStyle = sh.color;
+            // `inset 0 0 0 1px` is a 1px ring just inside the border box. The clip already
+            // cut away anything outside it, so stroking a path inset by half the band puts
+            // the ink on 0..1px — where the browser paints it — instead of straddling the edge.
+            const band = Math.max(sh.spread, 1);
+            const edge = band / 2 + (sh.blur > 0 ? sh.blur / 2 : 0);
+            ctx.lineWidth = band;
+            tracePath(ctx, x + edge, y + edge, w - edge * 2, h - edge * 2, Math.max(0, radius - edge));
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
 }
 
 /** Probe-draw on a throwaway canvas: a cross-origin image without CORS taints whatever
@@ -294,6 +395,8 @@ export function rasterizeOverlay(ctx: CanvasRenderingContext2D, root: Element, f
             const x = r.left - frame.left;
             const y = r.top - frame.top;
             const radius = cornerRadius(cs, r.width, r.height);
+            const shadows = boxShadows(cs);
+            if (shadows.length > 0) paintShadows(ctx, x, y, r.width, r.height, radius, shadows, alpha, 'outer');
             if (hasInk(cs.backgroundColor)) {
                 ctx.globalAlpha = alpha;
                 ctx.fillStyle = cs.backgroundColor;
@@ -308,6 +411,8 @@ export function rasterizeOverlay(ctx: CanvasRenderingContext2D, root: Element, f
                 tracePath(ctx, x + bw / 2, y + bw / 2, r.width - bw, r.height - bw, Math.max(0, radius - bw / 2));
                 ctx.stroke();
             }
+            // Inset rings ride ON TOP of the fill — the browser paints them last too.
+            if (shadows.length > 0) paintShadows(ctx, x, y, r.width, r.height, radius, shadows, alpha, 'inset');
         }
         for (const child of el.childNodes) {
             if (child.nodeType === 3) drawText(child as Text, cs, alpha);

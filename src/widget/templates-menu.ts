@@ -162,7 +162,7 @@ export const TEMPLATES_MENU_CSS = `
 }
 .vela-tm-chip:hover { background: var(--vela-hover); }
 .vela-tm-chip:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: 1px; }
-.vela-tm-chip[data-danger='1'] { color: var(--vela-down, #e5484d); border-color: var(--vela-down, #e5484d); }
+.vela-tm-chip[data-danger='1'] { color: var(--vela-down, #e5484d); border-color: var(--vela-down, #e5484d); } /* palette-exempt: var() fallback for a menu portalled outside the token scope */
 .vela-tm-sep { height: 1px; margin: 5px 6px; background: var(--vela-border); }
 .vela-tm-group {
     margin: 8px 0 2px;
@@ -247,7 +247,7 @@ export const TEMPLATES_MENU_CSS = `
     color: var(--vela-fg-muted);
 }
 .vela-tm-flash[data-tone='ok'] { color: var(--vela-up); }
-.vela-tm-flash[data-tone='bad'] { color: var(--vela-down, #e5484d); }
+.vela-tm-flash[data-tone='bad'] { color: var(--vela-down, #e5484d); } /* palette-exempt: var() fallback for a menu portalled outside the token scope */
 `;
 
 /** One saved template, as the menu lists it. */
