@@ -46,14 +46,23 @@ function ensureSheet(doc: Document): IconSheet {
     if (found && found.style.isConnected) return found;
     const style = doc.createElement('style');
     style.id = STYLE_ID;
+    // No background here: an icon with NO mask (an unknown id) must paint nothing at all.
+    // The paint is added per glyph, together with the mask (see withPaint).
     style.textContent =
-        '.vela-icon{width:1em;height:1em;flex:none;display:inline-flex;background-color:currentColor;' +
+        '.vela-icon{width:1em;height:1em;flex:none;display:inline-flex;' +
         '-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:contain;mask-size:contain;' +
         '-webkit-mask-position:center;mask-position:center;}';
     (doc.head ?? doc.documentElement).appendChild(style);
     const sheet: IconSheet = { style, rules: new Map() };
     sheets.set(doc, sheet);
     return sheet;
+}
+
+/** Mask AND paint — the two always travel together (the paint is `currentColor`, which is
+ *  what makes `color` tint a glyph and its transitions animate). */
+function withPaint(span: HTMLElement): HTMLElement {
+    span.style.backgroundColor = 'currentColor';
+    return span;
 }
 
 /** One rule per icon id — shared by every instance of that icon. */
@@ -73,30 +82,45 @@ export function iconEl(id: string, doc: Document = document): HTMLElement {
     if (raw) {
         addRule(ensureSheet(doc), id, maskUri(raw));
         span.classList.add(`vela-ic-${id}`);
+        withPaint(span);
     }
     return span;
 }
 
-/** The same masked glyph from raw `<svg>` markup, at an explicit pixel size — for the
- *  renderer's chrome, whose tool tables carry markup instead of registry ids. Markup that
- *  is not in the registry still paints (an inline mask) rather than falling back to nodes. */
+/** The same masked glyph from raw `<svg>` markup — or, just as often, straight from an icon
+ *  ID — at an explicit pixel size. The renderer's chrome carries markup in its tool tables
+ *  while the kit's callers hold ids; both land here, and an id is resolved through the
+ *  registry. Markup that is not in the registry still paints (an inline mask), and anything
+ *  that is neither is an empty span: a mask built from a NON-SVG string decodes to nothing,
+ *  so the element would sit there invisible (that is exactly how the status line's market
+ *  bubble lost its glyph). */
 export function iconGlyph(markup: string, size: number, doc: Document = document): HTMLElement {
     const span = doc.createElement('span');
     span.className = 'vela-icon';
     span.setAttribute('aria-hidden', 'true');
     span.style.width = `${size}px`;
     span.style.height = `${size}px`;
-    const raw = markup.trim();
+    let raw = markup.trim();
+    if (raw && !raw.startsWith('<')) {
+        const fromId = iconMarkup(raw);
+        if (fromId) {
+            addRule(ensureSheet(doc), raw, maskUri(fromId));
+            span.classList.add(`vela-ic-${raw}`);
+            withPaint(span);
+            return span;
+        }
+        raw = '';
+    }
     if (!raw) return span;
     const sheet = ensureSheet(doc);
     const id = iconIdOf(raw);
     if (id) {
         addRule(sheet, id, maskUri(raw));
         span.classList.add(`vela-ic-${id}`);
-        return span;
+        return withPaint(span);
     }
     const uri = maskUri(raw);
     span.style.setProperty('-webkit-mask-image', uri);
     span.style.setProperty('mask-image', uri);
-    return span;
+    return withPaint(span);
 }

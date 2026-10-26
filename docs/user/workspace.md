@@ -657,6 +657,10 @@ desktop workspace costs ~1.3k nodes rather than ~2.3k, and a phone ~1.2k:
   ten-node inline `<svg>` for its 12px icon; it is now a masked element inside the same
   circle, tinted by the same `color`, with the same `role="img"` name. Each cell is 58 → 49
   nodes.
+- **A saved PNG keeps its glyphs.** The screenshot exporter rasterizes the chart's DOM
+  chrome by hand (it has no HTML renderer to call), so an icon has to be redrawn as shapes,
+  not copied: the exporter decodes each icon's mask and strokes the same paths in the
+  icon's own colour. An icon whose mask is missing paints nothing — never a solid square.
 - **An icon is a colour, not a drawing.** Every icon the kit renders used to wrap an inline
   `<svg>` with one to four shapes inside it, so a 14px chevron cost three or four elements
   and the top bar spent 60 of them on nineteen glyphs. The glyph is now a **CSS mask**: the

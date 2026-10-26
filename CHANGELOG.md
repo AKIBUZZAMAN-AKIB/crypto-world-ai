@@ -118,6 +118,21 @@ All notable changes to Vela, newest first.
 
 ### Fixed
 
+- **The chart's own status bubble had lost its glyph, and the PNG export drew icons as
+  squares.** Two faults from the masked-icon change, both invisible to computed styles:
+  1. `CalloutBubble` (the status line's market / replay bubble, and every legend callout)
+     handed its icon **ID** to `iconGlyph`, which expects markup — the mask was built from
+     the literal text `market-open`, decoded to nothing, and the glyph silently vanished.
+     `iconGlyph` now takes an id *or* markup, and a string that is neither paints an empty
+     span instead of a broken mask.
+  2. The export rasterizer only understood backgrounds, so every masked icon in a saved PNG
+     (the market bubble, legend controls, the replay line) came out as a solid square. It now
+     decodes the mask's SVG and redraws its shapes in the element's colour — and an icon with
+     no mask paints nothing (the paint now travels *with* the mask, instead of living on the
+     base `.vela-icon` rule, where an unknown id was a solid square even on screen).
+  `sync-export-glyphs` measures the export through the real renderer: the masked box holds
+  glyph ink, the same box with its mask removed is a flat square, and no icon in the shell
+  is missing its namespaced SVG.
 - **Every icon in the shell really paints.** The masked glyphs (R75/R76) were inverted on the
   way in: Chromium masks an SVG *image* by luminance, so a black token only ever *cut* the
   icon out, and a data-URI mask without an SVG namespace decodes to nothing at all — the

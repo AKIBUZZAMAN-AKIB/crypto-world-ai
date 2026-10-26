@@ -11,7 +11,10 @@
 //   - inline SVG icons, through the geometry subset the icon registry actually uses
 //     (path / circle / rect / line / polyline / polygon, fill + stroke from computed
 //     style, so `currentColor` and inheritance resolve for free). Elements carrying a
-//     `transform` are skipped — honest absence beats a wrongly placed glyph.
+//     `transform` are skipped — honest absence beats a wrongly placed glyph,
+//   - MASKED icons (`.vela-icon`, the kit's whole icon story): the glyph is the mask's
+//     alpha, so the export redraws the mask's own shapes in the element's colour instead
+//     of filling its box — a plain background fill would have exported solid squares.
 
 /** How the overlay's viewport coordinates map onto the export canvas. */
 export interface OverlayRasterFrame {
@@ -59,6 +62,107 @@ function canDrawUntainted(img: HTMLImageElement): boolean {
     } catch {
         return false;
     }
+}
+
+/** The SVG behind a masked element's `mask-image`, decoded — or null. */
+function maskSvg(el: HTMLElement, cs: CSSStyleDeclaration): string | null {
+    const raw = cs.maskImage && cs.maskImage !== 'none' ? cs.maskImage : (cs as CSSStyleDeclaration & { webkitMaskImage?: string }).webkitMaskImage ?? 'none';
+    const m = /url\(\s*["']?data:image\/svg\+xml,([^"')]+)["']?\s*\)/.exec(raw);
+    if (!m) return null;
+    try {
+        const svg = decodeURIComponent(m[1]!);
+        return svg.includes('<svg') ? svg : null;
+    } catch {
+        return null;
+    }
+}
+
+/** Paint a masked element's glyph: the mask's shapes, in the element's `color`. */
+function drawMaskGlyph(ctx: CanvasRenderingContext2D, el: HTMLElement, cs: CSSStyleDeclaration, rect: DOMRect, frame: OverlayRasterFrame, alpha: number): void {
+    const markup = maskSvg(el, cs);
+    if (!markup) return;
+    const parsed = new DOMParser().parseFromString(markup, 'image/svg+xml').documentElement;
+    if (!parsed || parsed.nodeName.toLowerCase() !== 'svg') return;
+    const vb = (parsed.getAttribute('viewBox') ?? '').trim().split(/[\s,]+/).map(Number);
+    const vx = vb.length === 4 && vb.every((n) => Number.isFinite(n)) ? vb[0]! : 0;
+    const vy = vb.length === 4 ? vb[1]! : 0;
+    const vw = vb.length === 4 && vb[2]! > 0 ? vb[2]! : rect.width;
+    const vh = vb.length === 4 && vb[3]! > 0 ? vb[3]! : rect.height;
+    // A mask token is an alpha silhouette: whatever colour it names, the export paints the
+    // element's own `color` (that is what `background-color: currentColor` does on screen).
+    const ink = cs.color;
+    const resolve = (name: string): string | null => {
+        const v = (name || '').trim();
+        if (!v || v === 'none') return null;
+        if (v === 'currentColor' || /^#(fff|ffffff)$/i.test(v) || v === 'white') return ink;
+        return v;
+    };
+    const strokeOf = (node: Element, inherited: { stroke: string | null; width: number; cap: CanvasLineCap; join: CanvasLineJoin; fill: string | null }) => ({
+        fill: resolve(node.getAttribute('fill') ?? '') ?? (node.hasAttribute('fill') ? null : inherited.fill),
+        stroke: resolve(node.getAttribute('stroke') ?? '') ?? (node.hasAttribute('stroke') ? null : inherited.stroke),
+        width: node.hasAttribute('stroke-width') ? parseFloat(node.getAttribute('stroke-width') ?? '0') || 0 : inherited.width,
+        cap: (node.getAttribute('stroke-linecap') as CanvasLineCap | null) ?? inherited.cap,
+        join: (node.getAttribute('stroke-linejoin') as CanvasLineJoin | null) ?? inherited.join,
+    });
+    const rootStyle = strokeOf(parsed, { stroke: ink, width: 1, cap: 'butt', join: 'miter', fill: null });
+
+    const walk = (parent: Element, inherited: typeof rootStyle): void => {
+        for (const node of parent.children) {
+            const tag = node.tagName.toLowerCase();
+            if (tag === 'g') {
+                walk(node, strokeOf(node, inherited));
+                continue;
+            }
+            const num = (name: string): number => parseFloat(node.getAttribute(name) ?? '0') || 0;
+            let path: Path2D | null = null;
+            if (tag === 'path') {
+                const d = node.getAttribute('d');
+                if (d) path = new Path2D(d);
+            } else if (tag === 'circle') {
+                path = new Path2D();
+                path.arc(num('cx'), num('cy'), num('r'), 0, Math.PI * 2);
+            } else if (tag === 'ellipse') {
+                path = new Path2D();
+                path.ellipse(num('cx'), num('cy'), num('rx'), num('ry'), 0, 0, Math.PI * 2);
+            } else if (tag === 'rect') {
+                path = new Path2D();
+                path.rect(num('x'), num('y'), num('width'), num('height'));
+            } else if (tag === 'line') {
+                path = new Path2D();
+                path.moveTo(num('x1'), num('y1'));
+                path.lineTo(num('x2'), num('y2'));
+            } else if (tag === 'polyline' || tag === 'polygon') {
+                const pts = (node.getAttribute('points') ?? '').trim().split(/[\s,]+/).map(Number);
+                if (pts.length < 4 || pts.some(Number.isNaN)) continue;
+                path = new Path2D();
+                path.moveTo(pts[0]!, pts[1]!);
+                for (let i = 2; i + 1 < pts.length; i += 2) path.lineTo(pts[i]!, pts[i + 1]!);
+                if (tag === 'polygon') path.closePath();
+            }
+            if (!path) continue;
+            const own = strokeOf(node, inherited);
+            if (own.fill) {
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = own.fill;
+                ctx.fill(path);
+            }
+            if (own.stroke && own.width > 0) {
+                ctx.globalAlpha = alpha;
+                ctx.strokeStyle = own.stroke;
+                ctx.lineWidth = own.width;
+                ctx.lineCap = own.cap;
+                ctx.lineJoin = own.join;
+                ctx.stroke(path);
+            }
+        }
+    };
+
+    ctx.save();
+    ctx.translate(rect.left - frame.left, rect.top - frame.top);
+    ctx.scale(rect.width / vw, rect.height / vh);
+    ctx.translate(-vx, -vy);
+    walk(parsed, rootStyle);
+    ctx.restore();
 }
 
 /**
@@ -179,6 +283,13 @@ export function rasterizeOverlay(ctx: CanvasRenderingContext2D, root: Element, f
         const alpha = parentAlpha * (parseFloat(cs.opacity) || 1);
         if (alpha <= 0.001) return;
         const r = el.getBoundingClientRect();
+        // A masked icon paints its GLYPH: the box's background is the mask's paint on
+        // screen, and filling it here would export a solid square.
+        const masked = el.classList.contains('vela-icon') && maskSvg(el, cs) !== null;
+        if (masked && r.width > 0 && r.height > 0) {
+            drawMaskGlyph(ctx, el, cs, r, frame, alpha);
+            return;
+        }
         if (r.width > 0 && r.height > 0) {
             const x = r.left - frame.left;
             const y = r.top - frame.top;
