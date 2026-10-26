@@ -118,6 +118,17 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **Chrome that belongs to a state is built by that state.** Four surfaces were created with
+  their chart and merely hidden: the *scroll to the latest bar* chip, the **REPLAY** watermark
+  line, the status line's replay badge and its show-chart eye — 68 nodes across a four-chart
+  workspace, none of them reachable until a replay starts, the view is scrolled back or the
+  chart is hidden. Each is now built the first time its state arrives: the chip the moment a
+  chart with the newest bars off-screen is looked at (and at the size class in force — a
+  phone's chip is the 32px finger target, not the 26px cursor one), the watermark line and the
+  badge on the first replay, the eye on the first hide (and clicking it still restores the
+  chart). Desktop boot is **595 elements** (was 663), a phone **394** (was 462), and every one
+  of them still appears, works and goes away with its state — held by the new
+  `test/browser/sync-state-bound-chrome.mjs`.
 - **One tooltip for the whole shell — built by the first hover.** Every tooltip used to be
   its own floating layer and its own Zag state machine: a positioner, a content box and a
   machine's listeners per control, left in the document hidden for the page's whole life.

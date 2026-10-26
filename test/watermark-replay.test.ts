@@ -12,7 +12,9 @@ function make() {
     document.body.appendChild(host);
     const wm = new Watermark(host, 'BTCUSDT', '60');
     wm.setLoading(false);
-    const line = wm.el.querySelector<HTMLElement>('.vela-watermark-replay')!;
+    // The replay line is built by the first replay that shows it (R70) — so it is looked up
+    // on demand, never at construction.
+    const line = (): HTMLElement => wm.el.querySelector<HTMLElement>('.vela-watermark-replay')!;
     const symbol = wm.el.firstElementChild as HTMLElement;
     const shown = (): boolean => wm.el.style.display !== 'none';
     return { wm, line, symbol, shown };
@@ -22,25 +24,25 @@ describe('Watermark replay line', () => {
     it('shows "Replay" under the symbol line only while replaying', () => {
         const { wm, line, symbol, shown } = make();
         expect(symbol.textContent).toBe('BTCUSDT · 1h');
-        expect(line.textContent).toBe('Replay');
-        expect(line.querySelector('.vela-icon svg')).not.toBeNull();
-        expect(line.hidden).toBe(true);
+        expect(wm.el.querySelector('.vela-watermark-replay')).toBeNull(); // nothing until a replay
         wm.setReplaying(true);
-        expect(line.hidden).toBe(false);
+        expect(line().textContent).toBe('Replay');
+        expect(line().querySelector('.vela-icon svg')).not.toBeNull();
+        expect(line().hidden).toBe(false);
         expect(shown()).toBe(true);
         wm.setReplaying(false);
-        expect(line.hidden).toBe(true);
+        expect(line().hidden).toBe(true);
     });
 
     it('its toggle hides it, and it stands alone when the symbol line is off', () => {
         const { wm, line, symbol, shown } = make();
         wm.setReplaying(true);
         wm.setReplayVisible(false);
-        expect(line.hidden).toBe(true);
+        expect(line().hidden).toBe(true);
         wm.setReplayVisible(true);
         wm.setVisible(false);
         expect(symbol.hidden).toBe(true);
-        expect(line.hidden).toBe(false);
+        expect(line().hidden).toBe(false);
         expect(shown()).toBe(true);
         wm.setReplaying(false);
         expect(shown()).toBe(false); // nothing left to show

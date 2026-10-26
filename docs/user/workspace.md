@@ -673,6 +673,15 @@ that appears near the bottom-centre of a chart is built the first time it is rev
 with the chart — on a phone the compact reset chip is out from the start, because a thumb
 has no hover to wait for.
 
+**Chrome that belongs to a state arrives with that state.** Four surfaces are only ever
+meaningful in one situation, so they are built when it first happens rather than hidden
+until it does: the *scroll to the latest bar* chip (a chart showing its newest bar has
+nothing to jump to), the **REPLAY** watermark line and the status line's replay badge (both
+appear with a session), and the status line's show-chart eye (only while the chart itself is
+hidden). A workspace that never replays, never scrolls back and never hides a chart carries
+none of their nodes — 68 across four cells — and each one comes out at the right size class
+when it arrives (a phone's scroll chip is the 32px finger target, not the 26px cursor one).
+
 **The desktop's chrome is not in a phone's document.** The top bar, the shared drawing rail
 and the bottom bar belong to the desktop size class: on a phone they are detached (not just
 hidden) and come back — in exactly the same place, with the same state — when the layout

@@ -1231,14 +1231,18 @@ export class NativeRenderer implements IChartRenderer {
         btn.type = 'button';
         btn.title = 'Scroll to most recent bar (Alt+Shift+→)';
         btn.setAttribute('aria-label', 'Scroll to most recent bar');
-        btn.innerHTML = this.scrollButtonIcon();
+        // Built lazily (see updateScrollToRealtimeButton), so it must be born at the size class
+        // the chart is in right now: a finger needs the larger chip and glyph a cursor does not.
+        const touch = this.layoutMode === 'mobile';
+        const size = touch ? SCROLL_BTN_SIZE_TOUCH : SCROLL_BTN_SIZE;
+        btn.innerHTML = this.scrollButtonIcon(touch ? SCROLL_BTN_ICON_PX_TOUCH : SCROLL_BTN_ICON_PX);
         Object.assign(btn.style, {
             position: 'absolute',
             bottom: `${SCROLL_BTN_BOTTOM}px`,
             right: `${SCROLL_BTN_RIGHT}px`,
             zIndex: '6',
-            width: `${SCROLL_BTN_SIZE}px`,
-            height: `${SCROLL_BTN_SIZE}px`,
+            width: `${size}px`,
+            height: `${size}px`,
             boxSizing: 'border-box',
             display: 'none', // revealed by updateScrollToRealtimeButton() when the latest bar is off-screen + the cursor is near
             alignItems: 'center',
@@ -1282,10 +1286,13 @@ export class NativeRenderer implements IChartRenderer {
     /** Track cursor proximity to the scroll button on the plot (bubbles from the button too,
      *  so moving onto the button doesn't count as leaving). */
     private readonly onScrollProximityMove = (e: PointerEvent): void => {
-        if (!this.scrollButton || !this.plot) return;
+        // Tracked even before the button exists: this listener is what DECIDES it should be
+        // built (see updateScrollToRealtimeButton).
+        if (!this.plot) return;
         const rect = this.plot.getBoundingClientRect();
-        const cx = rect.width - this.scrollBtnRightPx - SCROLL_BTN_SIZE / 2;
-        const cy = rect.height - this.scrollBtnBottomPx - SCROLL_BTN_SIZE / 2;
+        const chip = this.layoutMode === 'mobile' ? SCROLL_BTN_SIZE_TOUCH : SCROLL_BTN_SIZE;
+        const cx = rect.width - this.scrollBtnRightPx - chip / 2;
+        const cy = rect.height - this.scrollBtnBottomPx - chip / 2;
         const near = Math.hypot(e.clientX - rect.left - cx, e.clientY - rect.top - cy) <= SCROLL_BTN_PROXIMITY_PX;
         if (near !== this.pointerNearScrollBtn) {
             this.pointerNearScrollBtn = near;
@@ -1304,14 +1311,15 @@ export class NativeRenderer implements IChartRenderer {
      *  appears whenever the latest bars are off-screen and hides again once the view is back
      *  at the right edge. */
     private updateScrollToRealtimeButton(): void {
+        const latestOffScreen = this.coords.barCount > 0 && this.coords.getViewport().rightOffset < 0;
+        const want = latestOffScreen && (this.layoutMode === 'mobile' || this.pointerNearScrollBtn);
+        if (want && !this.scrollButton && this.plot) {
+            this.scrollButton = this.makeScrollToRealtimeButton();
+            this.plot.appendChild(this.scrollButton);
+        }
         const btn = this.scrollButton;
         if (!btn) return;
-        const latestOffScreen = this.coords.barCount > 0 && this.coords.getViewport().rightOffset < 0;
-        if (this.layoutMode === 'mobile') {
-            btn.style.display = latestOffScreen ? 'flex' : 'none';
-            return;
-        }
-        btn.style.display = latestOffScreen && this.pointerNearScrollBtn ? 'flex' : 'none';
+        btn.style.display = want ? 'flex' : 'none';
     }
 
     /** Glide the view back to the most recent bars, keeping the current zoom (barSpacing). */
@@ -1634,11 +1642,11 @@ export class NativeRenderer implements IChartRenderer {
         if (this.settingsEnabled) this.setSettingsEnabled(true); // honor a pre-mount feature set
         this.syncCountdownTimer(); // start the countdown pump if the feature is on
 
-        // "Scroll to most recent bar" button: created up front (hidden), revealed on cursor proximity
-        // when the latest bar is scrolled off the right. Proximity is tracked on the plot so moving onto
-        // the button (a plot child) keeps it revealed.
-        this.scrollButton = this.makeScrollToRealtimeButton();
-        this.plot.appendChild(this.scrollButton);
+        // "Scroll to most recent bar" button: built by the state that reveals it (the latest bar
+        // scrolled off-screen, plus cursor proximity on desktop — see
+        // updateScrollToRealtimeButton). A chart that stays at the right edge never builds it.
+        // Proximity is tracked on the plot so moving onto the button (a plot child) keeps it
+        // revealed.
         this.plot.addEventListener('pointermove', this.onScrollProximityMove);
         this.plot.addEventListener('pointerleave', this.onScrollProximityLeave);
         // Demonstration ink is laid down by a HOLD (press, drag, release) — the reference's

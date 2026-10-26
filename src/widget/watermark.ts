@@ -63,7 +63,9 @@ export function watermarkFontPx(availPx: number, textPxAtMax: number): number {
 export class Watermark {
     readonly el: HTMLElement;
     private readonly text: HTMLElement;
-    private readonly replayLine: HTMLElement;
+    /** The REPLAY line — built by the first replay that shows it (a chart that never
+     *  replays carries none of its nodes). */
+    private replayLine: HTMLElement | null = null;
     private readonly resizeObserver: ResizeObserver | null = null;
     /** The host's visibility preference (the persisted watermark toggle). */
     private shown = true;
@@ -84,10 +86,7 @@ export class Watermark {
         // sits behind the candles.
         this.el.dataset.velaScreenshot = 'under';
         this.text = host.ownerDocument.createElement('span');
-        this.replayLine = host.ownerDocument.createElement('span');
-        this.replayLine.className = 'vela-watermark-replay';
-        this.replayLine.append(iconEl('replay', host.ownerDocument), host.ownerDocument.createTextNode('Replay'));
-        this.el.append(this.text, this.replayLine);
+        this.el.append(this.text);
         host.appendChild(this.el);
         // The el tracks the price pane (CSS insets on the host), so observing it
         // refits on splitter drags and pane-layout changes.
@@ -122,10 +121,23 @@ export class Watermark {
         this.sync();
     }
 
+    /** Build the replay line on the first replay that can show it (see {@link sync}). */
+    private ensureReplayLine(): HTMLElement {
+        if (!this.replayLine) {
+            const doc = this.el.ownerDocument;
+            this.replayLine = doc.createElement('span');
+            this.replayLine.className = 'vela-watermark-replay';
+            this.replayLine.append(iconEl('replay', doc), doc.createTextNode('Replay'));
+            this.el.appendChild(this.replayLine);
+        }
+        return this.replayLine;
+    }
+
     private sync(): void {
         const replay = this.replayShown && this.replaying;
+        if (replay) this.ensureReplayLine();
         this.text.hidden = !this.shown;
-        this.replayLine.hidden = !replay;
+        if (this.replayLine) this.replayLine.hidden = !replay;
         this.el.style.display = (this.shown || replay) && !this.loading ? '' : 'none';
     }
 

@@ -361,12 +361,12 @@ export class Statusline {
     private readonly marksEl: HTMLButtonElement;
     /** The market status face — a kit callout bubble. */
     private readonly marketBubble: CalloutBubble;
-    /** The replay face — see {@link REPLAY_BADGE_SVG}. */
-    private readonly replayBadge: HTMLElement;
+    /** The replay face — built by the first replay (see {@link ensureReplayBadge}). */
+    private replayBadge: HTMLElement | null = null;
     private marketTip!: Tooltip;
-    /** The show-chart eye — visible only while the chart is hidden. */
-    private readonly eyeEl: HTMLButtonElement;
-    private eyeTip!: Tooltip;
+    /** The show-chart eye — built when the chart is first hidden (see {@link syncParts}). */
+    private eyeEl: HTMLButtonElement | null = null;
+    private eyeTip: Tooltip | null = null;
     private avatarEl: HTMLElement;
     private metaEl!: HTMLElement;
     private readonly parts: Record<StatuslinePart, boolean> = { logo: true, name: true, market: true, ohlc: true, change: true };
@@ -442,31 +442,18 @@ export class Statusline {
             label: MARKET_LABELS.open,
             host,
         });
-        this.replayBadge = doc.createElement('span');
-        this.replayBadge.className = 'vela-sl-replay-badge';
-        this.replayBadge.innerHTML = REPLAY_BADGE_SVG;
-        this.replayBadge.hidden = true;
-        // One slot, two faces: the market bubble, or the replay badge while replaying.
+        // One slot, two faces: the market bubble, or the replay badge while replaying (that
+        // one is built by the first replay — a chart that never replays carries none of it).
         this.marketEl = doc.createElement('span');
         this.marketEl.className = 'vela-sl-market';
-        this.marketEl.append(this.marketBubble.el, this.replayBadge);
+        this.marketEl.append(this.marketBubble.el);
         this.ohlcEl = doc.createElement('span');
         this.ohlcEl.className = 'vela-sl-ohlc';
         this.changeEl = doc.createElement('span');
         this.changeEl.className = 'vela-sl-change';
-        // Show-chart eye: takes the value readout's place while the chart is hidden
-        // (same glyph the legend rows wear on a hidden indicator). syncParts drives it.
-        this.eyeEl = doc.createElement('button');
-        this.eyeEl.type = 'button';
-        this.eyeEl.className = 'vela-sl-eye';
-        this.eyeEl.innerHTML = iconAt('eye-off', 14);
-        this.eyeEl.setAttribute('aria-label', 'Show chart');
-        this.eyeEl.style.display = 'none';
-        this.eyeEl.addEventListener('click', (e) => {
-            e.stopPropagation(); // never bubbles into the chip's own handlers
-            this.menuHooks?.setChartVisible(true);
-            this.setChartHidden(false);
-        });
+        // Show-chart eye: takes the value readout's place while the chart is hidden (same
+        // glyph the legend rows wear on a hidden indicator). Built by the first hide —
+        // syncParts makes it when a hidden chart needs it.
         this.identityRow = doc.createElement('span');
         this.identityRow.className = 'vela-sl-row vela-sl-identity';
         this.marksEl = doc.createElement('button');
@@ -480,7 +467,7 @@ export class Statusline {
         this.identityRow.append(this.avatarEl, this.symbolEl, this.metaEl, this.marksEl, this.marketEl);
         this.valuesRow = doc.createElement('span');
         this.valuesRow.className = 'vela-sl-row vela-sl-values';
-        this.valuesRow.append(this.ohlcEl, this.changeEl, this.eyeEl);
+        this.valuesRow.append(this.ohlcEl, this.changeEl);
         this.el.append(this.identityRow, this.valuesRow);
         host.appendChild(this.el);
         // The ladder measures against the plot width — re-fit on every host resize.
@@ -492,7 +479,7 @@ export class Statusline {
         // The tooltips portal to the nearest `.vela-ui` ancestor for theme tokens — resolve
         // them AFTER the statusline is in the DOM. The badge's content follows setMarketStatus.
         this.marketTip = new Tooltip(this.marketEl, { content: MARKET_LABELS.open, placement: 'bottom' });
-        this.eyeTip = new Tooltip(this.eyeEl, { content: 'Show chart', placement: 'bottom' });
+
         this.setMarketStatus('open'); // crypto trades continuously (no session model yet)
         this.render();
     }
@@ -522,13 +509,14 @@ export class Statusline {
     /** Project the parts config onto the segments (the baseline fit() prunes from). */
     private syncParts(): void {
         const seg = segmentVisibility(this.parts, this.chartHidden);
+        if (seg.eye && !this.eyeEl) this.buildEye();
         this.avatarEl.style.display = seg.avatar ? '' : 'none';
         this.symbolEl.style.display = seg.symbol ? '' : 'none';
         this.metaEl.style.display = seg.meta ? '' : 'none';
         this.marketEl.style.display = seg.market ? '' : 'none';
         this.ohlcEl.style.display = seg.ohlc ? '' : 'none';
         this.changeEl.style.display = seg.change ? '' : 'none';
-        this.eyeEl.style.display = seg.eye ? 'inline-flex' : 'none';
+        if (this.eyeEl) this.eyeEl.style.display = seg.eye ? 'inline-flex' : 'none';
         // An empty values row must not hold a gap/padding of its own on the line.
         this.valuesRow.style.display = seg.ohlc || seg.change || seg.eye ? '' : 'none';
     }
@@ -610,9 +598,38 @@ export class Statusline {
         this.dressBadge();
     }
 
+    /** Build the replay face of the market slot — once, on the first replay. */
+    private ensureReplayBadge(): void {
+        if (this.replayBadge) return;
+        this.replayBadge = this.el.ownerDocument.createElement('span');
+        this.replayBadge.className = 'vela-sl-replay-badge';
+        this.replayBadge.innerHTML = REPLAY_BADGE_SVG;
+        this.marketEl.append(this.replayBadge);
+    }
+
+    /** Build the show-chart eye — once, the first time the chart is hidden. It takes the
+     *  value readout's place while the series is not painted. */
+    private buildEye(): void {
+        const doc = this.el.ownerDocument;
+        const eye = doc.createElement('button');
+        eye.type = 'button';
+        eye.className = 'vela-sl-eye';
+        eye.innerHTML = iconAt('eye-off', 14);
+        eye.setAttribute('aria-label', 'Show chart');
+        eye.addEventListener('click', (e) => {
+            e.stopPropagation(); // never bubbles into the chip's own handlers
+            this.menuHooks?.setChartVisible(true);
+            this.setChartHidden(false);
+        });
+        this.valuesRow.appendChild(eye);
+        this.eyeEl = eye;
+        this.eyeTip = new Tooltip(eye, { content: 'Show chart', placement: 'bottom' });
+    }
+
     private dressBadge(): void {
         this.marketBubble.el.hidden = this.replaying;
-        this.replayBadge.hidden = !this.replaying;
+        if (this.replaying) this.ensureReplayBadge();
+        if (this.replayBadge) this.replayBadge.hidden = !this.replaying;
         if (this.replaying) {
             this.marketEl.dataset.status = 'replay';
             this.marketTip.setContent(REPLAY_LABEL);
@@ -749,7 +766,7 @@ export class Statusline {
         this.menu?.destroy();
         this.menu = null;
         this.marketTip.destroy();
-        this.eyeTip.destroy();
+        this.eyeTip?.destroy();
         this.marketBubble.destroy();
         this.host.classList.remove('vela-has-statusline', 'vela-sl-stacked-host'); // the legend shift leaves with the line
         this.el.remove();

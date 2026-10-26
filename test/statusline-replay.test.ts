@@ -21,10 +21,10 @@ describe('Statusline badge', () => {
         expect(badge.dataset.status).toBe('open');
 
         const bubble = badge.querySelector<HTMLElement>('.vela-callout')!;
-        const replay = badge.querySelector<HTMLElement>('.vela-sl-replay-badge')!;
-        expect([bubble.hidden, replay.hidden]).toEqual([false, true]);
+        expect(badge.querySelector('.vela-sl-replay-badge')).toBeNull(); // built by the first replay
 
         line.setReplaying(true);
+        const replay = badge.querySelector<HTMLElement>('.vela-sl-replay-badge')!;
         expect(badge.dataset.status).toBe('replay');
         expect([bubble.hidden, replay.hidden]).toEqual([true, false]);
         // circle and glyph in one drawing, in the inverse chip's colors (white on dark, dark on light)
