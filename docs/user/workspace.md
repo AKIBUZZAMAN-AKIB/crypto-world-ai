@@ -652,6 +652,12 @@ desktop workspace costs ~1.3k nodes rather than ~2.3k, and a phone ~1.2k:
   by the hover that pre-warms it). A closed menu is a machine and a detached list — zero
   nodes — so a timeframe caret costs nothing until it is clicked, and the click still builds
   the nine rows and opens them in the same frame.
+- **The rail's caret is drawn, not built.** A cell's little chevron — the hover target that
+  opens a tool's flyout — used to be five elements (a button around a hit square around a
+  wrapper span around an SVG around a path) and each icon paid for a wrapper span it did not
+  need. Nine cells meant 45 nodes for two tiny glyphs. The caret is now a bare 11×22 button
+  whose pill and chevron are `::before` / `::after`, and the icon's SVG carries its own 18px
+  size: same hover reveal, same flyout on click, same tints, 54 fewer nodes.
 - **One drawing rail per workspace, and only when shown.** Each chart *can* own a rail
   (that is what a standalone chart sees), but in a grid the shared bar on the left of the
   grid is the one on screen. A cell's own rail is therefore left unbuilt — 157 nodes per

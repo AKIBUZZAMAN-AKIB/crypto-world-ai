@@ -388,7 +388,8 @@ export class DrawingToolbar {
             arrow.type = 'button';
             arrow.className = 'vela-dtb-arrow';
             arrow.setAttribute('aria-label', `${label} — more`);
-            arrow.innerHTML = arrowHitHtml(ARROW_ICON);
+            // No glyph: the pill and the chevron are both drawn by the stylesheet (::before /
+            // ::after). Nine cells used to carry four nodes each for the same 11px caret.
             arrow.addEventListener('click', (e) => {
                 e.stopPropagation();
                 onArrow();
@@ -966,7 +967,7 @@ function ensureStyles(): void {
     }
     s.textContent = `
 .vela-dtb-hit{width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:var(--vela-radius-md);transition:background var(--vela-dur-fast) ease,color var(--vela-dur-fast) ease;}
-.vela-dtb-hit--arrow{width:11px;height:22px;}
+.vela-dtb-hit svg{display:block;}
 .vela-dtb-btn{position:relative;width:100%;height:30px;flex:none;display:flex;align-items:center;justify-content:center;cursor:pointer;color:inherit;background:transparent;border:none;padding:0;transition:color var(--vela-dur-fast) ease;}
 .vela-dtb-btn:hover{color:var(--vela-fg-bright);}
 .vela-dtb-btn:hover .vela-dtb-hit{background:var(--vela-hover);}
@@ -977,12 +978,15 @@ function ensureStyles(): void {
 .vela-dtb-icon:hover{color:var(--vela-fg-bright);}
 .vela-dtb-cell[data-active='1'] .vela-dtb-icon{color:var(--vela-fg-bright);}
 .vela-dtb-cell[data-active='1'] .vela-dtb-icon .vela-dtb-hit{background:var(--vela-active);}
-.vela-dtb-arrow{position:absolute;right:1px;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:inherit;cursor:pointer;padding:0;opacity:0;pointer-events:none;transition:opacity var(--vela-dur-fast) ease,color var(--vela-dur-fast) ease;}
+.vela-dtb-arrow{position:absolute;right:1px;top:50%;transform:translateY(-50%);width:11px;height:22px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:inherit;cursor:pointer;padding:0;opacity:0;pointer-events:none;transition:opacity var(--vela-dur-fast) ease,color var(--vela-dur-fast) ease;}
+/* The pill (a hover/active target the caret sits in) and the caret itself. */
+.vela-dtb-arrow::before{content:'';position:absolute;inset:0;border-radius:var(--vela-radius-md);background:transparent;transition:background var(--vela-dur-fast) ease;}
+.vela-dtb-arrow::after{content:'';width:4px;height:4px;border-top:1.5px solid currentColor;border-right:1.5px solid currentColor;transform:translateX(1px) rotate(45deg);}
 .vela-dtb-cell:hover .vela-dtb-arrow,.vela-dtb-icon:hover~.vela-dtb-arrow,.vela-dtb-cell.vela-open .vela-dtb-arrow{opacity:1;pointer-events:auto;}
 .vela-dtb-arrow:hover{color:var(--vela-fg-bright);}
-.vela-dtb-icon:hover .vela-dtb-hit,.vela-dtb-arrow:hover .vela-dtb-hit{background:var(--vela-hover);}
-.vela-dtb-cell.vela-open .vela-dtb-arrow .vela-dtb-hit{background:var(--vela-active);}
-.vela-dtb-cell.vela-open .vela-dtb-arrow:hover .vela-dtb-hit{background:var(--vela-hover);}
+.vela-dtb-icon:hover .vela-dtb-hit,.vela-dtb-arrow:hover::before{background:var(--vela-hover);}
+.vela-dtb-cell.vela-open .vela-dtb-arrow::before{background:var(--vela-active);}
+.vela-dtb-cell.vela-open .vela-dtb-arrow:hover::before{background:var(--vela-hover);}
 .vela-dtb-collapse{margin-top:auto;}
 .vela-dtb[data-collapsed='1']>*:not(.vela-dtb-collapse){display:none;}
 .vela-dtb[data-collapsed='1'] .vela-dtb-collapse .vela-dtb-hit{width:14px;}
@@ -1026,7 +1030,6 @@ const STAY_ICON = icon('pen-lock');
 const SYNC_ICON = icon('pen-sync');
 const ERASER_ICON = icon('eraser');
 /** A right-pointing chevron for the group/magnet flyout arrow (beside the icon). */
-const ARROW_ICON = icon('chevron-right');
 /** A check mark for the selected entry in a flyout (e.g. the current magnet strength). */
 const CHECK_ICON = icon('check');
 const STAR_ICON = icon('star');
@@ -1037,19 +1040,16 @@ function sizedIcon(svg: string): string {
     return svg.replace('<svg ', '<svg width="100%" height="100%" ');
 }
 
-/** Wrap an SVG in a centered, fixed-size span (default 18px) so it sits consistently in a button. */
-function iconSpan(svg: string, size = 18): string {
-    if (!svg) return '';
-    return `<span style="width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;">${sizedIcon(svg)}</span>`;
+/** An SVG at a fixed pixel size (its own viewBox still scales the geometry). */
+function fixedIcon(svg: string, size: number): string {
+    return svg.replace('<svg ', `<svg width="${size}" height="${size}" `);
 }
 
 /** A button's inner content: the glyph inside a centered square (`.vela-dtb-hit`) that carries the
- *  hover/active highlight, so the tint hugs the icon instead of stretching across the whole row. */
+ *  hover/active highlight, so the tint hugs the icon instead of stretching across the whole row.
+ *  The glyph is sized here rather than in a wrapper span — the span was one node per icon (nine
+ *  in the rail) for a centring job `align-items` on the square already does. */
 function hitHtml(svg: string, iconSize = 18): string {
-    return `<span class="vela-dtb-hit">${iconSpan(svg, iconSize)}</span>`;
-}
-
-/** The chevron's inner content: same hover/active tint as the icon hit, in a narrow pill beside it. */
-function arrowHitHtml(svg: string): string {
-    return `<span class="vela-dtb-hit vela-dtb-hit--arrow">${iconSpan(svg, 11)}</span>`;
+    if (!svg) return '<span class="vela-dtb-hit"></span>';
+    return `<span class="vela-dtb-hit">${fixedIcon(svg, iconSize)}</span>`;
 }

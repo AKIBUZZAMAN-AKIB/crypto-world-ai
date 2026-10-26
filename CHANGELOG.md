@@ -135,6 +135,14 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **The drawing rail's caret and icons are drawn, not built.** Each of the nine cells
+  carried a five-element chevron (button ← hit square ← wrapper span ← svg ← path) and a
+  wrapper span around its icon — 45 nodes for an 11px caret and an 18px glyph. The caret is
+  now a bare 11×22 button with its pill and chevron drawn as `::before` / `::after`, and the
+  icon's SVG carries its own 18px size. Hover reveal, the flyout on click, the active tint
+  and the "… — more" name all behave exactly as before; a cell now holds nothing but its two
+  buttons, one hit square and the glyph's own paths. Desktop boot **562 → 508** elements.
+
 - **A menu nobody has opened has no layer in the page.** Closed menus already held no rows,
   but each still kept its floating layer (`.vela-ui-layer` + an empty `.vela-menu`) in the
   document from construction — eleven of them, 22 nodes, for menus waiting on a click. The
