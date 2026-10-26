@@ -104,6 +104,8 @@ export class CellControls {
     private readonly root: HTMLDivElement;
     private readonly glider: Glider;
     private near = false;
+    /** The cluster is in the cell (see {@link ensureMounted}) — false until its first reveal. */
+    private mounted = false;
     /** Buttons exist? They are built the first time the cluster is REVEALED: a chart the
      *  cursor never visits keeps none (four cells used to carry 88 hidden buttons). */
     private built = false;
@@ -142,7 +144,8 @@ export class CellControls {
         // a host child above the canvases — keeps it revealed instead of hiding it.
         this.host.addEventListener('pointermove', this.onHostMove);
         this.host.addEventListener('pointerleave', this.onHostLeave);
-        this.host.appendChild(this.root);
+        // NOT appended here — the cluster is mounted by its first reveal (see ensureMounted),
+        // so a chart nobody hovers carries no cluster node at all.
         this.refresh();
     }
 
@@ -157,9 +160,17 @@ export class CellControls {
     }
 
     /** (Re)build the buttons from the current state. */
+    /** Put the cluster in its cell (once). Detached, it costs the document nothing. */
+    private ensureMounted(): void {
+        if (this.mounted) return;
+        this.mounted = true;
+        this.host.appendChild(this.root);
+    }
+
     private build(): void {
         this.built = true;
         this.wanted = false;
+        this.ensureMounted();
         this.root.textContent = '';
         if (this.compact) {
             // A finger gets the door it cannot otherwise find: RESET, always out. Zoom comes

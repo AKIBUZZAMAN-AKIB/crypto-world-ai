@@ -12,6 +12,13 @@ try {
     const rail = page.locator('.vela-dtb').first();
     const cells = await page.locator('.vela-dtb-cell').count();
     assert(cells >= 8, 'the rail is built with its cells', { cells });
+    // …and it is the ONE rail: a cell never mounts its own (a workspace shares this bar).
+    const mounts = await page.evaluate(() => ({
+        rails: document.querySelectorAll('.vela-dtb').length,
+        inCells: document.querySelectorAll('.vela-cell .vela-dtb').length,
+    }));
+    facts.rail = mounts;
+    assert(mounts.rails === 1 && mounts.inCells === 0, 'the document holds exactly one drawing rail, outside the cells', mounts);
 
     // 1. The caret is a button and nothing more: its pill and chevron are pseudo-elements.
     const shape = await page.evaluate(() => {

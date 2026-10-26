@@ -187,11 +187,13 @@ describe('CellControls — proximity reveal', () => {
     it('starts hidden, shows near the bottom-center, hides when the pointer leaves', () => {
         const host = makeHost();
         new CellControls(host as never, makeDeps());
-        // Nothing is built or shown until the cursor comes near: the cluster is a hover
-        // surface, and the first reveal is what builds its buttons.
-        expect(cluster(host).style.display).toBe('none');
+        // Nothing is built, MOUNTED or shown until the cursor comes near: the cluster is a
+        // hover surface, and the first reveal is what puts it in the cell and builds its
+        // buttons. (It used to sit there as an empty hidden div from construction.)
+        expect(host.children.length).toBe(0);
         host.fire('pointermove', { clientX: 400, clientY: 554 });
         expect(cluster(host).style.display).toBe('flex');
+        expect(cluster(host).children.length).toBeGreaterThan(1);
         host.fire('pointermove', { clientX: 400, clientY: 100 });
         expect(cluster(host).style.display).toBe('none');
         host.fire('pointermove', { clientX: 400, clientY: 554 });

@@ -678,6 +678,14 @@ desktop workspace costs ~1.3k nodes rather than ~2.3k, and a phone ~1.2k:
   need. Nine cells meant 45 nodes for two tiny glyphs. The caret is now a bare 11×22 button
   whose pill and chevron are `::before` / `::after`, and the icon's SVG carries its own 18px
   size: same hover reveal, same flyout on click, same tints, 54 fewer nodes.
+- **A cell carries only what it is showing.** Each chart cell used to keep four invisible
+  containers from construction: its own drawing-rail mount (a workspace shares ONE rail), its
+  attribution mark (the grid mounts one for the whole workspace), the timeline-marks'
+  positioning anchor, and the shade-right veil element. Each is now built by the state that
+  shows it — the veil by the frame that paints a veil, the anchor by the first opened
+  timeline mark, the mark by the moment attribution is on, the rail by the first time it is
+  visible. The per-cell zoom cluster (bottom-center) is mounted the same way: by its first
+  reveal. A cell is its chart root, its watermark and its status line.
 - **One drawing rail per workspace, and only when shown.** Each chart *can* own a rail
   (that is what a standalone chart sees), but in a grid the shared bar on the left of the
   grid is the one on screen. A cell's own rail is therefore left unbuilt — 157 nodes per

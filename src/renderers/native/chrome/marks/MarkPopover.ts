@@ -51,7 +51,8 @@ export interface MarkGlyphRect {
 }
 
 export class MarkPopover {
-    private readonly anchor: HTMLDivElement;
+    /** The popover's trigger — an inert 0×0 box over the glyph. Built by the first open. */
+    private anchor: HTMLDivElement | null = null;
     private pop: Popover | null = null;
     private openKey: string | null = null;
     /** Bumped per open/close — a lazy content resolving after its popup went away is dropped. */
@@ -77,10 +78,8 @@ export class MarkPopover {
         const doc = deps.plot.ownerDocument;
         injectStyles(CALLOUT_STYLE_ID, CALLOUT_CSS, doc);
         injectStyles(MARKS_STYLE_ID, MARKS_CSS, doc);
-        this.anchor = doc.createElement('div');
-        this.anchor.className = 'vela-marks-anchor';
-        Object.assign(this.anchor.style, { position: 'absolute', pointerEvents: 'none', left: '0', top: '0', width: '0', height: '0' });
-        deps.plot.appendChild(this.anchor);
+        // The anchor is built by the first popup (see ensureAnchor): a chart whose timeline
+        // marks are never opened keeps no positioning element in its plot.
         doc.addEventListener('pointerdown', this.onPress, true);
     }
 
@@ -96,7 +95,7 @@ export class MarkPopover {
         const gen = ++this.generation;
         this.openKey = cluster.key;
         this.pop = new Popover({
-            trigger: this.anchor,
+            trigger: this.ensureAnchor(),
             host: this.deps.host(),
             theme: this.deps.theme(),
             gap: 8,
@@ -141,11 +140,24 @@ export class MarkPopover {
     destroy(): void {
         this.close();
         this.deps.plot.ownerDocument.removeEventListener('pointerdown', this.onPress, true);
-        this.anchor.remove();
+        this.anchor?.remove();
+        this.anchor = null;
+    }
+
+    /** The anchor element, mounted on first use (the popover positions against it). */
+    private ensureAnchor(): HTMLDivElement {
+        if (this.anchor) return this.anchor;
+        const doc = this.deps.plot.ownerDocument;
+        const anchor = doc.createElement('div');
+        anchor.className = 'vela-marks-anchor';
+        Object.assign(anchor.style, { position: 'absolute', pointerEvents: 'none', left: '0', top: '0', width: '0', height: '0' });
+        this.deps.plot.appendChild(anchor);
+        this.anchor = anchor;
+        return anchor;
     }
 
     private place(rect: MarkGlyphRect): void {
-        Object.assign(this.anchor.style, {
+        Object.assign(this.ensureAnchor().style, {
             left: `${rect.x - rect.size / 2}px`,
             top: `${rect.y - rect.size / 2}px`,
             width: `${rect.size}px`,

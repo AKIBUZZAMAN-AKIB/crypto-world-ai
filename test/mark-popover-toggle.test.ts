@@ -54,11 +54,18 @@ describe('MarkPopover click toggle', () => {
 
     it('opens on the first click and closes — without reopening — on the second click of the same glyph', async () => {
         const c = cluster('10|news');
+        // Nothing is mounted for a chart whose marks were never opened: the anchor is a
+        // positioning element, built by the first popup and placed on the glyph.
+        expect(plot.querySelector('.vela-marks-anchor')).toBeNull();
         press(canvas);
         release(canvas);
         popover.open(c, { x: 50, y: 50, size: 12 });
         await settle();
         expect(popover.key).toBe('10|news');
+        const anchor = plot.querySelector<HTMLElement>('.vela-marks-anchor');
+        expect(anchor).not.toBeNull();
+        expect(anchor!.style.left).toBe('44px'); // x - size / 2
+        expect(anchor!.style.top).toBe('44px');
 
         press(canvas); // the shell's outside-dismiss closes the popup here
         release(canvas);

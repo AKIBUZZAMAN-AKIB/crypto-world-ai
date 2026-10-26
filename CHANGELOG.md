@@ -143,6 +143,18 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **A chart cell carries only what it is showing.** Four containers sat in every cell from
+  construction, invisible: the cell's own drawing-rail mount (a workspace shares ONE rail),
+  its attribution mark (the grid mounts one for the whole workspace), the timeline-marks'
+  positioning anchor, and the shade-right veil element — plus the bottom-center zoom cluster,
+  mounted and hidden until the cursor came near. Each is now built by the state that shows
+  it: the veil by the frame that paints it (inserted in its documented slot under the
+  cursor canvas), the anchor by the first opened timeline mark, the mark by the moment
+  attribution is on, the rail by the first time it is visible, the cluster by its first
+  reveal. A cell is its chart root, its watermark and its status line: **49 → 44 nodes**,
+  desktop boot **355 → 335**, a phone **287 → 271**. `sync-cell-chrome` drives every one of
+  those states for real (reveal, veil, attribution on/off) and asserts the elements appear
+  and disappear with them.
 - **A drawing tool's button now holds only its glyph.** The hover/active square that used to
   be a `.vela-dtb-hit` span is the button's own `::before` (a centered 22px pill, lifted
   under the glyph), so the rail's eighteen buttons stopped paying a wrapper each: the rail is

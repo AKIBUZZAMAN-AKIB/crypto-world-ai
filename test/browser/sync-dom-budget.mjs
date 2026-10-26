@@ -9,7 +9,7 @@ import { BASE, assert, report } from './helpers.mjs';
 import { chromium } from 'playwright';
 
 /** Ceilings with headroom — the point is "a few hundred, not a couple of thousand". */
-const BUDGET = { desktop: 360, phone: 300 };
+const BUDGET = { desktop: 345, phone: 280 };
 /** What a fresh 4-cell workspace used to cost before the audit (for the record). */
 const BEFORE = { desktop: 2302, phone: 1794 };
 
@@ -54,6 +54,8 @@ const census = (page) =>
             // A cell is its canvases, its status line and a handful of chrome boxes. The
             // status bubble's market glyph used to be a ten-node inline <svg> in every cell.
             cellNodes: document.querySelector('.vela-cell')?.getElementsByTagName('*').length ?? -1,
+            // Containers a cell is not showing: its own rail mount, a marks anchor, a veil.
+            cellInert: document.querySelectorAll('.vela-cell .vela-dtb, .vela-marks-anchor, .vela-shade-right').length,
             calloutShapes: document.querySelectorAll('.vela-callout svg, .vela-callout path, .vela-callout circle').length,
             rails: { total: rails.length, built: rails.filter((n) => n > 20).length, biggest: Math.max(...rails, 0), cells: document.querySelectorAll('.vela-dtb-cell').length },
             canvases: document.querySelectorAll('canvas').length,
@@ -88,6 +90,7 @@ try {
         assert(m.iconsWithShapes <= 1, 'icons are masks: only the live layout glyph has shapes', { withShapes: m.iconsWithShapes, shapes: m.iconShapes });
         assert(m.calloutShapes === 0, 'a status bubble paints its glyph (no inline shapes)', { shapes: m.calloutShapes });
         assert(m.cellNodes <= 50, 'a chart cell stays inside its own budget', { cellNodes: m.cellNodes });
+        assert(m.cellInert === 0, 'a cell carries no container it is not showing', { cellInert: m.cellInert });
         assert(m.cellButtons === 0, 'no chart carries a control cluster nobody has hovered for', m.cellButtons);
         assert(m.legendButtons === 0, 'and no legend row carries its action cluster before it is revealed', m.legendButtons);
         assert(m.tooltips === 0, 'and the shell carries ONE shared tooltip surface — built by the first hover', m.tooltips);

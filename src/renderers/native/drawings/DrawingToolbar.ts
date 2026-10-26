@@ -83,6 +83,8 @@ export class DrawingToolbar {
     private shortcuts = new Map<DrawingTypeKey, string>();
     /** Star elements of the currently open flyout, by tool type (live-updated, never stale). */
     private readonly starEls = new Map<DrawingTypeKey, HTMLElement>();
+    /** The root is in the document (see {@link mount}) — false for a bar that never showed. */
+    private mounted = false;
     private flyout: HTMLDivElement | null = null;
     private flyoutOwnerId: string | null = null; // group id (or MAGNET_ID / CURSOR_ID) whose flyout is open
     private cursorCell: HTMLDivElement | null = null;
@@ -170,7 +172,16 @@ export class DrawingToolbar {
         this.root = document.createElement('div');
         this.root.className = 'vela-dtb';
         this.styleRoot();
-        host.appendChild(this.root);
+        // NOT mounted here: a bar that is hidden from the start (a workspace cell — the
+        // grid shares ONE rail) would otherwise sit in the document as an empty 44px box.
+        // `setVisible(true)` mounts it, which is the moment it can be seen.
+    }
+
+    /** Put the bar in its host (once). Detached, it costs the document nothing. */
+    private mount(): void {
+        if (this.mounted) return;
+        this.mounted = true;
+        this.host.appendChild(this.root);
     }
 
     /** Live divider/border ink — the option override, else the current theme's border
@@ -235,6 +246,7 @@ export class DrawingToolbar {
 
     setVisible(visible: boolean): void {
         this.visible = visible;
+        if (visible) this.mount();
         this.root.style.display = visible ? 'flex' : 'none';
         if (visible) this.ensureBuilt();
     }

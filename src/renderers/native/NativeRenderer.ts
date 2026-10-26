@@ -1548,11 +1548,9 @@ export class NativeRenderer implements IChartRenderer {
         // The `shadeRight` veil's styleable twin, just under the cursor canvas: host CSS on
         // `.vela-shade-right` (a `backdrop-filter`) reaches the candles beneath it but never the
         // crosshair line or the veil paint above it. Transparent unless the host styles it.
-        this.shadeRightEl = document.createElement('div');
-        this.shadeRightEl.className = 'vela-shade-right';
-        this.shadeRightEl.setAttribute('aria-hidden', 'true');
-        this.shadeRightEl.hidden = true;
-        Object.assign(this.shadeRightEl.style, { position: 'absolute', top: '0', left: '0', width: '0', height: '0', pointerEvents: 'none', display: 'none' });
+        // NB: the veil ELEMENT is built by the first frame that has a veil to show (see
+        // ensureShadeRight) — a chart that never scrolls back carries none of it, and the
+        // workspace cells (four of them) stopped paying for a hidden div each.
         this.shadeRightSig = '';
 
         this.overlayRoot = document.createElement('div');
@@ -1569,14 +1567,17 @@ export class NativeRenderer implements IChartRenderer {
         this.extLayers = rendererLayers().map((def) => ({ def, instance: def.create(), canvas: this.createLayerCanvas(), channel: def.id, owner: null }));
         const below = this.extLayers.filter((l) => l.def.placement === 'below-data').map((l) => l.canvas);
         const above = this.extLayers.filter((l) => l.def.placement !== 'below-data').map((l) => l.canvas);
-        this.plot.append(this.backdropCanvas, ...below, this.dataCanvas, this.volumeCanvas, this.vpvrCanvas, ...above, this.chromeCanvas, this.drawingsCanvas, this.shadeRightEl, this.cursorCanvas, this.overlayRoot);
+        this.plot.append(this.backdropCanvas, ...below, this.dataCanvas, this.volumeCanvas, this.vpvrCanvas, ...above, this.chromeCanvas, this.drawingsCanvas, this.cursorCanvas, this.overlayRoot);
         this.layerOrderSig = ''; // recomputed on the first data frame (owned layers follow their indicator's z)
         this.wrapper.appendChild(this.plot);
         this.factoryConfig = this.getConfig();
-        this.attributionEl = this.buildAttributionEl();
-        if (!this.attributionEnabled) this.attributionEl.style.display = 'none';
-        this.positionAttribution();
-        this.wrapper.appendChild(this.attributionEl);
+        // Only an ENABLED mark is built: a workspace cell turns its own off (the grid mounts
+        // one for the whole workspace), and a hidden placeholder is a node nobody can see.
+        if (this.attributionEnabled) {
+            this.attributionEl = this.buildAttributionEl();
+            this.positionAttribution();
+            this.wrapper.appendChild(this.attributionEl);
+        }
         container.appendChild(this.wrapper);
         this.applyBackground();
 
@@ -3572,13 +3573,34 @@ export class NativeRenderer implements IChartRenderer {
         this.syncShadeRight();
     }
 
+    /** The veil element, built the first time there is a veil to show — inserted where the
+     *  stylesheet expects it (just under the cursor canvas, so a host `backdrop-filter` on
+     *  `.vela-shade-right` reaches the candles but never the crosshair line). */
+    private ensureShadeRight(): HTMLDivElement {
+        if (this.shadeRightEl) return this.shadeRightEl;
+        const el = document.createElement('div');
+        el.className = 'vela-shade-right';
+        el.setAttribute('aria-hidden', 'true');
+        el.hidden = true;
+        Object.assign(el.style, { position: 'absolute', top: '0', left: '0', width: '0', height: '0', pointerEvents: 'none', display: 'none' });
+        this.plot.insertBefore(el, this.cursorCanvas);
+        this.shadeRightEl = el;
+        this.shadeRightSig = '';
+        return el;
+    }
+
     /** Position (or hide) the `.vela-shade-right` element over the veil of the last crosshair frame. */
     private syncShadeRight(): void {
-        const el = this.shadeRightEl;
-        if (!el) return;
         const area = this.crosshairLayer.shadeRightArea;
         const sig = area ? `${area.x},${area.width},${area.height}` : '';
         if (sig === this.shadeRightSig) return;
+        // Nothing to show and nothing to remember: an unscrolled chart never builds the veil.
+        if (!area && !this.shadeRightEl) {
+            this.shadeRightSig = sig;
+            return;
+        }
+        const el = area ? this.ensureShadeRight() : this.shadeRightEl;
+        if (!el) return;
         this.shadeRightSig = sig;
         if (!area) {
             el.hidden = true;
@@ -4508,14 +4530,17 @@ export class NativeRenderer implements IChartRenderer {
             : createAttributionMark(document, this.theme.background);
     }
 
-    /** Swap the mark in place — the content kind changed (built-in ↔ host-supplied). */
+    /** Swap the mark in place — the content kind changed (built-in ↔ host-supplied), or the
+     *  mark was turned on after mounting (no element exists until it is shown). */
     private rebuildAttribution(): void {
-        if (!this.attributionEl) return; // pre-mount: mount() builds from the stored state
-        this.attributionEl.remove();
+        if (!this.wrapper) return; // pre-mount: mount() builds from the stored state
+        this.attributionEl?.remove();
+        this.attributionEl = null;
+        if (!this.attributionEnabled) return; // hidden: nothing in the document to hide
         this.attributionEl = this.buildAttributionEl();
-        if (!this.attributionEnabled) this.attributionEl.style.display = 'none';
         this.positionAttribution();
         this.wrapper.appendChild(this.attributionEl);
+        this.refreshAttributionColor();
     }
 
     /** Bottom-left of the LOWEST visible, non-collapsed pane, above the time axis, clear of
