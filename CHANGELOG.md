@@ -118,6 +118,22 @@ All notable changes to Vela, newest first.
 
 ### Fixed
 
+- **Six icons were invisible — every button wearing one was blank.** The registry writes
+  icons the way HTML likes them: `svg16(body, extra)` puts the icon's own root attributes
+  BEFORE the tier defaults on purpose, so `fill="currentColor"` beats `fill="none"` (HTML
+  keeps the *first* of a duplicated attribute). A CSS mask is not HTML — it is an XML
+  document loaded through an `<image>`, where a repeated attribute is a **fatal** parse
+  error: the image does not decode and nothing is painted. `kebab` (the phone's More
+  three-dot button, the drawers), `cursor` (the drawing rail's crosshair), `bold`, `italic`,
+  `grip` and `star-filled` were written that way, so every button wearing one was blank —
+  and every one of them looked perfectly fine to computed style. `maskUri` now de-dupes
+  attributes on every tag, keeping the FIRST copy — exactly the one the HTML parser kept —
+  so the mask decodes to the drawing the markup meant. A new test walks **all 109** registry
+  icons and requires each mask to be duplicate-free and XML-valid, and `sync-icon-decode`
+  decodes and paints every icon's mask in the real shell (desktop + rail + panel).
+- **`sync-dom-budget` was flaky, not fat.** The phone census could land before the legend
+  rows arrived with the first data frame (a fixed 1.8 s sleep); it now waits for the legend,
+  which is what "booted" means. Three consecutive runs: 335 / 271, identical.
 - **The chart no longer owns `Tab` forever.** `Tab` walks the charts (TradingView's chord),
   but the walk WRAPPED: from a focused chart every press was swallowed by the grid, so
   focus never left it — measured, 39 consecutive Tabs stayed inside one cell. That is a

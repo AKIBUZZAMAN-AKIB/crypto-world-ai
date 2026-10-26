@@ -4,7 +4,7 @@
 
 import { iconIdOf, iconMarkup } from '../core/icons';
 
-export { iconIdOf, iconMarkup, registerIcon, svg16, svg24, svg24Solid } from '../core/icons';
+export { iconIdOf, iconIds, iconMarkup, registerIcon, svg16, svg24, svg24Solid } from '../core/icons';
 
 // AN ICON IS A COLOUR, NOT A DRAWING.
 //
@@ -27,6 +27,31 @@ interface IconSheet {
 }
 const sheets = new WeakMap<Document, IconSheet>();
 
+/**
+ * Drop DUPLICATED attributes from one tag, keeping the FIRST — which is exactly what the
+ * HTML parser does with the inline markup the registry emits (`svg16`/`svg24` put an icon's
+ * own attributes BEFORE the tier defaults on purpose, so `fill="currentColor"` wins over
+ * `fill="none"`). A mask, though, is loaded as an XML DOCUMENT, and XML forbids the same
+ * attribute twice: the image fails to decode and the glyph vanishes. That is how the kebab,
+ * the code glyph and every other icon whose root overrides a tier default went blank.
+ */
+export function dedupeSvgAttrs(tag: string): string {
+    const open = /^<([\w:-]+)([\s\S]*?)(\/?)>$/.exec(tag);
+    if (!open) return tag; // a closing tag, a comment, a doctype — nothing to do
+    const [, name, body, selfClose] = open;
+    const seen = new Set<string>();
+    const kept: string[] = [];
+    const ATTR = /([\w:-]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?/g;
+    let m: RegExpExecArray | null;
+    while ((m = ATTR.exec(body ?? '')) !== null) {
+        const key = (m[1] ?? '').toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        kept.push(m[0].trim());
+    }
+    return `<${name}${kept.length ? ` ${kept.join(' ')}` : ''}${selfClose}>`;
+}
+
 /** The icon's markup as a data URI: sized by `mask-size`, painted by its own alpha. */
 function maskUri(raw: string): string {
     let svg = raw
@@ -39,6 +64,8 @@ function maskUri(raw: string): string {
     // A data-URI image is its own DOCUMENT: without the SVG namespace the browser cannot
     // decode it and the mask paints nothing (the icons are invisible, not merely unshaded).
     if (!/xmlns=/.test(svg)) svg = svg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
+    // …and it is parsed as XML, where a repeated attribute is a fatal error (see above).
+    svg = svg.replace(/<[^>]+>/g, dedupeSvgAttrs);
     return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 

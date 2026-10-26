@@ -31,6 +31,12 @@ const boot = async (width, height, mobile) => {
     page.on('pageerror', (e) => errors.push(`${width}: ${e}`));
     await page.goto(BASE, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__ws?.cells().length >= 1, null, { timeout: 60000 });
+    // A census is only meaningful on a page that finished booting: the legend rows arrive
+    // with the first data frame, and a phone under load can lag the desktop's 1.8 s by a
+    // few hundred ms (a fixed sleep made this probe flaky, not the tree bigger).
+    await page
+        .waitForFunction(() => document.querySelectorAll('[data-vela-pane="price"] > *').length > 0, null, { timeout: 15000 })
+        .catch(() => {});
     await page.waitForTimeout(1800);
     return { context, page };
 };

@@ -40,6 +40,12 @@ export function iconMarkup(id: string): string | null {
     return registry.get(id) ?? null;
 }
 
+/** Every registered id — the set a test walks to prove each glyph still DECODES as a mask
+ *  (an SVG with a repeated attribute is fatal in XML, invisible on screen, and legal HTML). */
+export function iconIds(): string[] {
+    return [...registry.keys()];
+}
+
 /** The markup for an id, or empty markup — for the `innerHTML` sites that always want a
  *  string. An unknown id renders nothing rather than breaking the surrounding chrome. */
 export function icon(id: string): string {
