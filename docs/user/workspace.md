@@ -652,6 +652,15 @@ desktop workspace costs ~1.3k nodes rather than ~2.3k, and a phone ~1.2k:
   by the hover that pre-warms it). A closed menu is a machine and a detached list — zero
   nodes — so a timeframe caret costs nothing until it is clicked, and the click still builds
   the nine rows and opens them in the same frame.
+- **An icon is a colour, not a drawing.** Every icon the kit renders used to wrap an inline
+  `<svg>` with one to four shapes inside it, so a 14px chevron cost three or four elements
+  and the top bar spent 60 of them on nineteen glyphs. The glyph is now a **CSS mask**: the
+  element carries no children, the shape lives in one shared stylesheet rule per icon id
+  (`.vela-ic-<id>`, `head`'s style sheet — not the UI's node budget), and the paint is
+  `background-color: currentColor`, so `color` still tints it and colour transitions still
+  animate. Component rules like `.vela-switch .vela-icon { width: 12px }` keep working
+  because the size lives on the element, not on a removed `<svg>`. An unknown icon id is
+  still an empty, invisible span.
 - **The rail's caret is drawn, not built.** A cell's little chevron — the hover target that
   opens a tool's flyout — used to be five elements (a button around a hit square around a
   wrapper span around an SVG around a path) and each icon paid for a wrapper span it did not

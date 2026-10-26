@@ -43,7 +43,9 @@ describe('Menu iconBadges', () => {
             ['vela-menu-badge', 'vela-menu-label'],
         ]);
         const badges = [...list.querySelectorAll('.vela-menu-badge')];
-        expect(badges.map((b) => b.querySelector(':scope > .vela-icon svg') !== null)).toEqual([true, false, true]);
+        // An icon is a masked element now (src/ui/icons.ts) — "has a glyph" means it carries
+        // an icon class, and the empty one carries none.
+        expect(badges.map((b) => b.querySelector(':scope > .vela-icon') !== null)).toEqual([true, false, true]);
         expect(badges[1]!.childElementCount).toBe(0);
         menu.destroy();
     });
@@ -67,7 +69,13 @@ describe('Menu iconBadges', () => {
         expect(list.hasAttribute('data-badges')).toBe(false);
         expect(list.querySelector('.vela-menu-badge')).toBeNull();
         // The icon-less row keeps an empty bare slot so its label lines up with the others.
-        expect(rows(list)).toEqual([['vela-icon', 'vela-menu-label'], ['vela-icon', 'vela-menu-label'], ['vela-icon', 'vela-menu-label']]);
+        // The icon element still marks its slot on every row; the painted glyph is now a
+        // mask class (`vela-ic-<id>`, see src/ui/icons.ts) and the icon-less row has none.
+        expect(rows(list)).toEqual([
+            ['vela-icon vela-ic-camera', 'vela-menu-label'],
+            ['vela-icon', 'vela-menu-label'],
+            ['vela-icon vela-ic-bell', 'vela-menu-label'],
+        ]);
         expect(list.querySelectorAll('.vela-menu-item')[1]!.querySelector('.vela-icon')!.childElementCount).toBe(0);
         menu.destroy();
     });

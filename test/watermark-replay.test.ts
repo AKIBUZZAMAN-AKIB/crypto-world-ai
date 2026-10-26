@@ -27,7 +27,12 @@ describe('Watermark replay line', () => {
         expect(wm.el.querySelector('.vela-watermark-replay')).toBeNull(); // nothing until a replay
         wm.setReplaying(true);
         expect(line().textContent).toBe('Replay');
-        expect(line().querySelector('.vela-icon svg')).not.toBeNull();
+        // The glyph is a CSS mask (see src/ui/icons.ts): the icon element exists and carries
+        // its icon class, and it owns no shapes.
+        const glyph = line().querySelector('.vela-icon');
+        expect(glyph).not.toBeNull();
+        expect(glyph!.classList.contains('vela-ic-replay')).toBe(true);
+        expect(glyph!.childElementCount).toBe(0);
         expect(line().hidden).toBe(false);
         expect(shown()).toBe(true);
         wm.setReplaying(false);

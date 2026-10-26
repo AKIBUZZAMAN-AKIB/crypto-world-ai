@@ -135,6 +135,17 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **An icon is a colour, not a drawing.** The kit's `.vela-icon` wrapped an inline `<svg>`
+  with one to four shapes inside it, so a 14px chevron cost the document three or four
+  elements — 60 nodes for the top bar's nineteen glyphs, and the same again in every menu,
+  picker, panel and drawer that opened. The glyph is now a CSS mask: one element, no
+  children, one shared `head` rule per icon id (`.vela-ic-<id>`) and `background-color:
+  currentColor` for the paint, so `color` and its transitions still tint the icon and every
+  existing size rule (`.vela-switch .vela-icon { width: 12px }`, the top bar's 16px, the
+  rail's 18px) keeps working. Unknown ids still render an empty, invisible span.
+  Desktop boot **508 → 451**; a phone **360 → 323**. `sync-icon-mask` proves the paint is a
+  glyph (unmasked, the same box is a solid square), follows `color`, and that the shell
+  keeps one sheet and one rule per id.
 - **The drawing rail's caret and icons are drawn, not built.** Each of the nine cells
   carried a five-element chevron (button ← hit square ← wrapper span ← svg ← path) and a
   wrapper span around its icon — 45 nodes for an 11px caret and an 18px glyph. The caret is
