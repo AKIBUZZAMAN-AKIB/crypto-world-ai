@@ -135,6 +135,14 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **The renderer's chrome paints its glyphs too.** The drawing rail's tool cells, its
+  collapse/cursor buttons, and the flyout's badges, favourite stars and selected check were
+  still inline `<svg>` strings — the rail alone cost 117 nodes and every opened flyout
+  carried a shape per row. They now go through `iconGlyph`, the same masked-element path the
+  kit uses: markup a caller happens to hold (the tool tables carry markup, not ids) is
+  resolved back to its registry id, so all instances share one rule. The rail is 74 nodes
+  and an open 25-row flyout holds **no** SVG shapes at all — every tool, badge and star still
+  paints, still tints, still opens. Desktop boot **451 → 409**.
 - **An icon is a colour, not a drawing.** The kit's `.vela-icon` wrapped an inline `<svg>`
   with one to four shapes inside it, so a 14px chevron cost the document three or four
   elements — 60 nodes for the top bar's nineteen glyphs, and the same again in every menu,

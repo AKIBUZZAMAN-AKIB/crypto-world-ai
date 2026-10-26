@@ -2,9 +2,9 @@
 // `core/icons` (shared with the renderer's own chrome), and this module adds the one DOM
 // helper the kit and the widget consume them through.
 
-import { iconMarkup } from '../core/icons';
+import { iconIdOf, iconMarkup } from '../core/icons';
 
-export { iconMarkup, registerIcon, svg16, svg24, svg24Solid } from '../core/icons';
+export { iconIdOf, iconMarkup, registerIcon, svg16, svg24, svg24Solid } from '../core/icons';
 
 // AN ICON IS A COLOUR, NOT A DRAWING.
 //
@@ -26,9 +26,7 @@ interface IconSheet {
 const sheets = new WeakMap<Document, IconSheet>();
 
 /** The icon's markup as a data URI: sized by `mask-size`, painted by its own alpha. */
-function maskUri(id: string): string | null {
-    const raw = iconMarkup(id);
-    if (!raw) return null;
+function maskUri(raw: string): string {
     const svg = raw
         .replace(/\swidth="[^"]*"/, '') // mask-size owns the box; the viewBox keeps the shape
         .replace(/\sheight="[^"]*"/, '')
@@ -37,19 +35,23 @@ function maskUri(id: string): string | null {
 }
 
 /** The shared sheet: base geometry once, then one mask rule per icon actually used. */
-function ensureSheet(doc: Document, id: string, uri: string): void {
-    let sheet = sheets.get(doc);
-    if (!sheet || !sheet.style.isConnected) {
-        const style = doc.createElement('style');
-        style.id = STYLE_ID;
-        style.textContent =
-            '.vela-icon{width:1em;height:1em;flex:none;display:inline-flex;background-color:currentColor;' +
-            '-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:contain;mask-size:contain;' +
-            '-webkit-mask-position:center;mask-position:center;}';
-        (doc.head ?? doc.documentElement).appendChild(style);
-        sheet = { style, rules: new Map() };
-        sheets.set(doc, sheet);
-    }
+function ensureSheet(doc: Document): IconSheet {
+    const found = sheets.get(doc);
+    if (found && found.style.isConnected) return found;
+    const style = doc.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent =
+        '.vela-icon{width:1em;height:1em;flex:none;display:inline-flex;background-color:currentColor;' +
+        '-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:contain;mask-size:contain;' +
+        '-webkit-mask-position:center;mask-position:center;}';
+    (doc.head ?? doc.documentElement).appendChild(style);
+    const sheet: IconSheet = { style, rules: new Map() };
+    sheets.set(doc, sheet);
+    return sheet;
+}
+
+/** One rule per icon id — shared by every instance of that icon. */
+function addRule(sheet: IconSheet, id: string, uri: string): void {
     if (sheet.rules.has(id)) return;
     const rule = `.vela-ic-${id}{-webkit-mask-image:${uri};mask-image:${uri}}`;
     sheet.rules.set(id, rule);
@@ -61,10 +63,34 @@ export function iconEl(id: string, doc: Document = document): HTMLElement {
     const span = doc.createElement('span');
     span.className = 'vela-icon';
     span.setAttribute('aria-hidden', 'true');
-    const uri = maskUri(id);
-    if (uri) {
-        ensureSheet(doc, id, uri);
+    const raw = iconMarkup(id);
+    if (raw) {
+        addRule(ensureSheet(doc), id, maskUri(raw));
         span.classList.add(`vela-ic-${id}`);
     }
+    return span;
+}
+
+/** The same masked glyph from raw `<svg>` markup, at an explicit pixel size — for the
+ *  renderer's chrome, whose tool tables carry markup instead of registry ids. Markup that
+ *  is not in the registry still paints (an inline mask) rather than falling back to nodes. */
+export function iconGlyph(markup: string, size: number, doc: Document = document): HTMLElement {
+    const span = doc.createElement('span');
+    span.className = 'vela-icon';
+    span.setAttribute('aria-hidden', 'true');
+    span.style.width = `${size}px`;
+    span.style.height = `${size}px`;
+    const raw = markup.trim();
+    if (!raw) return span;
+    const sheet = ensureSheet(doc);
+    const id = iconIdOf(raw);
+    if (id) {
+        addRule(sheet, id, maskUri(raw));
+        span.classList.add(`vela-ic-${id}`);
+        return span;
+    }
+    const uri = maskUri(raw);
+    span.style.setProperty('-webkit-mask-image', uri);
+    span.style.setProperty('mask-image', uri);
     return span;
 }

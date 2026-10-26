@@ -660,7 +660,10 @@ desktop workspace costs ~1.3k nodes rather than ~2.3k, and a phone ~1.2k:
   `background-color: currentColor`, so `color` still tints it and colour transitions still
   animate. Component rules like `.vela-switch .vela-icon { width: 12px }` keep working
   because the size lives on the element, not on a removed `<svg>`. An unknown icon id is
-  still an empty, invisible span.
+  still an empty, invisible span. The same painted path serves the renderer's own chrome
+  (`iconGlyph`): the drawing rail's nine tool groups, the flyout badges, the favourite stars
+  and the selected-row check are all masks now, so an open flyout holds **zero** SVG shapes
+  and the rail is 117 → 74 nodes without losing a tool.
 - **The rail's caret is drawn, not built.** A cell's little chevron — the hover target that
   opens a tool's flyout — used to be five elements (a button around a hit square around a
   wrapper span around an SVG around a path) and each icon paid for a wrapper span it did not

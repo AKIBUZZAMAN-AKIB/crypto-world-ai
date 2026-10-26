@@ -13,9 +13,26 @@
 
 const registry = new Map<string, string>();
 
+/** Markup → id, built on demand (the reverse of {@link iconMarkup}). */
+let reverse: Map<string, string> | null = null;
+
 /** Register (or replace) an icon's raw `<svg>` markup under an id. */
 export function registerIcon(id: string, svg: string): void {
     registry.set(id, svg);
+    reverse = null;
+}
+
+/** The registry id for a given `<svg>` markup, or null when it did not come from the
+ *  registry. Lets DOM helpers reuse the shared per-id mask rule for markup a caller
+ *  happens to hold (the renderer's tool tables carry markup, not ids). */
+export function iconIdOf(markup: string): string | null {
+    const given = markup.trim();
+    if (!given) return null;
+    if (!reverse) {
+        reverse = new Map();
+        for (const [id, svg] of registry) if (!reverse.has(svg)) reverse.set(svg, id);
+    }
+    return reverse.get(given) ?? null;
 }
 
 /** The raw `<svg>` markup for an id, or null. */

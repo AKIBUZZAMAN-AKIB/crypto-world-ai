@@ -54,23 +54,42 @@ try {
 
     await cell.locator('.vela-dtb-arrow').click();
     await page.waitForTimeout(350);
-    const fly = await page.evaluate(() => ({
-        open: !!document.querySelector('.vela-dtb-flyout'),
-        rows: document.querySelectorAll('.vela-dtb-flyout .vela-dtb-item').length,
-    }));
+    const fly = await page.evaluate(() => {
+        const el = document.querySelector('.vela-dtb-flyout');
+        const badge = el?.querySelector('.vela-dtb-badge .vela-icon');
+        const star = el?.querySelector('.vela-dtb-star .vela-icon');
+        const masked = (e) => !!e && (getComputedStyle(e).maskImage || getComputedStyle(e).webkitMaskImage || 'none') !== 'none';
+        return {
+            open: !!el,
+            rows: document.querySelectorAll('.vela-dtb-flyout .vela-dtb-item').length,
+            shapes: el ? el.querySelectorAll('svg, path, rect, circle, line, polygon').length : -1,
+            badge: masked(badge),
+            star: masked(star),
+        };
+    });
     facts.flyout = fly;
     assert(fly.open && fly.rows > 1, 'clicking the drawn caret opens the flyout', fly);
+    // …and every glyph inside it is painted, not built (badges, the selected check, the stars).
+    assert(fly.shapes === 0, 'the flyout holds no SVG shapes at all', fly);
+    assert(fly.badge, 'a row badge paints its glyph', fly);
 
-    // 3. The icon: glyph sized inline (no wrapper span), hit square still tints on hover.
+    // 3. The icon: one masked element inside the hit square, sized 18px, owning no shapes.
     const icon = await page.evaluate(() => {
         const b = document.querySelector('.vela-dtb-icon');
-        const svg = b.querySelector('.vela-dtb-hit > svg');
-        const wrap = b.querySelector('.vela-dtb-hit > span');
-        return { direct: !!svg, wrapper: wrap ? wrap.tagName : null, w: svg?.getAttribute('width'), h: svg?.getAttribute('height') };
+        const glyph = b.querySelector('.vela-dtb-hit > .vela-icon');
+        const cs = glyph ? getComputedStyle(glyph) : null;
+        return {
+            glyph: !!glyph,
+            kids: glyph ? glyph.getElementsByTagName('*').length : -1,
+            svg: !!b.querySelector('svg'),
+            masked: cs ? (cs.maskImage || cs.webkitMaskImage || 'none') !== 'none' : false,
+            box: glyph ? [Math.round(glyph.getBoundingClientRect().width), Math.round(glyph.getBoundingClientRect().height)] : null,
+        };
     });
     facts.icon = icon;
-    assert(icon.direct && icon.wrapper === null, 'the glyph is a direct child of its hit square (no wrapper span)', icon);
-    assert(icon.w === '18' && icon.h === '18', 'the glyph carries its own 18px size', icon);
+    assert(icon.glyph && !icon.svg, 'the glyph is a masked element — no inline <svg> in the cell', icon);
+    assert(icon.kids === 0 && icon.masked, 'the glyph owns no shapes and carries its mask', icon);
+    assert(icon.box[0] === 18 && icon.box[1] === 18, 'the glyph is 18px', icon);
     await page.locator('.vela-dtb-icon').first().hover();
     await page.waitForTimeout(200);
     const tint = await page.evaluate(() => getComputedStyle(document.querySelector('.vela-dtb-icon .vela-dtb-hit')).backgroundColor);
@@ -80,20 +99,23 @@ try {
     //    three wrapper/pill spans the caret and the icon used to carry are gone.
     const cost = await page.evaluate(() => {
         const row = document.querySelector('.vela-dtb-cell');
-        const glyph = new Set(['svg', 'path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'g']);
         const all = [...row.getElementsByTagName('*')];
+        const spans = all.filter((e) => e.tagName === 'SPAN');
         return {
             buttons: row.querySelectorAll('button').length,
             hits: row.querySelectorAll('.vela-dtb-hit').length,
-            inlineSpans: all.filter((e) => e.tagName === 'SPAN' && e.hasAttribute('style')).length,
-            chrome: all.filter((e) => !glyph.has(e.tagName) && e.tagName !== 'BUTTON' && !e.classList.contains('vela-dtb-hit')).length,
+            spans: spans.map((e) => e.className),
+            // Everything in the row is a button, a hit square, a masked glyph or the
+            // glyph's own (mesh-free) nothing — no shapes, no wrappers.
+            shapes: all.filter((e) => /^(svg|path|circle|rect|line|polyline|polygon|g)$/.test(e.tagName)).length,
+            stray: all.filter((e) => e.tagName !== 'BUTTON' && !e.classList.contains('vela-dtb-hit') && !e.classList.contains('vela-icon')).length,
             cells: document.querySelectorAll('.vela-dtb-cell').length,
         };
     });
     facts.cost = cost;
-    assert(cost.buttons === 2 && cost.hits === 1, 'a cell is its two buttons and the icon\'s one hit square', cost);
-    assert(cost.inlineSpans === 0, 'no inline-styled wrapper spans are left in a cell', cost);
-    assert(cost.chrome === 0, 'nothing sits in a cell but buttons, hit squares and glyph geometry', cost);
+    assert(cost.buttons === 2 && cost.hits === 1, "a cell is its two buttons and the icon's one hit square", cost);
+    assert(cost.shapes === 0, 'a cell holds no SVG shapes at all', cost);
+    assert(cost.stray === 0, 'nothing sits in a cell but buttons, the hit square and the glyph', cost);
 
     assert(errors.length === 0, 'no page errors', { errors });
     report('sync-drawing-rail', facts);

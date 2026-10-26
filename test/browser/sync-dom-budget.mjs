@@ -9,7 +9,7 @@ import { BASE, assert, report } from './helpers.mjs';
 import { chromium } from 'playwright';
 
 /** Ceilings with headroom — the point is "a few hundred, not a couple of thousand". */
-const BUDGET = { desktop: 470, phone: 340 };
+const BUDGET = { desktop: 420, phone: 335 };
 /** What a fresh 4-cell workspace used to cost before the audit (for the record). */
 const BEFORE = { desktop: 2302, phone: 1794 };
 
@@ -51,7 +51,7 @@ const census = (page) =>
             // still holds children.
             iconShapes: [...document.querySelectorAll('.vela-icon')].reduce((n, e) => n + e.getElementsByTagName('*').length, 0),
             iconsWithShapes: [...document.querySelectorAll('.vela-icon')].filter((e) => e.childElementCount > 0).length,
-            rails: { total: rails.length, built: rails.filter((n) => n > 20).length, biggest: Math.max(...rails, 0) },
+            rails: { total: rails.length, built: rails.filter((n) => n > 20).length, biggest: Math.max(...rails, 0), cells: document.querySelectorAll('.vela-dtb-cell').length },
             canvases: document.querySelectorAll('canvas').length,
             cellButtons: document.querySelectorAll('.vela-cc-btn').length,
             legendButtons: document.querySelectorAll('.vela-ind-ctl, .vela-ind-close').length,
@@ -104,7 +104,9 @@ try {
 
         // The rail that IS on screen is built in full — laziness never leaves a
         // half-drawn toolbar behind.
-        assert(m.rails.biggest >= 100, 'the visible drawing rail keeps all of its tools', m.rails);
+        // The rail's nine tool groups are what "all of its tools" means — the node count per
+        // cell fell (drawn carets, masked glyphs) but nothing left the rail.
+        assert(m.rails.cells >= 9 && m.rails.biggest >= 40, 'the visible drawing rail keeps all of its tools', m.rails);
 
         // A legend row's controls arrive when the row is revealed — and arrive COMPLETE.
         const title = await page.evaluate(() => {

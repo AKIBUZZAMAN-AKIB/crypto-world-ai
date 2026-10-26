@@ -34,7 +34,9 @@ try {
     assert(census.masked === census.icons, 'every icon carries a mask image', census);
     // One rule per icon ID actually handed to `iconEl` (icons built then destroyed keep theirs;
     // the id, not the instance, owns the rule).
-    assert(census.sheets === 1 && census.rules >= census.icons - 1, 'one shared sheet, one rule per masked icon id', census);
+    // Rules are per ID, instances are per element: several glyphs share one rule (and the
+    // layout widget's live glyph is not masked at all), so rules ≤ icons.
+    assert(census.sheets === 1 && census.rules > 0 && census.rules <= census.icons, 'one shared sheet, one rule per masked icon id', census);
 
     // The paint is a glyph, not a filled square: strip the mask and the pixels change.
     const icon = page.locator('.vela-icon').first();

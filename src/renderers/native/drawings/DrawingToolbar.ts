@@ -2,6 +2,7 @@ import type { VelaTheme } from '../../../core/options';
 import type { DrawingTypeKey, SnapMode } from '../../../core/drawings';
 import type { ToolbarDefinition, ToolGroup, ToolSection } from '../../../core/drawings';
 import { icon } from '../../../core/icons';
+import { iconGlyph } from '../../../ui/icons';
 import { CURSOR_SPECS, cursorSpec, type CursorStyle } from '../../../core/cursor';
 import { applyChromeTokens } from '../../shared/theme-tokens';
 import { attachChromeTooltip } from '../../shared/chrome-tooltip';
@@ -229,7 +230,7 @@ export class DrawingToolbar {
         el.classList.toggle('vela-fav', on);
         el.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
         el.setAttribute('aria-pressed', on ? 'true' : 'false');
-        el.innerHTML = sizedIcon(on ? STAR_FILLED_ICON : STAR_ICON);
+        el.replaceChildren(iconGlyph(on ? STAR_FILLED_ICON : STAR_ICON, 16, el.ownerDocument));
     }
 
     setVisible(visible: boolean): void {
@@ -358,7 +359,7 @@ export class DrawingToolbar {
         const b = this.collapseBtn;
         if (!b) return;
         const label = this.collapsed ? 'Expand toolbar' : 'Collapse toolbar';
-        b.innerHTML = hitHtml(this.collapsed ? EXPAND_ICON : COLLAPSE_ICON, 12);
+        setHit(b, this.collapsed ? EXPAND_ICON : COLLAPSE_ICON, 12);
         b.setAttribute('aria-label', label);
         this.tipText.set(b, label);
     }
@@ -378,7 +379,7 @@ export class DrawingToolbar {
         icon.type = 'button';
         icon.className = 'vela-dtb-icon';
         icon.setAttribute('aria-label', label);
-        if (opts.iconSvg) icon.innerHTML = hitHtml(opts.iconSvg);
+        if (opts.iconSvg) setHit(icon, opts.iconSvg);
         icon.addEventListener('click', opts.onIcon);
         cell.appendChild(icon);
         let arrow: HTMLButtonElement | null = null;
@@ -486,7 +487,7 @@ export class DrawingToolbar {
         const allLocked = st.total > 0 && st.locked === st.total;
         paint(this.lockAllBtn, allLocked, allLocked ? 'Unlock all drawings' : st.locked > 0 ? `Lock all drawings (${st.locked} of ${st.total} locked)` : 'Lock all drawings');
         paint(this.hideAllBtn, st.hidden, st.hidden ? `Show all drawings (${st.total} hidden)` : `Hide all drawings (${st.total})`);
-        if (this.hideAllBtn) this.hideAllBtn.innerHTML = hitHtml(st.hidden ? EYE_OFF_ICON : EYE_ICON);
+        if (this.hideAllBtn) setHit(this.hideAllBtn, st.hidden ? EYE_OFF_ICON : EYE_ICON);
         paint(this.removeAllBtn, false, st.total === 1 ? 'Remove the drawing (undoable)' : `Remove all ${st.total} drawings (undoable)`);
     }
 
@@ -546,7 +547,7 @@ export class DrawingToolbar {
         const style = this.cursorStyleFn?.() ?? 'cross';
         const spec = cursorSpec(style);
         if (this.cursorIcon) {
-            this.cursorIcon.innerHTML = hitHtml(icon(spec.icon));
+            setHit(this.cursorIcon, icon(spec.icon));
             this.cursorIcon.setAttribute('aria-label', `Cursor: ${spec.label}`);
         }
         if (this.cursorCell) this.tipText.set(this.cursorCell, `Cursor: ${spec.label}`);
@@ -829,7 +830,7 @@ export class DrawingToolbar {
         if (badged) {
             const badge = document.createElement('span');
             badge.className = 'vela-dtb-badge';
-            if (opts.icon) badge.innerHTML = opts.icon;
+            if (opts.icon) badge.appendChild(iconGlyph(opts.icon, 16, badge.ownerDocument));
             item.appendChild(badge);
         }
         const label = document.createElement('span');
@@ -838,7 +839,7 @@ export class DrawingToolbar {
         item.appendChild(label);
         const check = document.createElement('span');
         check.style.cssText = 'width:14px;height:14px;display:flex;align-items:center;justify-content:center;flex:none;';
-        if (opts.selected) check.innerHTML = sizedIcon(CHECK_ICON);
+        if (opts.selected) check.appendChild(iconGlyph(CHECK_ICON, 12, check.ownerDocument));
         item.appendChild(check);
         if (opts.shortcut) {
             const hint = document.createElement('span');
@@ -906,7 +907,7 @@ export class DrawingToolbar {
         if (!iconBtn) return;
         const type = this.lastUsed.get(group.id) ?? group.tools[0]?.type;
         const tool = group.tools.find((t) => t.type === type) ?? group.tools[0];
-        iconBtn.innerHTML = hitHtml(tool?.icon ?? '');
+        setHit(iconBtn, tool?.icon ?? '');
         // The tip names the tool the icon arms (the group's last-used), not the group label.
         const cell = this.groupCells.get(group.id);
         if (cell) this.tipText.set(cell, tool?.label ?? group.label);
@@ -933,7 +934,7 @@ export class DrawingToolbar {
         btn.className = 'vela-dtb-btn';
         btn.setAttribute('aria-label', title); // not `title` — we render our own 2s-dwell tooltip
         this.tipText.set(btn, title);
-        if (icon) btn.innerHTML = hitHtml(icon);
+        if (icon) setHit(btn, icon);
         this.tipDisposers.push(
             attachChromeTooltip(btn, { host: this.host, theme: () => this.theme, text: () => this.tipText.get(btn) ?? title, placement: 'right' }),
         );
@@ -1035,21 +1036,14 @@ const CHECK_ICON = icon('check');
 const STAR_ICON = icon('star');
 const STAR_FILLED_ICON = icon('star-filled');
 
-/** Force an inline SVG icon to fill its 18px slot. */
-function sizedIcon(svg: string): string {
-    return svg.replace('<svg ', '<svg width="100%" height="100%" ');
-}
-
-/** An SVG at a fixed pixel size (its own viewBox still scales the geometry). */
-function fixedIcon(svg: string, size: number): string {
-    return svg.replace('<svg ', `<svg width="${size}" height="${size}" `);
-}
-
 /** A button's inner content: the glyph inside a centered square (`.vela-dtb-hit`) that carries the
  *  hover/active highlight, so the tint hugs the icon instead of stretching across the whole row.
- *  The glyph is sized here rather than in a wrapper span — the span was one node per icon (nine
- *  in the rail) for a centring job `align-items` on the square already does. */
-function hitHtml(svg: string, iconSize = 18): string {
-    if (!svg) return '<span class="vela-dtb-hit"></span>';
-    return `<span class="vela-dtb-hit">${fixedIcon(svg, iconSize)}</span>`;
+ *  The glyph is a masked element (see `iconGlyph`), so the square owns exactly one child and that
+ *  child owns nothing — an inline `<svg>` here used to cost three or four nodes per tool. */
+function setHit(btn: HTMLElement, svg: string, iconSize = 18): void {
+    const doc = btn.ownerDocument;
+    const hit = doc.createElement('span');
+    hit.className = 'vela-dtb-hit';
+    hit.appendChild(iconGlyph(svg, iconSize, doc));
+    btn.replaceChildren(hit);
 }
