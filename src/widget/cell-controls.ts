@@ -104,6 +104,12 @@ export class CellControls {
     private readonly root: HTMLDivElement;
     private readonly glider: Glider;
     private near = false;
+    /** Buttons exist? They are built the first time the cluster is REVEALED: a chart the
+     *  cursor never visits keeps none (four cells used to carry 88 hidden buttons). */
+    private built = false;
+    /** A state change arrived while the cluster was unbuilt — `build()` reads the current
+     *  deps anyway, so this only documents the intent. */
+    private wanted = false;
     /** A grip drag is underway — the proximity reveal must not hide the cluster
      *  while captured pointer moves sweep across the whole grid. */
     private dragging = false;
@@ -140,8 +146,20 @@ export class CellControls {
         this.refresh();
     }
 
-    /** Rebuild the buttons (the multi-cell gate, the maximized state or the touch form changed). */
+    /** Rebuild the buttons (the multi-cell gate, the maximized state or the touch form changed).
+     *  A cluster nobody has revealed yet is not built at all — see {@link built}. */
     refresh(): void {
+        this.wanted = true;
+        // The compact (touch) form is out from the start, so it is built immediately: a
+        // finger has no hover to wait for. The pointer form waits for its reveal.
+        if (!this.built && !this.compact) return;
+        this.build();
+    }
+
+    /** (Re)build the buttons from the current state. */
+    private build(): void {
+        this.built = true;
+        this.wanted = false;
         this.root.textContent = '';
         if (this.compact) {
             // A finger gets the door it cannot otherwise find: RESET, always out. Zoom comes
@@ -281,6 +299,8 @@ export class CellControls {
 
     private setNear(near: boolean): void {
         if (this.compact) near = true; // always out in the touch form
+        // The reveal IS the first use: build the buttons before the frame that shows them.
+        if (near && !this.built) this.build();
         if (near === this.near) return;
         this.near = near;
         this.root.style.display = near ? 'flex' : 'none';

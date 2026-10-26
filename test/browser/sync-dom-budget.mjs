@@ -9,7 +9,7 @@ import { BASE, assert, report } from './helpers.mjs';
 import { chromium } from 'playwright';
 
 /** Ceilings with headroom — the point is "a few hundred, not a couple of thousand". */
-const BUDGET = { desktop: 1450, phone: 1400 };
+const BUDGET = { desktop: 1000, phone: 1060 };
 /** What a fresh 4-cell workspace used to cost before the audit (for the record). */
 const BEFORE = { desktop: 2302, phone: 1794 };
 
@@ -45,6 +45,8 @@ const census = (page) =>
             menus: document.querySelectorAll('.vela-menu').length,
             rails: { total: rails.length, built: rails.filter((n) => n > 20).length, biggest: Math.max(...rails, 0) },
             canvases: document.querySelectorAll('canvas').length,
+            cellButtons: document.querySelectorAll('.vela-cc-btn').length,
+            gridCanvases: document.querySelectorAll('.vela-ws-grid canvas').length,
             cells: window.__ws.cells().length,
             features: {
                 topbar: !!document.querySelector('.vela-widget-topbar'),
@@ -66,9 +68,10 @@ try {
         assert(m.nodes < BEFORE.desktop * 0.75, 'and is at least a quarter lighter than the audited tree', { nodes: m.nodes, before: BEFORE.desktop });
         assert(m.listeners < 1600, 'listener count is roughly halved too', m.listeners);
         assert(m.menuRows === 0, 'no closed menu holds its rows', { menus: m.menus, rows: m.menuRows });
+        assert(m.cellButtons === 0, 'no chart carries a control cluster nobody has hovered for', m.cellButtons);
         assert(m.rails.built === 1, 'exactly ONE drawing rail is built (the workspace\'s shared bar)', m.rails);
         assert(m.features.drawingRail && m.features.topbar && m.features.legendRows >= 1 && m.features.bottombar, 'every surface is still there', m.features);
-        assert(m.canvases === 29 && m.cells === 4, 'the charts are untouched (4 cells, 29 canvases)', { canvases: m.canvases, cells: m.cells });
+        assert(m.gridCanvases === 28 && m.cells === 4, 'the charts are untouched (4 cells, 28 chart canvases)', { canvases: m.gridCanvases, cells: m.cells });
 
         // The rows arrive when a menu is opened — laziness is not a missing feature.
         await page.click('.vela-widget-tf-caret');

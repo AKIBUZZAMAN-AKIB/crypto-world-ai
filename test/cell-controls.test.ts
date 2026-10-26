@@ -97,6 +97,10 @@ function makeDeps(over: Partial<CellControlsDeps> = {}): CellControlsDeps {
 }
 
 const cluster = (host: StubEl): StubEl => host.children[0]!;
+/** Reveal the cluster the way the cursor does — its buttons are built on the first
+ *  reveal, so a test that inspects them has to bring them out (bottom-center of the
+ *  stub host: 800×600, no gutters). */
+const reveal = (host: StubEl): void => host.fire('pointermove', { clientX: 400, clientY: 560 });
 const titles = (host: StubEl): string[] => cluster(host).children.map((b) => b.title);
 
 afterEach(() => {
@@ -144,6 +148,7 @@ describe('CellControls — button set and gating', () => {
     it('pins left to the plot center (scale gutter), not the full cell', () => {
         const host = makeHost();
         new CellControls(host as never, makeDeps());
+        reveal(host);
         expect(cluster(host).style.left).toBe(CLUSTER_LEFT_CSS);
         expect(cluster(host).style.left).toContain('--vela-scale-gutter');
         expect(cluster(host).style.transform).toBe('translateX(-50%)');
@@ -152,12 +157,14 @@ describe('CellControls — button set and gating', () => {
     it('builds drag / zoom out / zoom in / maximize / reset on a multi-cell grid', () => {
         const host = makeHost();
         new CellControls(host as never, makeDeps());
+        reveal(host);
         expect(titles(host)).toEqual(['Drag to move chart', 'Zoom out', 'Zoom in', 'Maximize chart', 'Reset chart']);
     });
 
     it('drops the drag handle and maximize on single-cell grids (nowhere to go)', () => {
         const host = makeHost();
         new CellControls(host as never, makeDeps({ multiCell: () => false }));
+        reveal(host);
         expect(titles(host)).toEqual(['Zoom out', 'Zoom in', 'Reset chart']);
     });
 
@@ -165,6 +172,7 @@ describe('CellControls — button set and gating', () => {
         const host = makeHost();
         let maximized = false;
         const controls = new CellControls(host as never, makeDeps({ isMaximized: () => maximized }));
+        reveal(host);
         expect(cluster(host).children[3]!.className).toBe('vela-cc-btn'); // resting state — no chip
         maximized = true;
         controls.refresh();
@@ -179,6 +187,8 @@ describe('CellControls — proximity reveal', () => {
     it('starts hidden, shows near the bottom-center, hides when the pointer leaves', () => {
         const host = makeHost();
         new CellControls(host as never, makeDeps());
+        // Nothing is built or shown until the cursor comes near: the cluster is a hover
+        // surface, and the first reveal is what builds its buttons.
         expect(cluster(host).style.display).toBe('none');
         host.fire('pointermove', { clientX: 400, clientY: 554 });
         expect(cluster(host).style.display).toBe('flex');
@@ -192,6 +202,7 @@ describe('CellControls — proximity reveal', () => {
     it('setCompact(true) keeps ONE chip out (reset) and ignores the hover reveal', () => {
         const host = makeHost();
         const controls = new CellControls(host as never, makeDeps());
+        reveal(host);
         host.fire('pointermove', { clientX: 400, clientY: 554 });
         expect(cluster(host).style.display).toBe('flex');
         controls.setCompact(true); // touch form: reset stays out, the rest stands down
@@ -211,6 +222,7 @@ describe('CellControls — proximity reveal', () => {
     it('destroy() unhooks the host listeners and removes the cluster', () => {
         const host = makeHost();
         const controls = new CellControls(host as never, makeDeps());
+        reveal(host);
         controls.destroy();
         expect(host.children).toHaveLength(0);
         expect(host.listeners.get('pointermove') ?? []).toHaveLength(0);
@@ -224,6 +236,7 @@ describe('CellControls — actions', () => {
         const reset = vi.fn();
         const toggleMaximize = vi.fn();
         new CellControls(host as never, makeDeps({ reset, toggleMaximize }));
+        reveal(host);
         cluster(host).children[3]!.fire('click');
         expect(toggleMaximize).toHaveBeenCalledTimes(1);
         cluster(host).children[4]!.fire('click');
@@ -236,6 +249,7 @@ describe('CellControls — actions', () => {
         const previewDrop = vi.fn();
         const dropOn = vi.fn();
         new CellControls(host as never, makeDeps({ dragTargetAt: () => over, previewDrop, dropOn }));
+        reveal(host);
         const grip = cluster(host).children[0]!;
         expect(grip.title).toBe('Drag to move chart');
         grip.fire('pointerdown', { button: 0, pointerType: 'mouse', pointerId: 1 });
@@ -253,6 +267,7 @@ describe('CellControls — actions', () => {
         const dropOn = vi.fn();
         const previewDrop = vi.fn();
         new CellControls(host as never, makeDeps({ dragTargetAt: () => null, previewDrop, dropOn }));
+        reveal(host);
         const grip = cluster(host).children[0]!;
         grip.fire('pointerdown', { button: 0, pointerType: 'mouse', pointerId: 1 });
         grip.fire('pointermove', { clientX: 10, clientY: 10 });
@@ -278,6 +293,7 @@ describe('CellControls — actions', () => {
             setVisibleRange: (r: { from: number; to: number }) => applied.push(r),
         } as unknown as Vela;
         new CellControls(host as never, makeDeps({ chart: () => chart }));
+        reveal(host);
         cluster(host).children[2]!.fire('click'); // zoom in
         const last = applied[applied.length - 1]!;
         expect(last.to).toBe(1_000_000); // right edge anchored

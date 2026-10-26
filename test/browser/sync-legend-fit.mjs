@@ -110,7 +110,9 @@ try {
         facts.desktop = m;
         assert(m.rowsShown === m.rows && m.rows >= 1, 'desktop: rows out while the pane holds them', m);
         assert(m.chip === null, 'desktop: no chip for a single row (the old rule, kept)', m.chip);
-        assert(m.reset != null && m.reset.disp === 'none', 'desktop: the cluster stays a hover reveal', m.reset);
+        // The cluster is BUILT by the first hover, so on a pointer device that has not
+        // hovered the bottom-centre yet there is nothing in the document at all.
+        assert(m.reset == null || m.reset.disp === 'none', 'desktop: the cluster stays a hover reveal', m.reset);
         await context.close();
     }
 

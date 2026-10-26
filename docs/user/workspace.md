@@ -663,6 +663,23 @@ resting the pointer on a trigger for a beat (or focusing it, or pressing on it) 
 menu's rows before the click lands, and the click itself only opens them. A pointer merely
 passing over the bar builds nothing, so a page at rest still carries no rows.
 
+**A chart's own controls arrive with the cursor.** The small zoom/maximize/reset cluster
+that appears near the bottom-centre of a chart is built the first time it is revealed, not
+with the chart — on a phone the compact reset chip is out from the start, because a thumb
+has no hover to wait for.
+
+**Chrome that belongs to one size class is built by that class.** A desktop workspace does
+not construct the phone's bottom bar or the drawing dock above it, and a phone does not pay
+for them twice; a flip between the size classes builds what the new one needs and projects
+the active chart onto it. The replay transport is mounted by the first replay session —
+`Shift+↓` still starts and pauses one from the keyboard.
+
+**Panels, dialogs and the layout picker mount when they open.** The Pine editor's surface,
+a dialog's scrim and panel, and the layout picker's matrix are built once and held outside
+the document until the first open — a workspace with four closed panels and three closed
+dialogs carries none of their nodes. The editor re-renders as it mounts, so its viewport and
+syntax highlighting are measured against the real box rather than a detached one.
+
 Long lists stream instead of landing in one lump. The symbol picker's page of a hundred
 symbols paints its first screenful in the frame the dialog opens and appends the rest over
 the next few frames (a keystroke in its search box costs one short frame, not a hundred

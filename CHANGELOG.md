@@ -118,6 +118,34 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **A chart's hover cluster is built by the first hover.** The zoom / maximize / reset
+  buttons under every chart were created with the cell and kept at `display:none` until the
+  cursor came near the bottom-centre — four cells, 88 hidden buttons, none of them
+  reachable. They are now built in the frame that first reveals them (the compact touch
+  chip still comes out immediately, because a finger has no hover to wait for). Desktop
+  boot: **924 elements / 1,007 listeners** against 2,302 / 1,886 two rounds ago.
+
+- **The phone's chrome is built by the phone's layout, and the replay bar by a replay.** The
+  mobile bar and the drawing dock that sits above it used to be constructed for every
+  workspace — a desktop session carried 86 hidden nodes for chrome it can never show — so
+  they are now built when the layout is mobile (and on a flip *to* mobile, with the active
+  cell projected onto the bar it just created). The replay transport is mounted by the first
+  session instead of at boot (36 hidden nodes, and `Shift+↓` / `Shift+→` are registered
+  regardless, because they are how the first session starts). Desktop boot is now **968
+  elements / 526 invisible**; the phone's own bar, dock and transport still appear exactly
+  as before, at the same sizes.
+
+- **A panel nobody has opened costs nothing, and the same is true of dialogs and the layout
+  picker.** The Pine editor's surface (gutter, code layer, console, autocomplete, run
+  popover) is built but not attached until the editor first opens — the panel itself is
+  35 nodes instead of 101 — and the code is re-rendered on mount so the viewport,
+  highlights and scroll position are measured against the real box. The layout picker's
+  matrix/sync/footer tree and every dialog's scrim + positioner + panel are likewise
+  mounted on their first open rather than at boot: three dialogs and the picker used to sit
+  in the document, hidden, from the first frame. A 1440×900 workspace is now **1,102
+  elements / 660 invisible** (it was 2,302 / 1,379 two rounds ago), and the editor, the
+  picker and the dialogs all still open, size and position exactly as before.
+
 - **The click no longer pays for what it opens.** Lazy chrome moved the build to the first
   open — correct for what a page costs at rest, but it put the whole list in the click for
   the heavy surfaces. A trigger now warms its surface on INTENT: a pointer resting on it
