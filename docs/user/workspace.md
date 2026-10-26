@@ -663,6 +663,11 @@ resting the pointer on a trigger for a beat (or focusing it, or pressing on it) 
 menu's rows before the click lands, and the click itself only opens them. A pointer merely
 passing over the bar builds nothing, so a page at rest still carries no rows.
 
+**A legend row's buttons arrive with the hover.** An indicator row shows its title and
+values at rest; its eye, gear, move and ✕ are built the first time the row is revealed (and
+a hidden indicator gets its eye straight away). The fold measurement still counts the full
+cluster, so a row that would not fit still folds.
+
 **A chart's own controls arrive with the cursor.** The small zoom/maximize/reset cluster
 that appears near the bottom-centre of a chart is built the first time it is revealed, not
 with the chart — on a phone the compact reset chip is out from the start, because a thumb

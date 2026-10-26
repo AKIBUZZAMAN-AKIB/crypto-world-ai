@@ -118,6 +118,17 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **A legend row's buttons arrive with the hover that reveals them.** Every indicator row
+  was born with its eye / gear / move / contributed / ✕ cluster attached and hidden —
+  24 nodes per row, 96 across a four-chart workspace, none of them reachable until the
+  cursor found the title. The cluster is now built by the reveal itself (a hidden indicator
+  still gets its eye the moment it is hidden, and the glyph comes out matching the state it
+  was saved in), while the legend's fit-and-fold measurement keeps budgeting for the full
+  cluster from a slot count, so folding still decides on the real width. Desktop boot is
+  **824 elements / 943 listeners**; hovering a row still yields all six of its verbs.
+- The legend column test now pins the column **width** the shell has been setting since R59
+  (it still asserted the older `max-width`); behaviour is unchanged.
+
 - **A chart's hover cluster is built by the first hover.** The zoom / maximize / reset
   buttons under every chart were created with the cell and kept at `display:none` until the
   cursor came near the bottom-centre — four cells, 88 hidden buttons, none of them

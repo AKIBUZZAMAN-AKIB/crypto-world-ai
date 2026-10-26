@@ -9,7 +9,7 @@ import { BASE, assert, report } from './helpers.mjs';
 import { chromium } from 'playwright';
 
 /** Ceilings with headroom — the point is "a few hundred, not a couple of thousand". */
-const BUDGET = { desktop: 1000, phone: 1060 };
+const BUDGET = { desktop: 900, phone: 1060 };
 /** What a fresh 4-cell workspace used to cost before the audit (for the record). */
 const BEFORE = { desktop: 2302, phone: 1794 };
 
@@ -46,6 +46,7 @@ const census = (page) =>
             rails: { total: rails.length, built: rails.filter((n) => n > 20).length, biggest: Math.max(...rails, 0) },
             canvases: document.querySelectorAll('canvas').length,
             cellButtons: document.querySelectorAll('.vela-cc-btn').length,
+            legendButtons: document.querySelectorAll('.vela-ind-ctl, .vela-ind-close').length,
             gridCanvases: document.querySelectorAll('.vela-ws-grid canvas').length,
             cells: window.__ws.cells().length,
             features: {
@@ -69,6 +70,7 @@ try {
         assert(m.listeners < 1600, 'listener count is roughly halved too', m.listeners);
         assert(m.menuRows === 0, 'no closed menu holds its rows', { menus: m.menus, rows: m.menuRows });
         assert(m.cellButtons === 0, 'no chart carries a control cluster nobody has hovered for', m.cellButtons);
+        assert(m.legendButtons === 0, 'and no legend row carries its action cluster before it is revealed', m.legendButtons);
         assert(m.rails.built === 1, 'exactly ONE drawing rail is built (the workspace\'s shared bar)', m.rails);
         assert(m.features.drawingRail && m.features.topbar && m.features.legendRows >= 1 && m.features.bottombar, 'every surface is still there', m.features);
         assert(m.gridCanvases === 28 && m.cells === 4, 'the charts are untouched (4 cells, 28 chart canvases)', { canvases: m.gridCanvases, cells: m.cells });
@@ -87,6 +89,26 @@ try {
         // The rail that IS on screen is built in full — laziness never leaves a
         // half-drawn toolbar behind.
         assert(m.rails.biggest >= 100, 'the visible drawing rail keeps all of its tools', m.rails);
+
+        // A legend row's controls arrive when the row is revealed — and arrive COMPLETE.
+        const title = await page.evaluate(() => {
+            const el = [...document.querySelectorAll('[data-vela-pane="price"] *')].find((e) => e.textContent?.trim() === 'Volume');
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        });
+        assert(title !== null, 'the legend has a row to reveal', title);
+        if (title) {
+            await page.mouse.move(title.x, title.y, { steps: 4 });
+            await page.waitForTimeout(250);
+            const cluster = await page.evaluate(() => ({
+                labels: [...document.querySelectorAll('.vela-ind-ctl, .vela-ind-close')].map((b) => b.getAttribute('aria-label')),
+                shown: [...document.querySelectorAll('.vela-ind-ctl, .vela-ind-close')].filter((b) => b.getBoundingClientRect().width > 0).length,
+            }));
+            facts.legendCluster = cluster;
+            assert(cluster.labels.includes('Hide') && cluster.labels.includes('Settings') && cluster.labels.includes('Remove indicator'), 'the hovered row has its full verb set', cluster.labels);
+            assert(cluster.shown >= 3, '…and they are actually out on screen', cluster);
+        }
 
         await context.close();
     }

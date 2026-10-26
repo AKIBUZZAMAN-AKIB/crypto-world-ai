@@ -42,10 +42,12 @@ describe('indicator legend · plot bounds', () => {
     it("bounds each pane's legend column by the price scale and follows a scale-width change", () => {
         const scale = { px: 64 };
         const { legend } = setup(scale);
-        expect(legend.style.maxWidth).toBe('calc(100% - 80px)');
+        // The column is bounded by an explicit WIDTH over the data area (R59) — a max-width
+        // alone let a narrow cell's column shrink-to-fit and squeeze its rows.
+        expect(legend.style.width).toBe('calc(100% - 80px)');
         scale.px = 128; // a merged own-scale column widened the gutter
         ui!.reposition();
-        expect(legend.style.maxWidth).toBe('calc(100% - 144px)');
+        expect(legend.style.width).toBe('calc(100% - 144px)');
     });
 
     it('a row may span the whole column, its negative inset included', () => {

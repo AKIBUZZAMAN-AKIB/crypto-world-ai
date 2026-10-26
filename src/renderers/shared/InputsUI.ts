@@ -79,6 +79,13 @@ interface LegendRow {
     paneId: string;
     hidden: boolean;
     eyeEl: HTMLButtonElement | null;
+    /** How many buttons the action cluster WILL hold — what the legend-fit measurement
+     *  budgets for, so it does not need the cluster to exist yet. */
+    ctlSlots: number;
+    /** Built yet? A row's controls are made the first time they are revealed (hover,
+     *  selection, or a hidden indicator keeping its eye out) — a legend at rest is
+     *  titles and values only. */
+    clusterBuilt: boolean;
     /** Wraps the eye/gear/✕ controls; revealed on title hover / selection (eye alone
      *  also stays out while the indicator is hidden). */
     controlsEl: HTMLElement;
@@ -478,7 +485,7 @@ export class InputsUI {
         for (const row of this.rows.values()) {
             const column = this.legends.get(row.paneId)?.offsetWidth ?? 0;
             if (column <= 0) continue; // container not laid out yet — height still governs
-            const cluster = row.controlsEl.childElementCount * (LEGEND_CTL_PX + LEGEND_ACTION_GAP_PX);
+            const cluster = row.ctlSlots * (LEGEND_CTL_PX + LEGEND_ACTION_GAP_PX);
             if (LEGEND_MIN_TITLE_W + cluster > column) fits = false;
         }
         for (const [el, display] of restored) el.style.display = display;
@@ -909,69 +916,48 @@ export class InputsUI {
             `margin-left:${LEGEND_TITLE_VALUES_GAP_PX}px;white-space:nowrap;font-variant-numeric:tabular-nums;`;
         el.appendChild(valuesEl);
         // Action cluster (eye / gear / move / extras / ✕) — one tight row of equal hit targets.
-        // Revealed on hover/selection; a hidden indicator keeps its eye reachable without hover.
+        // Revealed on hover/selection; a hidden indicator keeps its eye reachable without
+        // hover. NOT built here: the buttons arrive the first time the cluster is revealed
+        // (see buildCluster), so a legend at rest carries titles and values only. The row
+        // still knows how WIDE the cluster will be ({@link LegendRow.ctlSlots}) so fitting
+        // and folding stay exact.
         const controlsEl = document.createElement('span');
         controlsEl.style.cssText =
             `display:none;align-items:center;gap:${LEGEND_ACTION_GAP_PX}px;flex:none;margin-left:${LEGEND_ACTION_GAP_PX}px;`;
-        let eyeEl: HTMLButtonElement | null = null;
-        if (this.onToggleVisible) {
-            const eye = document.createElement('button');
-            eye.type = 'button';
-            eye.setAttribute('aria-label', 'Hide');
-            this.tip(this.rowTips, id, eye, () => (this.rows.get(id)?.hidden ? 'Show' : 'Hide'));
-            eye.innerHTML = EYE_SVG;
-            eye.className = 'vela-ind-ctl';
-            eye.style.cssText = LEGEND_CTL_CSS;
-            eye.addEventListener('click', () => {
-                const row = this.rows.get(id);
-                this.onToggleVisible?.(id, Boolean(row?.hidden)); // currently hidden ⇒ request show, else hide
-            });
-            controlsEl.appendChild(eye);
-            eyeEl = eye;
-        }
-        if (inputs.length > 0 || (opts.props ?? []).length > 0) {
-            const gear = document.createElement('button');
-            gear.type = 'button';
-            gear.setAttribute('aria-label', 'Settings');
-            this.tip(this.rowTips, id, gear, 'Settings');
-            gear.innerHTML = GEAR_SVG;
-            gear.className = 'vela-ind-ctl';
-            gear.style.cssText = LEGEND_CTL_CSS;
-            gear.addEventListener('click', () => this.openDialog(id));
-            controlsEl.appendChild(gear);
-        }
-        // Move to — opens a small pane menu (Main chart / New pane above·below / existing panes).
-        // Present only when the host wired a move API (i.e. the renderer supports pane management).
-        if (this.moveApi) {
-            const mv = document.createElement('button');
-            mv.type = 'button';
-            mv.setAttribute('aria-label', 'Move to pane');
-            this.tip(this.rowTips, id, mv, 'Move to pane');
-            mv.innerHTML = iconAt('move', LEGEND_ICON_PX);
-            mv.className = 'vela-ind-ctl';
-            mv.style.cssText = LEGEND_CTL_CSS;
-            mv.addEventListener('click', (e) => { e.stopPropagation(); this.openMoveMenu(id, mv); });
-            controlsEl.appendChild(mv);
-        }
-        // Host-contributed actions (registerLegendAction) — between the built-ins and ✕.
+        // Host-contributed actions live in their own span (rebuilt on demand); it waits
+        // with the rest of the cluster and joins it in buildCluster.
         const extrasEl = document.createElement('span');
         extrasEl.style.cssText = 'display:contents;';
         this.renderExtras(id, extrasEl);
-        controlsEl.appendChild(extrasEl);
-        // Remove (✕) — a built-in control to drop the indicator from the chart.
-        const close = document.createElement('button');
-        close.type = 'button';
-        close.setAttribute('aria-label', 'Remove indicator');
-        this.tip(this.rowTips, id, close, 'Remove indicator');
-        close.innerHTML = CLOSE_SVG;
-        close.className = 'vela-ind-close';
-        close.style.cssText = LEGEND_CTL_CSS;
-        close.addEventListener('click', () => this.onRemove?.(id));
-        controlsEl.appendChild(close);
-        el.appendChild(controlsEl);
 
         this.attach(this.legendFor(paneId), el, !!opts.native);
-        const row: LegendRow = { id, title, inputs, values: { ...values }, props: opts.props ?? [], propValues: { ...(opts.propValues ?? {}) }, ...(opts.type !== undefined ? { indicatorType: opts.type } : {}), el, titleEl, statusEl, valuesEl, plotValues: [], plotValuesKey: '', showValues: null, highlighted: false, paneId, hidden: false, eyeEl, controlsEl, extrasEl, calloutsEl, callouts: [], native: !!opts.native };
+        const row: LegendRow = {
+            id,
+            title,
+            inputs,
+            values: { ...values },
+            props: opts.props ?? [],
+            propValues: { ...(opts.propValues ?? {}) },
+            ...(opts.type !== undefined ? { indicatorType: opts.type } : {}),
+            el,
+            titleEl,
+            statusEl,
+            valuesEl,
+            plotValues: [],
+            plotValuesKey: '',
+            showValues: null,
+            highlighted: false,
+            paneId,
+            hidden: false,
+            eyeEl: null,
+            ctlSlots: (this.onToggleVisible ? 1 : 0) + (inputs.length > 0 || (opts.props ?? []).length > 0 ? 1 : 0) + (this.moveApi ? 1 : 0) + 2 /* extras span + ✕ */,
+            clusterBuilt: false,
+            controlsEl,
+            extrasEl,
+            calloutsEl,
+            callouts: [],
+            native: !!opts.native,
+        };
         this.rows.set(id, row);
         this.renderCallouts(row);
         this.syncFoldToggle(); // 2+ indicators grow the fold chevron; a folded legend hides the new row too
@@ -1086,12 +1072,86 @@ export class InputsUI {
     }
 
     /**
+     * Build a row's action cluster (eye / gear / move / contributed extras / ✕) — once, the
+     * first time it is revealed. Every handler reads the LIVE row, so a cluster built late
+     * behaves exactly like one built with the row.
+     */
+    private buildCluster(row: LegendRow): void {
+        row.clusterBuilt = true;
+        const doc = row.el.ownerDocument;
+        const id = row.id;
+        let eyeEl: HTMLButtonElement | null = null;
+        if (this.onToggleVisible) {
+            const eye = doc.createElement('button');
+            eye.type = 'button';
+            eye.setAttribute('aria-label', row.hidden ? 'Show' : 'Hide');
+            this.tip(this.rowTips, id, eye, () => (this.rows.get(id)?.hidden ? 'Show' : 'Hide'));
+            // A row can be hidden BEFORE its cluster exists (setVisible runs on a legend at
+            // rest); the glyph has to come out matching the state it was saved with.
+            eye.innerHTML = row.hidden ? EYE_OFF_SVG : EYE_SVG;
+            eye.className = 'vela-ind-ctl';
+            eye.style.cssText = LEGEND_CTL_CSS;
+            eye.addEventListener('click', () => {
+                const live = this.rows.get(id);
+                this.onToggleVisible?.(id, Boolean(live?.hidden)); // currently hidden ⇒ request show, else hide
+            });
+            row.controlsEl.appendChild(eye);
+            eyeEl = eye;
+        }
+        if (row.inputs.length > 0 || row.props.length > 0) {
+            const gear = doc.createElement('button');
+            gear.type = 'button';
+            gear.setAttribute('aria-label', 'Settings');
+            this.tip(this.rowTips, id, gear, 'Settings');
+            gear.innerHTML = GEAR_SVG;
+            gear.className = 'vela-ind-ctl';
+            gear.style.cssText = LEGEND_CTL_CSS;
+            gear.addEventListener('click', () => this.openDialog(id));
+            row.controlsEl.appendChild(gear);
+        }
+        // Move to — opens a small pane menu (Main chart / New pane above·below / existing panes).
+        // Present only when the host wired a move API (i.e. the renderer supports pane management).
+        if (this.moveApi) {
+            const mv = doc.createElement('button');
+            mv.type = 'button';
+            mv.setAttribute('aria-label', 'Move to pane');
+            this.tip(this.rowTips, id, mv, 'Move to pane');
+            mv.innerHTML = iconAt('move', LEGEND_ICON_PX);
+            mv.className = 'vela-ind-ctl';
+            mv.style.cssText = LEGEND_CTL_CSS;
+            mv.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.openMoveMenu(id, mv);
+            });
+            row.controlsEl.appendChild(mv);
+        }
+        // Host-contributed actions (registerLegendAction) — between the built-ins and ✕.
+        this.renderExtras(id, row.extrasEl); // picks up actions registered while it waited
+        row.controlsEl.appendChild(row.extrasEl);
+        // Remove (✕) — a built-in control to drop the indicator from the chart.
+        const close = doc.createElement('button');
+        close.type = 'button';
+        close.setAttribute('aria-label', 'Remove indicator');
+        this.tip(this.rowTips, id, close, 'Remove indicator');
+        close.innerHTML = CLOSE_SVG;
+        close.className = 'vela-ind-close';
+        close.style.cssText = LEGEND_CTL_CSS;
+        close.addEventListener('click', () => this.onRemove?.(id));
+        row.controlsEl.appendChild(close);
+        row.el.appendChild(row.controlsEl);
+        row.eyeEl = eyeEl;
+    }
+
+    /**
      * Reveal the action cluster (or just the eye for a hidden indicator). Non-eye
      * buttons only appear while highlighted; the eye keeps its inline-flex from
      * construction and is shown/hidden with the cluster container.
      */
     private syncRowActions(row: LegendRow): void {
         const open = row.highlighted;
+        // The reveal is the first use: build the cluster in the frame that shows it, then
+        // paint the state onto it. A hint of the cursor on the title is all it takes.
+        if ((open || row.hidden) && !row.clusterBuilt) this.buildCluster(row);
         row.controlsEl.style.display = open || row.hidden ? 'inline-flex' : 'none';
         // The status indicator steps aside while the controls are out — moved after the
         // action cluster (its title-side margin rides along) — and returns to the title's
