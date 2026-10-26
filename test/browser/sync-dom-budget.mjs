@@ -9,7 +9,7 @@ import { BASE, assert, report } from './helpers.mjs';
 import { chromium } from 'playwright';
 
 /** Ceilings with headroom — the point is "a few hundred, not a couple of thousand". */
-const BUDGET = { desktop: 400, phone: 335 };
+const BUDGET = { desktop: 360, phone: 300 };
 /** What a fresh 4-cell workspace used to cost before the audit (for the record). */
 const BEFORE = { desktop: 2302, phone: 1794 };
 
@@ -51,6 +51,10 @@ const census = (page) =>
             // still holds children.
             iconShapes: [...document.querySelectorAll('.vela-icon')].reduce((n, e) => n + e.getElementsByTagName('*').length, 0),
             iconsWithShapes: [...document.querySelectorAll('.vela-icon')].filter((e) => e.childElementCount > 0).length,
+            // A cell is its canvases, its status line and a handful of chrome boxes. The
+            // status bubble's market glyph used to be a ten-node inline <svg> in every cell.
+            cellNodes: document.querySelector('.vela-cell')?.getElementsByTagName('*').length ?? -1,
+            calloutShapes: document.querySelectorAll('.vela-callout svg, .vela-callout path, .vela-callout circle').length,
             rails: { total: rails.length, built: rails.filter((n) => n > 20).length, biggest: Math.max(...rails, 0), cells: document.querySelectorAll('.vela-dtb-cell').length },
             canvases: document.querySelectorAll('canvas').length,
             cellButtons: document.querySelectorAll('.vela-cc-btn').length,
@@ -82,6 +86,8 @@ try {
         assert(m.menuRows === 0, 'no closed menu holds its rows', { menus: m.menus, rows: m.menuRows });
         assert(m.menus === 0 && m.menuLayers === 0, 'and a menu nobody has opened has no layer in the page at all', { menus: m.menus, layers: m.menuLayers });
         assert(m.iconsWithShapes <= 1, 'icons are masks: only the live layout glyph has shapes', { withShapes: m.iconsWithShapes, shapes: m.iconShapes });
+        assert(m.calloutShapes === 0, 'a status bubble paints its glyph (no inline shapes)', { shapes: m.calloutShapes });
+        assert(m.cellNodes <= 50, 'a chart cell stays inside its own budget', { cellNodes: m.cellNodes });
         assert(m.cellButtons === 0, 'no chart carries a control cluster nobody has hovered for', m.cellButtons);
         assert(m.legendButtons === 0, 'and no legend row carries its action cluster before it is revealed', m.legendButtons);
         assert(m.tooltips === 0, 'and the shell carries ONE shared tooltip surface — built by the first hover', m.tooltips);

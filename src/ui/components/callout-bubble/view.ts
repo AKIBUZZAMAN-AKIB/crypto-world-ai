@@ -5,7 +5,7 @@
 // The bubble is a single element the caller places and decorates (tooltips stay the
 // caller's: renderer chrome attaches its bare-chart tips, widget chrome the kit's).
 import type { VelaTheme } from '../../../core/options';
-import { iconAt } from '../../../core/icons';
+import { iconGlyph } from '../../icons';
 import { injectStyles } from '../../styles';
 import { Popover, type PopoverBoundary } from '../popover';
 import { calloutPanelRows, closesPanel, type CalloutBubbleSpec, type CalloutPanel } from './controller';
@@ -94,7 +94,9 @@ export class CalloutBubble {
         const clickable = this.spec.panel !== undefined;
         this.el.style.background = this.spec.background;
         this.el.style.color = this.spec.color ?? '';
-        this.el.innerHTML = iconAt(this.spec.icon, this.size - 4);
+        // The glyph is a masked element (one node, no shapes) — a status bubble sat in every
+        // status line carrying a 10-node inline <svg> for a 12px icon.
+        this.el.replaceChildren(iconGlyph(this.spec.icon, this.size - 4, this.el.ownerDocument));
         this.el.setAttribute('aria-label', this.spec.label);
         if (clickable) {
             this.el.setAttribute('role', 'button');

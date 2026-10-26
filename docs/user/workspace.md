@@ -652,6 +652,11 @@ desktop workspace costs ~1.3k nodes rather than ~2.3k, and a phone ~1.2k:
   by the hover that pre-warms it). A closed menu is a machine and a detached list — zero
   nodes — so a timeframe caret costs nothing until it is clicked, and the click still builds
   the nine rows and opens them in the same frame.
+- **The status line's market bubble paints its glyph too.** A chart's status line carries a
+  small tinted bubble naming the market's state (Open / Pre-market / Closed). It used to hold a
+  ten-node inline `<svg>` for its 12px icon; it is now a masked element inside the same
+  circle, tinted by the same `color`, with the same `role="img"` name. Each cell is 58 → 49
+  nodes.
 - **An icon is a colour, not a drawing.** Every icon the kit renders used to wrap an inline
   `<svg>` with one to four shapes inside it, so a 14px chevron cost three or four elements
   and the top bar spent 60 of them on nineteen glyphs. The glyph is now a **CSS mask**: the

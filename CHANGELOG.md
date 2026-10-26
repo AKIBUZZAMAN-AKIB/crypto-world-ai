@@ -148,6 +148,11 @@ All notable changes to Vela, newest first.
   under the glyph), so the rail's eighteen buttons stopped paying a wrapper each: the rail is
   74 → **56** nodes, and a cell is exactly two buttons and nothing else — same reveal, same
   tint, same active state, same flyout.
+- **A status bubble paints its glyph.** The coloured bubble in every chart's status line
+  (market Open / Pre-market / Closed, and the same component behind the legend's callouts)
+  held a ten-node inline `<svg>` for its 12px icon. It is a masked element now — one node,
+  tinted by the bubble's `color`, same `role="img"` name, same panel on click. A cell is
+  58 → 49 nodes; desktop boot **391 → 355**, a phone **323 → 287**.
 - **The renderer's chrome paints its glyphs too.** The drawing rail's tool cells, its
   collapse/cursor buttons, and the flyout's badges, favourite stars and selected check were
   still inline `<svg>` strings — the rail alone cost 117 nodes and every opened flyout

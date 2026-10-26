@@ -13,7 +13,7 @@ export const CALLOUT_CSS = `
     -webkit-user-select: none;
 }
 .vela-callout[role='button'] { cursor: pointer; }
-.vela-callout svg { display: block; }
+.vela-callout svg, .vela-callout > .vela-icon { display: block; }
 /* The deployed panel — carries the kit's elevated-card look itself (the popover
    shell is bare positioning chrome). */
 .vela-callout-panel {
