@@ -122,7 +122,9 @@ try {
         await page.waitForTimeout(150);
         await page.click('.vela-widget-templates');
         await page.waitForTimeout(400);
-        const opened = await page.evaluate(() => !!document.querySelector('.vela-menu, [role="menu"]'));
+        // The Templates dropdown is a popover with its own card (`.vela-tm`), not a kit menu —
+        // a `.vela-menu` check would have passed on any other menu's leftover layer.
+        const opened = await page.evaluate(() => !!document.querySelector('.vela-tm'));
         facts.narrowClick = { opened };
         assert(opened, 'a click on a tool opens it (a drag would have swallowed it)', opened);
         await context.close();

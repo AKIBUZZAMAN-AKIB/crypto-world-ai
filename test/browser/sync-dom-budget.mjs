@@ -9,7 +9,7 @@ import { BASE, assert, report } from './helpers.mjs';
 import { chromium } from 'playwright';
 
 /** Ceilings with headroom — the point is "a few hundred, not a couple of thousand". */
-const BUDGET = { desktop: 600, phone: 390 };
+const BUDGET = { desktop: 580, phone: 390 };
 /** What a fresh 4-cell workspace used to cost before the audit (for the record). */
 const BEFORE = { desktop: 2302, phone: 1794 };
 
@@ -45,6 +45,7 @@ const census = (page) =>
             listeners: window.__ls,
             menuRows: document.querySelectorAll('.vela-menu-item').length,
             menus: document.querySelectorAll('.vela-menu').length,
+            menuLayers: document.querySelectorAll('.vela-ui-layer[data-scope="menu"]').length,
             rails: { total: rails.length, built: rails.filter((n) => n > 20).length, biggest: Math.max(...rails, 0) },
             canvases: document.querySelectorAll('canvas').length,
             cellButtons: document.querySelectorAll('.vela-cc-btn').length,
@@ -74,6 +75,7 @@ try {
         assert(m.nodes < BEFORE.desktop * 0.75, 'and is at least a quarter lighter than the audited tree', { nodes: m.nodes, before: BEFORE.desktop });
         assert(m.listeners < 1300, 'listener count is roughly halved too', m.listeners);
         assert(m.menuRows === 0, 'no closed menu holds its rows', { menus: m.menus, rows: m.menuRows });
+        assert(m.menus === 0 && m.menuLayers === 0, 'and a menu nobody has opened has no layer in the page at all', { menus: m.menus, layers: m.menuLayers });
         assert(m.cellButtons === 0, 'no chart carries a control cluster nobody has hovered for', m.cellButtons);
         assert(m.legendButtons === 0, 'and no legend row carries its action cluster before it is revealed', m.legendButtons);
         assert(m.tooltips === 0, 'and the shell carries ONE shared tooltip surface — built by the first hover', m.tooltips);

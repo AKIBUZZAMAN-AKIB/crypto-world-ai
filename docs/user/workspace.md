@@ -642,11 +642,12 @@ The shell is a workspace, not a page: nearly everything it can show starts **clo
 closed chrome is built the first moment it is opened, not at boot. That is why a four-chart
 desktop workspace costs ~1.3k nodes rather than ~2.3k, and a phone ~1.2k:
 
-- **Menus carry no rows until they open.** All twelve `.vela-menu` surfaces exist as empty
-  layers; the row list is projected from the menu's descriptors on the first `open` (and
-  again only when the items or the state change). A closed menu is a `<div>` and nothing
-  else, so a timeframe caret costs nothing until it is clicked — the first click builds the
-  nine rows and opens them in the same frame.
+- **A menu nobody has opened carries neither rows nor a layer.** The row list is projected
+  from the menu's descriptors on the first `open` (and again only when the items or the
+  state change), and the floating layer the list rides in is mounted by that same open (or
+  by the hover that pre-warms it). A closed menu is a machine and a detached list — zero
+  nodes — so a timeframe caret costs nothing until it is clicked, and the click still builds
+  the nine rows and opens them in the same frame.
 - **One drawing rail per workspace, and only when shown.** Each chart *can* own a rail
   (that is what a standalone chart sees), but in a grid the shared bar on the left of the
   grid is the one on screen. A cell's own rail is therefore left unbuilt — 157 nodes per

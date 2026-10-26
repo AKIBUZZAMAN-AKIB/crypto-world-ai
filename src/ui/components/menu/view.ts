@@ -65,7 +65,10 @@ interface SurfaceOptions {
 class Surface {
     readonly list: HTMLElement;
     readonly handle: HandleOf<typeof zagMenu.machine>;
-    private readonly positioner: HTMLElement;
+    /** The floating layer the list rides in — built by the first open (see
+     *  {@link ensureMounted}). A closed menu is a machine and a detached list: the twelve a
+     *  workspace constructs at boot used to leave twelve positioners in the document. */
+    private positioner: HTMLElement | null = null;
     private readonly ctrl: ReturnType<typeof menuController>;
     private readonly mid: string;
     private readonly doc: Document;
@@ -104,13 +107,11 @@ class Surface {
         this.checkmarks = opts.checkmarks === true;
         this.iconBadges = opts.iconBadges === true;
 
-        this.positioner = doc.createElement('div');
-        this.positioner.className = 'vela-ui-layer';
+        // The list is created here (rows still wait for the first open) but stays DETACHED
+        // until a level opens: a menu nobody has opened has no nodes in the page at all.
         this.list = doc.createElement('ul');
         this.list.className = 'vela-menu';
         if (opts.minWidth) this.list.style.minWidth = opts.minWidth;
-        this.positioner.appendChild(this.list);
-        this.host.appendChild(this.positioner);
 
         const trigger = opts.trigger;
         this.opener = trigger ?? opts.opener ?? null;
@@ -145,7 +146,8 @@ class Surface {
             }
             this.openState = api.open;
             if (trigger) spreadProps(trigger, api.getTriggerProps(), this.mid);
-            spreadProps(this.positioner, api.getPositionerProps(), this.mid);
+            if (api.open) this.ensureMounted(api);
+            if (this.positioner) spreadProps(this.positioner, api.getPositionerProps(), this.mid);
             spreadProps(this.list, api.getContentProps(), this.mid);
             // First open builds the rows synchronously, before anything is projected onto
             // them — a closed menu holds no rows at all.
@@ -177,12 +179,28 @@ class Surface {
         if (deep) for (const sub of this.subs.values()) sub.prewarm(true);
     }
 
-    /** Build the rows if they are not built yet — idempotent, cheap when already done. */
+    /** Build the rows if they are not built yet — idempotent, cheap when already done.
+     *  Warming also mounts the layer, so a pre-warmed click opens an element that already
+     *  exists (the layer is what `open` positions). */
     private warm(): void {
+        this.ensureMounted(this.api);
         if (this.built || this.items.length === 0) return;
         this.built = true;
         this.build();
         this.registerSubs();
+    }
+
+    /** Put the layer in the document — once, on the first open (or warm-up). */
+    private ensureMounted(api?: zagMenu.Api): void {
+        if (this.positioner) return;
+        const positioner = this.doc.createElement('div');
+        positioner.className = 'vela-ui-layer';
+        positioner.appendChild(this.list);
+        this.host.appendChild(positioner);
+        this.positioner = positioner;
+        // The list was projected while detached; the positioner's own props (positioning,
+        // hidden) can only land once it exists.
+        if (api) spreadProps(positioner, api.getPositionerProps(), this.mid);
     }
 
     /** Keep the just-closed list up through its exit animation. `spreadProps` re-applies
@@ -238,7 +256,8 @@ class Surface {
         this.handle.stop();
         // Torn down while open: the stopped machine never projects the close.
         if (this.shown) this.announce(false);
-        this.positioner.remove();
+        this.positioner?.remove();
+        this.positioner = null;
     }
 
     private byId(id: string): MenuItemDescriptor | undefined {

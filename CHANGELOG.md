@@ -118,6 +118,15 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **A menu nobody has opened has no layer in the page.** Closed menus already held no rows,
+  but each still kept its floating layer (`.vela-ui-layer` + an empty `.vela-menu`) in the
+  document from construction — eleven of them, 22 nodes, for menus waiting on a click. The
+  layer is now mounted by the first open (or by the intent hover that pre-warms it), so a
+  menu that has never been used is a machine and a detached list. Everything the menu does
+  still works from the first click: the timeframe caret opens nine rows in the same frame,
+  an action menu still opens *at* the pointer (measured at x≈696 for a click at 700), and a
+  level whose rows arrive with its first open still builds them there. Desktop boot: **583 →
+  561** elements; a phone **382 → 360**.
 - **The price scale's A / L chips are built by the hover that reveals them.** Every pane
   mounted the Auto and Log buttons at the bottom of its master scale column and kept them at
   `display:none` until a cursor came near — six nodes a pane (the solid strip and its two
