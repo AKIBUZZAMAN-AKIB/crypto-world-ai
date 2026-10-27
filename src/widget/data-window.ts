@@ -95,7 +95,13 @@ export class DataWindow extends SidePanel {
     private unsubs: Array<() => void> = [];
 
     constructor(host: HTMLElement) {
-        super(host, 'Data window', 'vela-dw');
+        super(host, 'Data window', 'vela-dw', {
+            resizable: true,
+            width: 280,
+            minWidth: 220,
+            maxWidth: 520,
+            maximizable: true,
+        });
         injectStyles(STYLE_ID, CSS, host.ownerDocument);
     }
 

@@ -22,7 +22,7 @@ for (const mode of ['percent', 'own', 'pane']) {
     const line = Object.values(inst?.scene ?? {}).find((v) => v?.points);
     return { pane: study?.[0]?.pane, pts: line?.points?.filter((pt) => pt && Number.isFinite(pt.value)).length ?? 0 };
   }, mode);
-  await p.screenshot({ path: `shots/9${2 + Object.keys(modes).length}-compare-${mode}.png` });
+  await p.screenshot({ path: `/tmp/vela-probes/9${2 + Object.keys(modes).length}-compare-${mode}.png` });
 }
 const alert = await p.evaluate(async () => {
   const ws = window.__ws;
@@ -51,6 +51,6 @@ const restored = await p.evaluate(async () => {
     lines: ws.cells()[0].chart.drawings.all().map((d) => d.anchors?.[0]?.price),
   };
 });
-await p.screenshot({ path: 'shots/95-alert-restored.png' });
+await p.screenshot({ path: '/tmp/vela-probes/95-alert-restored.png' });
 console.log(JSON.stringify({ modes, alert, restored, errors: errors.slice(0, 3) }, null, 1));
 await b.close();

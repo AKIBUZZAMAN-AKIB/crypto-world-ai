@@ -31,6 +31,7 @@ import { iconEl, iconMarkup } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
 import { floatingLayerHost } from '../ui/tokens';
 import { parseSymbol } from '../data/ProviderRegistry';
+import { installSymbolQuickSwitch, type SymbolQuickSwitchHandle } from './symbol-quick-switch';
 import { timeframeLabel } from './timeframe';
 import { mobilePlacement, widgetActions, type WidgetContext } from './contributions';
 import { TOPBAR_BUILTIN_IDS } from './topbar-composition';
@@ -173,6 +174,9 @@ const CSS = `
 .vela-mb-item[hidden] { display: none !important; }
 .vela-mb-item:active { background: var(--vela-hover); }
 .vela-mb-item:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: -2px; }
+/* A history stop with nothing to undo/redo: dimmed and inert, never hidden — the pair
+ * must keep its place so the scrolling band never reflows under a thumb. */
+.vela-mb-item[aria-disabled='true'] { opacity: .38; pointer-events: none; }
 .vela-mb-item .vela-icon { font-size: 19px; width: 19px; height: 19px; }
 /* A lit stop (the maximize toggle while something is isolated): the inverse
    "selected" chip — white on the dark theme, dark on the light one. */
@@ -232,6 +236,8 @@ export interface MobileBarOptions {
     symbol: string;
     timeframe: string;
     onSymbolClick: () => void;
+    /** Watchlist-style wheel/drag: +1 = next symbol, -1 = previous. No picker panel opens. */
+    onSymbolStep?: (delta: number) => void;
     onTimeframeClick: () => void;
     /** Omitted ⇒ no indicators stop (the composition hides the 'indicators' slot, or
      *  the deprecated `indicatorPicker: false`). A slot OVERRIDE keeps the stop — the
@@ -272,6 +278,11 @@ export interface MobileBarOptions {
      *  workspace passes a toggle that isolates the active chart over the grid;
      *  {@link setMaximizeActive} lights the stop while something is isolated. */
     onMaximizeClick?: () => void;
+    /** Undo / redo of the ACTIVE chart's history — TradingView keeps these on the chart's
+     *  own bar, not buried in More: they are two of the most-tapped verbs on a phone.
+     *  Omitted together ⇒ neither stop is built (a shell with no history). */
+    onUndoClick?: () => void;
+    onRedoClick?: () => void;
     onMoreClick: () => void;
     onSettingsClick: () => void;
     /** Live widget context — left-aligned contributed actions (`align: 'left'`)
@@ -282,6 +293,7 @@ export interface MobileBarOptions {
 export class MobileBar {
     readonly el: HTMLElement;
     private readonly symbolEl: HTMLButtonElement;
+    private readonly symbolQuick: SymbolQuickSwitchHandle | null = null;
     /** The scrolling middle band — the only part of the bar that moves. */
     private readonly scroller: HTMLElement;
     /** The pinned right zone (More + Settings). */
@@ -294,6 +306,9 @@ export class MobileBar {
     private readonly styleGlyph: HTMLElement | null;
     /** The maximize toggle stop (null when the shell has nothing to isolate). */
     private readonly maxEl: HTMLButtonElement | null;
+    /** Undo / redo of the active chart (null when the shell carries no history). */
+    private readonly undoEl: HTMLButtonElement | null = null;
+    private readonly redoEl: HTMLButtonElement | null = null;
     /** The drawings stop and the span that carries the armed tool's glyph. */
     private readonly drawingEl: HTMLButtonElement | null;
     private readonly drawingGlyph: HTMLElement | null;
@@ -331,6 +346,7 @@ export class MobileBar {
         this.symbolEl = item('vela-mb-symbol', 'Symbol search', opts.onSymbolClick);
         this.symbolEl.setAttribute('aria-haspopup', 'dialog');
         this.symbolEl.setAttribute('aria-expanded', 'false');
+        if (opts.onSymbolStep) this.symbolQuick = installSymbolQuickSwitch(this.symbolEl, opts.onSymbolStep);
         this.setSymbol(opts.symbol);
         this.tfEl = item('vela-mb-tf', 'Timeframe', opts.onTimeframeClick);
         this.tfEl.textContent = timeframeLabel(opts.timeframe);
@@ -396,6 +412,15 @@ export class MobileBar {
         const onMaximize = opts.onMaximizeClick;
         this.maxEl = onMaximize ? item('vela-mb-maximize', 'Maximize chart', onMaximize, 'maximize') : null;
 
+        // ── undo / redo: state-bound stops in the scrolling band's HEAD ──
+        // Both are state-bound (a disabled stop says "nothing to undo"), so they read as
+        // the chart's own history rather than as another door into a sheet.
+        this.undoEl = opts.onUndoClick ? item('vela-mb-undo', 'Undo', opts.onUndoClick, 'undo') : null;
+        this.redoEl = opts.onRedoClick ? item('vela-mb-redo', 'Redo', opts.onRedoClick, 'redo') : null;
+        // Before the first history event there is nothing to undo — say so from the first
+        // paint instead of offering two live-looking buttons that do nothing.
+        this.setHistory(false, false);
+
         // ── trailing: More + Settings, pinned ──
         // The two doors out of the bar. TradingView parks its three-dot More in the
         // bottom-right corner and hangs layouts, chart type, settings and help off it;
@@ -410,13 +435,18 @@ export class MobileBar {
         const settings = item('vela-mb-settings', 'Chart settings', opts.onSettingsClick, 'gear');
 
         // ── the middle band: tools in reading order ──
-        // interval → chart type → drawings → full/short screen → indicators → editor,
-        // then anything a host contributes. This is the only part that scrolls.
+        // interval → chart type → undo/redo → drawings → full/short screen →
+        // indicators → editor, then anything a host contributes. Only this part scrolls.
         this.scroller = doc.createElement('div');
         this.scroller.className = 'vela-mb-scroll';
         this.scroller.append(
             this.tfEl,
             ...(this.styleEl ? [this.styleEl] : []),
+            // Undo / redo sit in the HEAD of the band, one stop off the chart type: the
+            // band is ~3½ stops wide on a 390px phone, so anything parked at its tail
+            // (the first cut) spent its life scrolled out of sight behind More.
+            ...(this.undoEl ? [this.undoEl] : []),
+            ...(this.redoEl ? [this.redoEl] : []),
             ...(this.drawingEl ? [this.drawingEl] : []),
             ...(this.maxEl ? [this.maxEl] : []),
             ...(indicators ? [indicators] : []),
@@ -530,8 +560,9 @@ export class MobileBar {
         text.className = 'vela-mb-symbol-text';
         text.textContent = ticker;
         this.symbolEl.replaceChildren(text, iconEl('chevron-down', doc));
-        this.symbolEl.setAttribute('aria-label', `Symbol — ${ticker}. Open the symbol search`);
-        this.symbolEl.title = ticker;
+        this.symbolEl.setAttribute('aria-label', `Symbol — ${ticker}. Scroll or drag for next symbol; tap to search`);
+        this.symbolQuick?.label(ticker);
+        this.symbolEl.title = `${ticker} — scroll or drag for next symbol; tap to search`;
     }
 
     /**
@@ -675,6 +706,19 @@ export class MobileBar {
         this.maxEl.setAttribute('aria-pressed', on ? 'true' : 'false');
         this.maxEl.setAttribute('aria-label', on ? 'Restore layout' : 'Maximize chart');
         this.maxEl.replaceChildren(iconEl(on ? 'restore' : 'maximize', this.el.ownerDocument));
+    }
+
+    /** Light the undo/redo stops from the ACTIVE chart's history: an empty stack dims
+     *  the stop and drops it out of the tab order, so the bar never offers a dead press. */
+    setHistory(canUndo: boolean, canRedo: boolean): void {
+        const apply = (el: HTMLButtonElement | null, on: boolean, label: string): void => {
+            if (!el) return;
+            el.setAttribute('aria-disabled', on ? 'false' : 'true');
+            el.tabIndex = on ? 0 : -1;
+            el.setAttribute('aria-label', label);
+        };
+        apply(this.undoEl, canUndo, 'Undo');
+        apply(this.redoEl, canRedo, 'Redo');
     }
 
     /** Show the maximize stop only while the grid holds more than one chart — on a

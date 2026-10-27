@@ -16,7 +16,7 @@ import { iconEl } from '../ui/icons';
 import { Tooltip } from '../ui/components/tooltip';
 import { isDarkColor } from '../core/color';
 import { SYNTAX_DARK, SYNTAX_LIGHT, WARNING } from '../core/palette';
-import { classicPineEntries } from '../core/native-indicators/classics/pine-source';
+import { builtinPineEntries } from '../core/native-indicators/classics/pine-source';
 import type { Vela } from '../Vela';
 import type { IndicatorHandle } from '../core/IndicatorHandle';
 import {
@@ -1733,7 +1733,7 @@ export class PineEditor extends SidePanel {
             this.actionRow('New strategy', () => this.addScript('strategy')),
             // TradingView's "Open → Built-in script…": browse the studies whose own Pine
             // code we can show, and open one read-only.
-            this.actionRow('Open built-in script…', () => this.openPop('builtin'), { hint: String(classicPineEntries().length) }),
+            this.actionRow('Open built-in script…', () => this.openPop('builtin'), { hint: String(builtinPineEntries().length) }),
             this.popSep(),
             this.actionRow('Remove from chart', () => this.removeFromChart(), { disabled: !this.live }),
             ...(this.onApplyToLayout
@@ -1798,7 +1798,7 @@ export class PineEditor extends SidePanel {
             this.popSep(),
             this.actionRow('New indicator', () => this.addScript('indicator')),
             this.actionRow('New strategy', () => this.addScript('strategy')),
-            this.actionRow('Built-in scripts…', () => this.openPop('builtin'), { hint: String(classicPineEntries().length) }),
+            this.actionRow('Built-in scripts…', () => this.openPop('builtin'), { hint: String(builtinPineEntries().length) }),
         );
         // Focus without selecting: the caret lands after the name, ready to append.
         requestAnimationFrame(() => field.focus());
@@ -1817,7 +1817,7 @@ export class PineEditor extends SidePanel {
         field.spellcheck = false;
         const list = doc.createElement('div');
         list.className = 'vela-pe-builtin-list';
-        const entries = classicPineEntries();
+        const entries = builtinPineEntries();
         const paint = (): void => {
             const query = field.value.trim().toLowerCase();
             const rows: Node[] = entries

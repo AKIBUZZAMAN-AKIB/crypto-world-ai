@@ -186,4 +186,3 @@ grateful when the watermark stays in a visible spot.
 
 No scripting engine ships with this package; the Pine Script® addon
 (`@luxalgo/vela-pinets`) is AGPL-3.0 and licensed separately (see *Indicators*).
-

@@ -48,6 +48,15 @@ export interface GridLineStyle {
     color: string | null;
 }
 
+/** Which of the two lines the crosshair paints. `dot` keeps the axis chips (the readout)
+ *  but drops the lines and anchors a small disc on the bar — lightweight-charts' shape
+ *  options, expressed as one choice instead of two booleans. */
+export type CrosshairShape = 'cross' | 'vertical' | 'horizontal' | 'dot';
+
+/** The horizontal line's snapping, TradingView's "magnet" — free, the bar's close, or
+ *  whichever of O/H/L/C is nearest the finger (its Magnet and Magnet-OHLC modes). */
+export type CrosshairMagnet = 'off' | 'close' | 'ohlc';
+
 export interface CrosshairStyle {
     /** `null` ⇒ inherit `theme.textColor`. */
     color: string | null;
@@ -57,6 +66,14 @@ export interface CrosshairStyle {
     opacity: number;
     /** Axis-chip background; `null` ⇒ inherit `theme.textColor`. */
     labelBackground: string | null;
+    /** Cross / one line / dot (see {@link CrosshairShape}). */
+    shape: CrosshairShape;
+    /** The price chip on the right axis. */
+    priceLabel: boolean;
+    /** The time chip on the bottom axis. */
+    timeLabel: boolean;
+    /** Horizontal-line snapping (see {@link CrosshairMagnet}). */
+    magnet: CrosshairMagnet;
 }
 
 export interface CandleStyle {
@@ -186,7 +203,7 @@ export function defaultChartStyle(): ChartStyle {
         gridHorz: { visible: true, color: null },
         borderColor: null,
         separatorColor: null,
-        crosshair: { color: CROSSHAIR, width: 1, style: 'dashed', opacity: 0.4, labelBackground: CHIP_PLATE },
+        crosshair: { color: CROSSHAIR, width: 1, style: 'dashed', opacity: 0.4, labelBackground: CHIP_PLATE, shape: 'cross', priceLabel: true, timeLabel: true, magnet: 'off' },
         candle: {
             bodyVisible: true,
             borderVisible: false,
@@ -233,6 +250,10 @@ export interface ChartConfig {
         style: LineStyle;
         opacity: number;
         labelBackground: string;
+        shape: CrosshairShape;
+        priceLabel: boolean;
+        timeLabel: boolean;
+        magnet: CrosshairMagnet;
     };
     priceScale: {
         mode: ScaleMode;
@@ -524,6 +545,14 @@ function isNum(v: unknown): v is number {
 function isLineStyle(v: unknown): v is LineStyle {
     return typeof v === 'string' && (LINE_STYLES as readonly string[]).includes(v);
 }
+const CROSSHAIR_SHAPES = ['cross', 'vertical', 'horizontal', 'dot'] as const satisfies readonly CrosshairShape[];
+function isCrosshairShape(v: unknown): v is CrosshairShape {
+    return typeof v === 'string' && (CROSSHAIR_SHAPES as readonly string[]).includes(v);
+}
+const CROSSHAIR_MAGNETS = ['off', 'close', 'ohlc'] as const satisfies readonly CrosshairMagnet[];
+function isCrosshairMagnet(v: unknown): v is CrosshairMagnet {
+    return typeof v === 'string' && (CROSSHAIR_MAGNETS as readonly string[]).includes(v);
+}
 function isPriceStyle(v: unknown): v is PriceStyle {
     return typeof v === 'string' && priceStyleIds().includes(v);
 }
@@ -699,6 +728,10 @@ export function mergeConfig(base: ChartConfig, patch: unknown): ChartConfig {
             style: isLineStyle(cross.style) ? cross.style : base.crosshair.style,
             opacity: isNum(cross.opacity) ? clampOpacity(cross.opacity) : base.crosshair.opacity,
             labelBackground: isColor(cross.labelBackground) ? cross.labelBackground : base.crosshair.labelBackground,
+            shape: isCrosshairShape(cross.shape) ? cross.shape : base.crosshair.shape,
+            priceLabel: isBool(cross.priceLabel) ? cross.priceLabel : base.crosshair.priceLabel,
+            timeLabel: isBool(cross.timeLabel) ? cross.timeLabel : base.crosshair.timeLabel,
+            magnet: isCrosshairMagnet(cross.magnet) ? cross.magnet : base.crosshair.magnet,
         },
         priceScale: {
             mode: isScaleMode(ps.mode) ? ps.mode : base.priceScale.mode,

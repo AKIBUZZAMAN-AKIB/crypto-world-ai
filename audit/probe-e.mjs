@@ -26,7 +26,7 @@ for (const w of [320, 390]) {
     const box = t?.getBoundingClientRect();
     return { mask: !!getComputedStyle(t).maskImage.tail, maskImage: getComputedStyle(t).maskImage.slice(0, 40), clipped: last && box ? Math.round(last.right - box.right) : null };
   });
-  await page.screenshot({ path: `/home/user/shots/32-symbol-${w}.png` });
+  await page.screenshot({ path: `/tmp/vela-probes/32-symbol-${w}.png` });
   await ctx.close();
 }
 console.log(JSON.stringify(facts, null, 1));

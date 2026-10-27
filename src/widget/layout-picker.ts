@@ -247,6 +247,26 @@ const CSS = `
 .vela-lp-scope[data-global='1'] { color: var(--vela-fg-bright); border-color: var(--vela-selected-bg); }
 /* Footer: saved layouts + tab link. */
 .vela-lp-foot { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--vela-border-faint); display: flex; flex-direction: column; gap: 3px; }
+/* Setup-only desktop panel: ONE door to the separate Manage layouts popover. The
+   save/autosave/export/import verbs never mix with grid and sync controls. */
+.vela-lp-managerdoor {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 8px;
+    border-radius: 7px;
+    color: var(--vela-fg);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+.vela-lp-managerdoor:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-lp-managerdoor:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: -2px; }
+.vela-lp-managerdoor .vela-icon { font-size: 14px; color: var(--vela-fg-muted); }
+.vela-lp-managerdoor small { margin-left: auto; color: var(--vela-fg-faint); font-size: 10px; }
 .vela-lp-save { display: flex; gap: 6px; }
 .vela-lp-save input {
     flex: 1 1 auto;
@@ -704,6 +724,14 @@ export interface LayoutPickerOptions {
     /** Tab-link tag (TradingView Desktop's colored tab link): null = unlinked. */
     linkGroup?: () => string | null;
     onLinkGroup?: (tag: string | null) => void;
+    /**
+     * Desktop separation (R86 T9): when true this popover is LAYOUT SETUP ONLY. It keeps
+     * the grid, presets, chart sync, hidden-chart and tab-link controls, but replaces the
+     * old saved-layout/autosave/file/template footer with one door to Manage layouts.
+     */
+    setupOnly?: boolean;
+    /** Open the separate layout-management panel, anchored to the door. */
+    onOpenManager?: (trigger: HTMLElement) => void;
     onOpenChange?: (open: boolean) => void;
 }
 
@@ -767,7 +795,8 @@ export class LayoutPicker {
         // A labelled, non-modal dialog: many controls, its own focus management, and a
         // screen reader should hear what it is the moment it opens.
         panel.setAttribute('role', 'dialog');
-        panel.setAttribute('aria-label', 'Layout, link and sync settings');
+        panel.setAttribute('aria-label', this.opts.setupOnly ? 'Layout setup' : 'Layout, link and sync settings');
+        if (this.opts.setupOnly) panel.dataset.setupOnly = '1';
         panel.tabIndex = -1; // a keyboard-open focus target; never in the tab order itself
         panel.addEventListener('keydown', this.onPanelKeydown);
         this.layer.appendChild(panel);
@@ -1475,101 +1504,6 @@ export class LayoutPicker {
         this.syncEl.appendChild(wrap);
     }
 
-    /**
-     * Chart templates — the indicator set, not the grid. Vela's contract: applying one
-     * REPLACES the chart's indicators; drawings never travel; the market is opt-in (the
-     * "with market" box is unchecked, exactly like the symbol/timeframe chips in the
-     * docs). In a multi-chart layout the apply button asks where: this chart, or all.
-     */
-    private renderTemplates(doc: Document): void {
-        const list = this.opts.templates;
-        const save = this.opts.onSaveTemplate;
-        if (!list || !save) return;
-        const head = doc.createElement('div');
-        head.className = 'vela-lp-grouphead';
-        head.textContent = 'Chart templates';
-        this.footEl.appendChild(head);
-
-        const form = doc.createElement('div');
-        form.className = 'vela-lp-save';
-        const input = doc.createElement('input');
-        input.type = 'text';
-        input.placeholder = 'Save indicators as…';
-        input.setAttribute('aria-label', 'Save chart template as');
-        const withMarket = doc.createElement('label');
-        withMarket.className = 'vela-lp-tplmarket';
-        withMarket.title = 'Also store the symbol and timeframe (off by default: a template works on any market)';
-        const box = doc.createElement('input');
-        box.type = 'checkbox';
-        const boxText = doc.createElement('span');
-        boxText.textContent = 'market';
-        withMarket.append(box, boxText);
-        const commit = (): void => {
-            const name = input.value.trim();
-            if (!name) return;
-            if (save(name, box.checked)) {
-                input.value = '';
-                this.renderFooter();
-            }
-        };
-        input.addEventListener('keydown', (e) => {
-            e.stopPropagation();
-            if (e.key === 'Enter') commit();
-        });
-        const btn = doc.createElement('button');
-        btn.type = 'button';
-        btn.textContent = 'Save';
-        btn.addEventListener('click', commit);
-        form.append(input, withMarket, btn);
-        if (this.opts.onImportTemplate) {
-            form.appendChild(this.importButton('Import template file…', 'Import a chart template from a .json file', () => this.pickTemplateFile()));
-        }
-        this.footEl.appendChild(form);
-
-        for (const t of list()) {
-            const row = doc.createElement('div');
-            row.className = 'vela-lp-tpl';
-            row.dataset.template = t.name;
-            const nameCol = doc.createElement('span');
-            nameCol.className = 'vela-lp-tplname';
-            const bold = doc.createElement('b');
-            bold.textContent = t.name;
-            bold.title = t.name;
-            const meta = doc.createElement('span');
-            meta.textContent = `${t.count} indicator${t.count === 1 ? '' : 's'}${t.symbol ? ` · ${t.symbol}` : ''}`;
-            nameCol.append(bold, meta);
-            row.appendChild(nameCol);
-            // Apply here, then apply everywhere — the two answers the docs describe.
-            row.appendChild(this.savedAction('check', `Apply “${t.name}” to the active chart`, () => this.opts.onApplyTemplate?.(t.name, 'active')));
-            row.appendChild(this.savedAction('group', `Apply “${t.name}” to every chart`, () => this.opts.onApplyTemplate?.(t.name, 'all')));
-            // The house template: what a NEW chart starts with. A star, filled when set —
-            // the same language the watchlist and the drawing palette already speak.
-            if (this.opts.onSetDefaultTemplate) {
-                const isDefault = this.opts.defaultTemplate?.() === t.name;
-                row.appendChild(this.savedAction(isDefault ? 'star-filled' : 'star', isDefault ? `“${t.name}” already seeds new charts — click to stop` : `Start every new chart with “${t.name}”`, () => {
-                    this.opts.onSetDefaultTemplate?.(isDefault ? null : t.name);
-                    this.renderFooter();
-                }));
-            }
-            if (this.opts.onRenameTemplate) {
-                row.appendChild(this.savedAction('pen', `Rename “${t.name}”`, () => {
-                    this.beginRename(row, nameCol, t.name, this.opts.onRenameTemplate);
-                }));
-            }
-            if (this.opts.onExportTemplate) {
-                row.appendChild(this.savedAction('download', `Export “${t.name}”`, () => {
-                    const json = this.opts.onExportTemplate?.(t.name);
-                    if (json) downloadText(this.doc, `${t.name}.vela-template.json`, json);
-                }));
-            }
-            row.appendChild(this.savedAction('trash', `Delete “${t.name}”`, () => {
-                this.opts.onDeleteTemplate?.(t.name);
-                this.renderFooter();
-            }));
-            this.footEl.appendChild(row);
-        }
-    }
-
     /** A file-import action: one icon in the row that owns it (label in title + aria). */
     private importButton(label: string, title: string, run: () => void, glyph = 'upload'): HTMLButtonElement {
         const b = this.doc.createElement('button');
@@ -1606,8 +1540,24 @@ export class LayoutPicker {
     private renderFooter(): void {
         const doc = this.doc;
         this.footEl.replaceChildren();
+        // Desktop split: the grid panel keeps its OWN controls and offers exactly one
+        // door to the separate management popover. No autosave/save/export/import/template
+        // controls are mixed into Layout setup.
+        if (this.opts.setupOnly) {
+            const door = doc.createElement('button');
+            door.type = 'button';
+            door.className = 'vela-lp-managerdoor';
+            door.dataset.action = 'manage-layouts';
+            door.setAttribute('aria-label', 'Manage layouts — save, autosave, share and export');
+            door.append(iconEl('layout', doc), doc.createTextNode('Manage layouts…'));
+            const hint = doc.createElement('small');
+            hint.textContent = 'Autosave · files · links';
+            door.appendChild(hint);
+            door.addEventListener('click', () => this.opts.onOpenManager?.(door));
+            this.footEl.appendChild(door);
+        }
         const saved = this.opts.savedLayouts;
-        if (saved) {
+        if (!this.opts.setupOnly && saved) {
             // ── the open layout, its drift, and autosave ──
             const active = this.opts.activeLayout?.() ?? null;
             const dirty = (saved() ?? []).some((l) => l.dirty);
@@ -1888,7 +1838,6 @@ export class LayoutPicker {
                 this.footEl.appendChild(row);
             }
         }
-        this.renderTemplates(doc);
         if (this.opts.hiddenCharts && this.opts.onClearPooled) {
             const hidden = this.opts.hiddenCharts();
             if (hidden === 0) this.poolArmed = false;

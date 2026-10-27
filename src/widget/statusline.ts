@@ -7,7 +7,7 @@ import { injectStyles } from '../ui/styles';
 import { Tooltip } from '../ui/components/tooltip';
 import { CalloutBubble } from '../ui/components/callout-bubble';
 import { Menu } from '../ui/components/menu';
-import { segmentVisibility, statuslineMenuItems, STATUSLINE_LADDER, readoutCells, type StatuslinePart, type StatuslineLayout } from './statusline-model';
+import { segmentVisibility, statuslineMenuItems, STATUSLINE_LADDER, readoutCells, type StatuslinePart, type StatuslineLayout, type StatuslineChangeSlot } from './statusline-model';
 import { SESSION_PRE, SESSION_POST, SESSION_OFF } from '../core/palette';
 import { iconAt } from '../core/icons';
 import { fmtPrice, fmtChange, fmtChangePct, decimalsFor } from './format';
@@ -404,7 +404,7 @@ export class Statusline {
     private readonly identityRow: HTMLElement;
     private readonly valuesRow: HTMLElement;
     /** The ladder rung currently applied — see {@link fit}. */
-    private layout: StatuslineLayout = { stacked: false, level: 'full' };
+    private layout: StatuslineLayout = { stacked: false, level: 'full', change: 'both', changeSlot: 'values' };
     /** The readout {@link widthKey} the applied rung was fitted to. */
     private fitKey: string | null = null;
     /** Web fonts landing after the last fit change every width without a resize. */
@@ -517,16 +517,37 @@ export class Statusline {
         this.ohlcEl.style.display = seg.ohlc ? '' : 'none';
         this.changeEl.style.display = seg.change ? '' : 'none';
         if (this.eyeEl) this.eyeEl.style.display = seg.eye ? 'inline-flex' : 'none';
-        // An empty values row must not hold a gap/padding of its own on the line.
-        this.valuesRow.style.display = seg.ohlc || seg.change || seg.eye ? '' : 'none';
+        this.refreshRows();
     }
 
-    /** Apply one ladder rung: the stacked/inline shape and the readout's level. */
+    /** An empty values row must not hold a gap/padding of its own on the line. The delta
+     *  counts as a values-row tenant only while a rung seats it there — see
+     *  {@link seatChange}; on the 'identity' rungs a lone delta leaves the row empty. */
+    private refreshRows(): void {
+        const seg = segmentVisibility(this.parts, this.chartHidden);
+        const occupied = seg.ohlc || seg.eye || (seg.change && this.layout.changeSlot === 'values');
+        this.valuesRow.style.display = occupied ? '' : 'none';
+    }
+
+    /** Apply one ladder rung: the stacked/inline shape, the readout's level, and the row
+     *  the bar delta rides on. */
     private applyLayout(layout: StatuslineLayout): void {
         this.layout = layout;
         this.el.classList.toggle('vela-sl-stacked', layout.stacked);
         this.host.classList.toggle('vela-sl-stacked-host', layout.stacked);
+        this.seatChange(layout.changeSlot);
         this.renderValues();
+    }
+
+    /** Move the delta between the two rows a rung can seat it on. In the values row it
+     *  follows the O/H/L/C cells (the desktop legend reading); on the symbol line it
+     *  trails the market badge, freeing the whole second row for the values. Re-appending
+     *  an element that already sits there is a no-op on the layout. */
+    private seatChange(slot: StatuslineChangeSlot): void {
+        const row = slot === 'identity' ? this.identityRow : this.valuesRow;
+        if (this.changeEl.parentElement === row) return;
+        row.appendChild(this.changeEl);
+        this.refreshRows();
     }
 
     /**
@@ -540,7 +561,13 @@ export class Statusline {
         this.fitKey = this.widthKey();
         this.syncParts(); // start from the full (parts-allowed) row, then descend
         const seg = segmentVisibility(this.parts, this.chartHidden);
-        const overflows = (): boolean => this.el.scrollWidth > this.el.clientWidth;
+        // Overflow, measured two ways. The chip itself: any row wider than the plot pushes
+        // its scrollWidth past its clientWidth. And the symbol line's meta: while the delta
+        // rides there (see STATUSLINE_LADDER's 'identity' rungs) the row may not overflow
+        // the chip — it CLAMPS to the plot and ellipsizes the venue/timeframe instead, which
+        // is still lost information, so it descends a rung the same way.
+        const metaClipped = (): boolean => this.layout.changeSlot === 'identity' && this.metaEl.scrollWidth > this.metaEl.clientWidth + 1;
+        const overflows = (): boolean => this.el.scrollWidth > this.el.clientWidth + 1 || metaClipped();
         // Only a value readout can stack or shed — with none showing the chip stays one line.
         const hasValues = seg.ohlc || seg.change;
         for (const rung of STATUSLINE_LADDER) {
@@ -891,7 +918,11 @@ export class Statusline {
         // percent delta alone.
         const { level } = this.layout;
         this.ohlcEl.replaceChildren(...readoutCells(level, this.readout).map((c) => cell(c.label, bar[c.key])));
-        this.changeEl.textContent = level === 'minimal' ? fmtChangePct(bar.open, bar.close) : fmtChange(bar.open, bar.close);
+        // The delta's FORMAT is its own rung axis: the absolute change is the wide half
+        // and the first thing a narrow chip gives up, while the percent stays readable in
+        // the space of a phone. 'minimal' has always read the percent alone, so this keeps
+        // the old rungs' text exactly (both ⇒ absolute+percent, pct ⇒ percent).
+        this.changeEl.textContent = this.layout.change === 'pct' ? fmtChangePct(bar.open, bar.close) : fmtChange(bar.open, bar.close);
         this.changeEl.dataset.dir = up ? 'up' : 'down';
         this.changeEl.style.color = ink;
     }

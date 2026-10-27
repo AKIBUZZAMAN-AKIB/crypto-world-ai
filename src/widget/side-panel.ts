@@ -23,6 +23,11 @@ export const DEFAULT_PANEL_WIDTH = 280;
 /** Bounds a RESIZABLE panel takes when it declares none. */
 export const DEFAULT_PANEL_MIN_WIDTH = 200;
 export const DEFAULT_PANEL_MAX_WIDTH = 640;
+/** Mobile sheet: 0 = fullscreen, 0.7 = a short bottom strip. 22% leaves the chart visible. */
+export const DEFAULT_PANEL_TOP = 0.22;
+export const MIN_PANEL_TOP = 0;
+export const MAX_PANEL_TOP = 0.7;
+export const PANEL_TOP_STEP = 0.12;
 
 const CSS = `
 .vela-panel[hidden] { display: none !important; }
@@ -97,6 +102,50 @@ const CSS = `
 }
 .vela-panel-max .vela-icon { width: 15px; height: 15px; }
 .vela-panel-max:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
+/* Mobile bottom-sheet movement: two discrete arrows + one draggable/keyboard grip. Hidden
+   on desktop, where panels are full-height docked columns and resize by their inner edge. */
+.vela-panel-move,
+.vela-panel-grip { display: none; }
+.vela-panel-move {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    width: 26px;
+    height: 26px;
+    flex: none;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    color: var(--vela-fg-muted);
+}
+.vela-panel-move .vela-icon { width: 14px; height: 14px; }
+.vela-panel-move:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-panel-move:disabled { opacity: 0.35; cursor: default; }
+.vela-panel-grip {
+    all: unset;
+    box-sizing: border-box;
+    cursor: ns-resize;
+    width: 34px;
+    height: 26px;
+    flex: none;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    color: var(--vela-fg-muted);
+    touch-action: none;
+}
+.vela-panel-grip::before {
+    content: '';
+    width: 18px;
+    height: 3px;
+    border-radius: 2px;
+    background: currentColor;
+    opacity: 0.55;
+}
+.vela-panel-grip:hover, .vela-panel-grip:focus-visible { background: var(--vela-hover); color: var(--vela-fg-bright); outline: none; }
+.vela-panel-grip[data-dragging]::before { opacity: 1; background: var(--vela-accent); }
 /* MAXIMIZED: the panel covers the whole dock host — every chart of the shell — whatever
    its placement; the width handle and the pin have nothing to do meanwhile. */
 .vela-panel[data-maximized] {
@@ -150,18 +199,31 @@ const CSS = `
     z-index: 25;
     box-shadow: var(--vela-shadow);
 }
-/* Mobile: a 280px column would crush a phone-width chart — the panel overlays the
-   chart area instead (its flex parent is position:relative), full-bleed, closed by
-   the same header ✕. Width dragging is a pointer affordance; off on mobile. */
+/* Mobile: a BOTTOM SHEET, not a fullscreen takeover. Its top edge is draggable; the
+   chart stays visible above it. Arrows, grip and maximize all live in the header. */
 [data-layout='mobile'] .vela-panel {
     position: absolute;
-    inset: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: var(--vela-panel-top, 22%);
     width: auto;
+    max-width: none;
     z-index: 25;
     border-left: none;
+    border-top: 1px solid var(--vela-border-strong);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.28);
+}
+[data-layout='mobile'] .vela-panel[data-maximized] {
+    top: 0;
+    border-radius: 0;
+    border-top: none;
 }
 [data-layout='mobile'] .vela-panel-resizer { display: none; }
-[data-layout='mobile'] .vela-panel-max { display: none; }
+[data-layout='mobile'] .vela-panel-max,
+[data-layout='mobile'] .vela-panel-move,
+[data-layout='mobile'] .vela-panel-grip { display: inline-flex; }
 `;
 
 /** Per-panel width policy. Omitted fields fall back to the module defaults. */
@@ -195,6 +257,12 @@ export function clampPanelWidth(px: number, min = DEFAULT_PANEL_MIN_WIDTH, max =
     return Math.round(Math.min(Math.max(px, lo), hi));
 }
 
+/** Clamp a mobile sheet's top offset to a fraction of the host height. PURE. */
+export function clampPanelTop(fraction: number): number {
+    if (!Number.isFinite(fraction)) return DEFAULT_PANEL_TOP;
+    return Math.round(Math.min(Math.max(fraction, MIN_PANEL_TOP), MAX_PANEL_TOP) * 1000) / 1000;
+}
+
 export class SidePanel {
     readonly el: HTMLElement;
     /**
@@ -209,6 +277,8 @@ export class SidePanel {
     /** Notified when the USER pins or unpins a floating panel (`overlay` is the NEW placement) —
      *  never on a programmatic {@link setOverlay}, for the same reason as widths. */
     onPlacementChange: ((overlay: boolean) => void) | null = null;
+    /** Notified when the USER settles a mobile sheet's top offset (fraction of host height). */
+    onTopChange: ((top: number) => void) | null = null;
     protected readonly body: HTMLElement;
     /** Where the panel mounts, remembered so mounting can wait for the first open. */
     private readonly hostEl: HTMLElement;
@@ -226,7 +296,12 @@ export class SidePanel {
     private overlayOn: boolean;
     private readonly pin: HTMLButtonElement | null = null;
     private readonly maxButton: HTMLButtonElement | null = null;
+    private readonly sheetGrip: HTMLElement | null = null;
+    private readonly sheetUp: HTMLButtonElement | null = null;
+    private readonly sheetDown: HTMLButtonElement | null = null;
     private maximizedOn = false;
+    /** Mobile sheet top, as a fraction of the dock host's height. */
+    private topPct = DEFAULT_PANEL_TOP;
     /** Set while the close is announced, so a listener's own close does not re-enter. */
     private closing = false;
     /** Open as far as the dock and the host are concerned — a closed panel can still be on
@@ -284,7 +359,34 @@ export class SidePanel {
             this.maxButton.addEventListener('click', () => this.setMaximized(!this.maximizedOn));
             this.refreshMaxButton();
         }
-        header.append(this.heading, this.slot, ...(this.pin ? [this.pin] : []), ...(this.maxButton ? [this.maxButton] : []), close);
+        // Mobile sheet controls are always present but desktop CSS keeps them out of the way.
+        this.sheetGrip = doc.createElement('div');
+        this.sheetGrip.className = 'vela-panel-grip';
+        this.sheetGrip.tabIndex = 0;
+        this.sheetGrip.setAttribute('role', 'separator');
+        this.sheetGrip.setAttribute('aria-orientation', 'horizontal');
+        this.sheetGrip.setAttribute('aria-label', 'Drag panel up or down');
+        this.sheetGrip.title = 'Drag up or down · double-click to reset';
+        this.sheetUp = doc.createElement('button');
+        this.sheetUp.className = 'vela-panel-move';
+        this.sheetUp.dataset.dir = 'up';
+        this.sheetUp.appendChild(iconEl('chevron-up', doc));
+        this.sheetDown = doc.createElement('button');
+        this.sheetDown.className = 'vela-panel-move';
+        this.sheetDown.dataset.dir = 'down';
+        this.sheetDown.appendChild(iconEl('chevron-down', doc));
+        this.mountSheetControls();
+        this.setTop(DEFAULT_PANEL_TOP);
+        header.append(
+            this.heading,
+            this.sheetGrip,
+            this.slot,
+            this.sheetUp,
+            this.sheetDown,
+            ...(this.pin ? [this.pin] : []),
+            ...(this.maxButton ? [this.maxButton] : []),
+            close,
+        );
         this.body = doc.createElement('div');
         this.body.className = 'vela-panel-body';
         this.el.append(header, this.body);
@@ -367,6 +469,87 @@ export class SidePanel {
         this.maxButton.title = this.maximizedOn ? 'Restore' : 'Maximize';
         this.maxButton.setAttribute('aria-label', this.maxButton.title);
         this.maxButton.setAttribute('aria-pressed', this.maximizedOn ? 'true' : 'false');
+    }
+
+    /** The mobile sheet's top offset — a fraction of the host height. */
+    get top(): number {
+        return this.topPct;
+    }
+
+    /** Set the sheet's top silently (restore), or report a user-settled movement. */
+    setTop(fraction: number, notify = false): void {
+        this.topPct = clampPanelTop(fraction);
+        this.el.style.setProperty('--vela-panel-top', `${(this.topPct * 100).toFixed(1)}%`);
+        this.el.dataset.sheetTop = String(this.topPct);
+        this.refreshMoveButtons();
+        if (notify) this.onTopChange?.(this.topPct);
+    }
+
+    private refreshMoveButtons(): void {
+        if (this.sheetUp) {
+            this.sheetUp.disabled = this.topPct <= MIN_PANEL_TOP;
+            this.sheetUp.title = 'Move panel up';
+            this.sheetUp.setAttribute('aria-label', 'Move panel up');
+        }
+        if (this.sheetDown) {
+            this.sheetDown.disabled = this.topPct >= MAX_PANEL_TOP;
+            this.sheetDown.title = 'Move panel down';
+            this.sheetDown.setAttribute('aria-label', 'Move panel down');
+        }
+    }
+
+    /** Host height for a pointer drag; a minimal test DOM falls back to its viewport. */
+    private sheetHostHeight(): number {
+        const rect = typeof this.hostEl.getBoundingClientRect === 'function' ? this.hostEl.getBoundingClientRect() : null;
+        const h = rect?.height || this.el.ownerDocument.defaultView?.innerHeight || 640;
+        return Math.max(240, h);
+    }
+
+    /** Arrows, keyboard and pointer-drag all drive ONE clamped top offset. */
+    private mountSheetControls(): void {
+        const grip = this.sheetGrip;
+        const up = this.sheetUp;
+        const down = this.sheetDown;
+        if (!grip || !up || !down) return;
+        up.addEventListener('click', () => this.setTop(this.topPct - PANEL_TOP_STEP, true));
+        down.addEventListener('click', () => this.setTop(this.topPct + PANEL_TOP_STEP, true));
+        grip.addEventListener('dblclick', () => this.setTop(DEFAULT_PANEL_TOP, true));
+        grip.addEventListener('keydown', (e: KeyboardEvent) => {
+            let next: number | null = null;
+            if (e.key === 'ArrowUp') next = this.topPct - PANEL_TOP_STEP;
+            else if (e.key === 'ArrowDown') next = this.topPct + PANEL_TOP_STEP;
+            else if (e.key === 'Home') next = MIN_PANEL_TOP;
+            else if (e.key === 'End') next = MAX_PANEL_TOP;
+            if (next === null) return;
+            e.preventDefault();
+            this.setTop(next, true);
+        });
+        let startY = 0;
+        let startTop = this.topPct;
+        let dragging = false;
+        const end = (e: PointerEvent): void => {
+            if (!dragging) return;
+            dragging = false;
+            delete grip.dataset.dragging;
+            try { grip.releasePointerCapture(e.pointerId); } catch { /* jsdom / pointer cancelled */ }
+            if (this.topPct !== startTop) this.onTopChange?.(this.topPct);
+        };
+        grip.addEventListener('pointerdown', (e: PointerEvent) => {
+            if (e.button !== 0) return;
+            dragging = true;
+            startY = e.clientY;
+            startTop = this.topPct;
+            grip.dataset.dragging = '1';
+            try { grip.setPointerCapture(e.pointerId); } catch { /* jsdom / pointer cancelled */ }
+            e.preventDefault();
+        });
+        grip.addEventListener('pointermove', (e: PointerEvent) => {
+            if (!dragging) return;
+            this.setTop(startTop + (e.clientY - startY) / this.sheetHostHeight());
+            e.preventDefault();
+        });
+        grip.addEventListener('pointerup', end);
+        grip.addEventListener('pointercancel', end);
     }
 
     /** The scrolling body, for a panel filled from OUTSIDE the class — a contributed panel's

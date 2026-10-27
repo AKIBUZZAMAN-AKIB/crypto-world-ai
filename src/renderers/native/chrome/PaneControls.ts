@@ -37,6 +37,21 @@ const STYLE_ID = 'vela-pane-controls';
 /** The cluster's glyph size. Icons inherit it from the slot, so it is set once in CSS. */
 const ICON_PX = 12;
 
+/** Room the cluster needs before it may stand on a pane, measured — never a mode switch
+ *  (R59's rule, R84's second visit): the data area must be at least this wide or the pill
+ *  would sit on the candles it controls, and the pane at least this tall. */
+const MIN_DATA_W = 150;
+/** On a touch screen there is no hover to reveal anything, so the cluster stays up for
+ *  as long as the pane can host it — and only then. Short study panes keep the object
+ *  tree (every pane verb lives there) and lose the chips, exactly as asked. */
+const TOUCH_MIN_PANE_H = 64;
+/** Touch: the chips sit BELOW the legend line the pane opens with, so a phone never
+ *  loses a symbol/indicator title to a button that floated over it. */
+const TOUCH_TOP = 32;
+/** …and on the pane at the plot's TOP, below the status line's chip (two rows tall on a
+ *  phone) rather than below a single legend line. */
+const TOUCH_TOP_TOP = 46;
+
 /** The cluster's scrim pill. It floats over CHART CONTENT (candles of any color), not over a
  *  panel, so it stays a neutral darkening rather than a themed surface. */
 const CLUSTER_PILL = 'rgba(0,0,0,0.65)';
@@ -67,9 +82,9 @@ export class PaneControls {
     private readonly root: HTMLDivElement;
     private readonly clusters = new Map<string, HTMLDivElement>();
     private hoverPaneId: string | null = null;
-    /** Mobile: hover clusters are meaningless without a cursor — suppressed; a
-     *  collapsed pane's standalone expand chip stays (the only way back up). */
-    private suspended = false;
+    /** Touch screen (the phone shell): there is no hover, so a pane's cluster is shown
+     *  outright — for as long as the pane measures enough room for it. */
+    private touchMode = false;
 
     constructor(private readonly plot: HTMLElement, private theme: VelaTheme, private readonly deps: PaneControlsDeps) {
         ensureStyles();
@@ -86,7 +101,7 @@ export class PaneControls {
 
     /** Reveal the cluster for the pane under the cursor, resolved from the pointer's y in the plot. */
     private readonly onPlotMove = (e: PointerEvent): void => {
-        if (this.suspended) return;
+        if (this.touchMode) return; // no cursor to follow; the touch rule already stands
         const rect = this.plot.getBoundingClientRect();
         const y = e.clientY - rect.top;
         let hit: string | null = null;
@@ -194,6 +209,10 @@ export class PaneControls {
     reposition(): void {
         const rightPx = this.deps.rightAxis() + 6;
         const byId = new Map(this.deps.panes().map((p) => [p.id, p]));
+        const dataW = Math.max(0, (this.plot.clientWidth || this.plot.getBoundingClientRect().width) - this.deps.rightAxis());
+        // Measured room, the same rule everywhere: enough data width that the pill does not
+        // stand on the plot it controls, and enough pane height to host a row of 24px chips.
+        const hasRoom = dataW >= MIN_DATA_W;
         for (const [id, cluster] of this.clusters) {
             const p = byId.get(id);
             if (!p) { cluster.style.display = 'none'; continue; }
@@ -201,22 +220,29 @@ export class PaneControls {
             // An empty cluster (e.g. a lone price pane with no maximize) never shows.
             const hasButtons = cluster.children.length > 0;
             // STATE chips stay visible without hover: a collapsed pane's expand chip (always —
-            // it is the only way back up, mobile included) and a MAXIMIZED pane's restore chip
-            // (desktop only — mobile's own chrome reflects that state), so the isolation state
-            // reads at a glance instead of only under the cursor.
-            const stateChipRole = p.collapsed ? 'collapse' : !this.suspended && p.maximized ? 'maximize' : null;
-            const visible = hasButtons && (hovered || stateChipRole != null) && p.height > 8;
+            // it is the only way back up, on every device) and a MAXIMIZED pane's restore chip,
+            // so the isolation state reads at a glance instead of only under the cursor.
+            const stateChipRole = p.collapsed ? 'collapse' : p.maximized ? 'maximize' : null;
+            // Touch reveals nothing by hover, so a pane that MEASURES enough room shows its
+            // cluster outright. A cramped one keeps none of it — its verbs are all in the
+            // object tree (move up/down, collapse, maximize), which is the promised fallback.
+            // The pane at the plot's top carries the status line's chip (two rows on a
+            // phone); its own chips drop below that chip instead of fighting it for the
+            // same pixels. Every other pane only owes room to its legend line.
+            const topPad = this.touchMode ? (p.top <= 2 ? TOUCH_TOP_TOP : TOUCH_TOP) : 4;
+            const room = hasRoom && p.height >= (this.touchMode ? topPad + 34 : 8);
+            const visible = hasButtons && room && (hovered || stateChipRole != null || this.touchMode);
             cluster.style.right = `${rightPx}px`;
             // Center the cluster inside the collapsed strip (28 = 24px button + 2px cluster padding each side).
             cluster.style.top = p.collapsed
                 ? `${p.top + Math.max(1, Math.round((p.height - 28) / 2))}px`
-                : `${p.top + 4}px`;
+                : `${p.top + topPad}px`;
             cluster.style.display = visible ? 'flex' : 'none';
             if (!visible) continue;
             // Without hover only the state chip shows, standalone: drop the dark pill so the white
             // chip reads on its own. Its siblings stay laid out (visibility:hidden, not display:none)
             // so the chip keeps the exact slot it occupies once the full cluster reveals on hover.
-            const soloChip = stateChipRole != null && !hovered;
+            const soloChip = stateChipRole != null && !hovered && !this.touchMode;
             cluster.style.background = soloChip ? 'transparent' : CLUSTER_PILL;
             for (const child of cluster.children) {
                 const btn = child as HTMLElement;
@@ -233,11 +259,15 @@ export class PaneControls {
         this.reposition();
     }
 
-    /** Mobile suppression: no hover clusters (touch has no cursor; the shell's own
-     *  chrome covers maximize), while collapsed panes keep their expand chips. */
-    setSuspended(on: boolean): void {
-        if (on === this.suspended) return;
-        this.suspended = on;
+    /**
+     * Touch screens (the phone shell): with no cursor to reveal a cluster, every pane that
+     * measures room for one keeps its chips up permanently — the same buttons desktop gets
+     * on hover, never a stripped-down phone subset. A pane too small to host them shows
+     * nothing and is driven from the object tree instead (see {@link reposition}).
+     */
+    setTouchMode(on: boolean): void {
+        if (on === this.touchMode) return;
+        this.touchMode = on;
         if (on) this.hoverPaneId = null;
         this.reposition();
     }

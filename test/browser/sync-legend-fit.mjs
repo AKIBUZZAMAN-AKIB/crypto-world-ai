@@ -25,7 +25,10 @@ const readonly = (page) =>
         return {
             rows: rows.length,
             rowsShown: rows.filter((r) => getComputedStyle(r).display !== 'none').length,
-            chip: fold ? { text: (fold.textContent ?? '').trim(), disp: disp(fold), label: fold.getAttribute('aria-label') } : null,
+            chip: fold ? { text: (fold.textContent ?? '').trim(), disp: disp(fold), label: fold.getAttribute('aria-label'), minHeight: getComputedStyle(fold).minHeight, border: getComputedStyle(fold).border } : null,
+            visibleRows: lg?.dataset.visibleRows ?? null,
+            scrolls: lg?.dataset.scrolls ?? null,
+            overflowY: lg?.style.overflowY ?? '',
             reset: reset ? { disp: disp(reset), w: box(resetBtn), alone: reset.children.length } : null,
             studies: window.__ws.active.chart.indicators().length,
             scroll: scroll ? { disp: disp(scroll), w: box(scroll) } : null,
@@ -97,7 +100,8 @@ try {
         const m = await readonly(page);
         facts.phoneGrid = m;
         assert(m.rows >= 1, 'phone grid: the row exists', m);
-        assert(m.rowsShown === 0 && m.chip != null && /^\d+$/.test(m.chip.text), 'phone grid: a ~190px cell folds its legend behind the count chip', m);
+        assert(m.rowsShown >= 1 && m.scrolls === '1', 'phone grid: the measured rows stay visible and the overflow scrolls', m);
+        assert(m.chip != null && m.chip.minHeight === '22px', 'phone grid: the down control stays minimal', m.chip);
         await context.close();
     }
 
@@ -122,14 +126,14 @@ try {
         const m = await readonly(page);
         facts.cramped = m;
         assert(m.paneH > 0 && m.paneH < 80, 'cramped: the cell really is short (measured, not assumed)', m.paneH);
-        assert(m.rows >= 1 && m.rowsShown === 0, 'cramped: the row folds away — space, not the device, decided it', m);
-        assert(m.chip != null && /^\d+$/.test(m.chip.text), 'cramped: the chip counts what it folded', m.chip);
-        // The user is never trapped: the chip's press unfolds in place, cramped or not.
+        assert(m.rows >= 1 && m.rowsShown >= 1 && m.scrolls === '1', 'cramped: measured rows stay visible and the overflow scrolls', m);
+        assert(m.chip != null && m.chip.minHeight === '22px', 'cramped: the down control stays minimal', m.chip);
+        // The user can still fold the whole legend away with the minimal control.
         await page.evaluate(() => document.querySelector('.vela-ind-fold').click());
         await page.waitForTimeout(400);
-        const opened = await readonly(page);
-        facts.crampedOpened = opened;
-        assert(opened.rowsShown === opened.rows, 'cramped: pressing the chip shows the rows anyway (manual override)', opened);
+        const folded = await readonly(page);
+        facts.crampedFolded = folded;
+        assert(folded.rowsShown === 0, 'cramped: pressing the minimal control folds the list on demand', folded);
         await context.close();
     }
 

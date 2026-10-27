@@ -91,6 +91,10 @@ function stub(initial: Array<{ name: string; charts?: number; indicators?: numbe
         },
         onExportLayout: (name) => JSON.stringify({ name }),
         onExportData: () => ({ rows: 1234, filename: 'BTCUSDT_60.csv' }),
+        onImportLayout: (json) => {
+            calls.push(`import:${json}`);
+            return 'Imported';
+        },
         onCopyLink: async () => 'https://vela.test/#s1=whole',
     };
     return {
@@ -146,7 +150,7 @@ describe('the layout menu', () => {
         expect(menu.isOpen).toBe(true);
         expect(trigger).toBeTruthy();
         expect(panel()).not.toBeNull();
-        expect(rowLabels()).toEqual(['Save as…', 'Make a copy…', 'Rename…', 'Share link', 'Export chart data (CSV)']);
+        expect(rowLabels()).toEqual(['Save as…', 'Make a copy…', 'Rename…', 'Share link', 'Export chart data (CSV)', 'Import layout file…']);
         // The name is the heading, and the meta line answers "how big is this?".
         expect(panel()?.querySelector('.vela-lm-title')?.textContent).toBe('Morning setup');
         expect(panel()?.querySelector('.vela-lm-meta')?.textContent).toContain('4 charts');

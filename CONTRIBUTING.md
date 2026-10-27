@@ -61,7 +61,7 @@ the contribution process, the templates, the documentation experience, or the co
 
 ### One PR, one feature
 
-A pull request should contain exactly one logical change: one bug fix, one feature, 
+A pull request should contain exactly one logical change: one bug fix, one feature,
 one refactor, or one documentation update.
 
 Focused PRs are reviewed faster, bisect cleanly when something regresses, produce an
@@ -76,7 +76,7 @@ A simple test: **if the PR title needs the word "and", split it.**
 - **One bug fix.** "Fix crosshair price label clipping at the right edge of the pane."
 - **One feature.** "Add a Fibonacci wedge drawing tool." / "Add `listSymbols` filtering
   to the Coinbase provider."
-- **One refactor, on its own.** "Extract shared axis-label formatting into a helper", 
+- **One refactor, on its own.** "Extract shared axis-label formatting into a helper",
   with no behavior change, so the diff can be checked mechanically.
 - **One documentation update.** "Document the `persist` option in the workspace guide."
 

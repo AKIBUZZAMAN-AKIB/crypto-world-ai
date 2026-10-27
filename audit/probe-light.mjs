@@ -19,7 +19,7 @@ const applied = await p.evaluate(async () => {
   return { bg, theme: ws.theme ?? null };
 });
 await p.waitForTimeout(800);
-await p.screenshot({ path: 'shots/99-light-theme.png' });
+await p.screenshot({ path: '/tmp/vela-probes/99-light-theme.png' });
 await p.evaluate(axe);
 const viol = await p.evaluate(async () => {
   const r = await window.axe.run(document.body, { resultTypes: ['violations'], runOnly: { type: 'tag', values: ['wcag2a','wcag2aa','wcag21aa'] } });

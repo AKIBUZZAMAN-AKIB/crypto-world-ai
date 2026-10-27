@@ -1,6 +1,7 @@
 // Unified undo/redo timeline — app-level ops (indicator add/remove) and core drawing
 // edits share ONE stack, so Ctrl+Z / Ctrl+Y step through both in the order they happened
-// (the reference behavior). Drawing entries delegate to the core's own drawing history.
+// (the reference behavior). The workspace adds a second, global snapshot stack for
+// edits that have no per-object inverse; a composite picks the newest entry.
 import type { Vela } from '../Vela';
 
 export interface HistoryAction {
@@ -8,9 +9,19 @@ export interface HistoryAction {
     redo(): void;
 }
 
+interface HistoryEntry {
+    action: HistoryAction;
+    /** Global arrival order — lets several WidgetHistory stacks be merged chronologically. */
+    seq: number;
+}
+
+/** Monotonic counters shared by every stack in the page (never reset). */
+let actionClock = 0;
+let mutationClock = 0;
+
 export class WidgetHistory {
-    private readonly undoStack: HistoryAction[] = [];
-    private readonly redoStack: HistoryAction[] = [];
+    private readonly undoStack: HistoryEntry[] = [];
+    private readonly redoStack: HistoryEntry[] = [];
     private readonly listeners = new Set<() => void>();
     private unsubs: Array<() => void> = [];
     private muted = false;
@@ -18,29 +29,39 @@ export class WidgetHistory {
     /** `getChart` late-resolves the CURRENT chart: drawing steps recorded before a chart
      *  rebuild must undo on the chart that exists when the user presses Ctrl+Z, not on a
      *  destroyed instance captured at record time. */
-    constructor(private readonly getChart: () => Vela | null = () => null) {}
+    constructor(private readonly getChart: () => Vela | null = () => null, private readonly cap = 100) {}
+
+    /** Any push/undo/redo bumps this clock. A snapshot recorder uses it to avoid
+     *  duplicating an action another history stack already owns. */
+    static clockNow(): number {
+        return mutationClock;
+    }
 
     /** Record a reversible action (a fresh edit forks history: redo branch clears). */
     push(action: HistoryAction): void {
         if (this.muted) return;
-        this.undoStack.push(action);
+        mutationClock += 1;
+        this.undoStack.push({ action, seq: ++actionClock });
+        if (this.undoStack.length > this.cap) this.undoStack.shift();
         this.redoStack.length = 0;
         this.notify();
     }
 
     undo(): void {
-        const a = this.undoStack.pop();
-        if (!a) return;
-        this.mutedRun(() => a.undo());
-        this.redoStack.push(a);
+        const e = this.undoStack.pop();
+        if (!e) return;
+        mutationClock += 1;
+        this.mutedRun(() => e.action.undo());
+        this.redoStack.push(e);
         this.notify();
     }
 
     redo(): void {
-        const a = this.redoStack.pop();
-        if (!a) return;
-        this.mutedRun(() => a.redo());
-        this.undoStack.push(a);
+        const e = this.redoStack.pop();
+        if (!e) return;
+        mutationClock += 1;
+        this.mutedRun(() => e.action.redo());
+        this.undoStack.push(e);
         this.notify();
     }
 
@@ -58,6 +79,15 @@ export class WidgetHistory {
         return this.redoStack.length > 0;
     }
 
+    /** Arrival seq of the next undo / redo candidate (0 when that stack is empty). */
+    get nextUndoSeq(): number {
+        return this.undoStack[this.undoStack.length - 1]?.seq ?? 0;
+    }
+
+    get nextRedoSeq(): number {
+        return this.redoStack[this.redoStack.length - 1]?.seq ?? 0;
+    }
+
     onChange(cb: () => void): () => void {
         this.listeners.add(cb);
         return () => this.listeners.delete(cb);
@@ -66,11 +96,7 @@ export class WidgetHistory {
     /** (Re)bind to a chart: drawing edits enter the unified stack as delegate steps. */
     onChart(chart: Vela): void {
         for (const u of this.unsubs) u();
-        this.unsubs = [
-            chart.on('drawing:created', () => this.pushDrawingStep()),
-            chart.on('drawing:edited', () => this.pushDrawingStep()),
-            chart.on('drawing:removed', () => this.pushDrawingStep()),
-        ];
+        this.unsubs = [chart.on('drawing:history', () => this.pushDrawingStep())];
     }
 
     destroy(): void {

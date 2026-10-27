@@ -1112,8 +1112,8 @@ ${overlayScrollbarCss('.vela-dialog.vela-ind-dialog *', 9)}
 .vela-ind-ctl svg,.vela-ind-close svg{width:${LEGEND_ICON_PX}px;height:${LEGEND_ICON_PX}px;display:block;flex:none;stroke-width:1;}
 .vela-ind-ctl:hover{background-color:var(--vela-hover-strong);}
 .vela-ind-close:hover{color:var(--vela-danger) !important;background-color:var(--vela-hover-strong);}
-.vela-ind-fold{transition:border-color var(--vela-dur-fast) ease,opacity var(--vela-dur-fast) ease;}
-.vela-ind-fold:hover{border-color:var(--vela-border-strong);opacity:0.9;}
+.vela-ind-fold{transition:opacity var(--vela-dur-fast) ease,background var(--vela-dur-fast) ease;}
+.vela-ind-fold:hover{background:var(--vela-hover);opacity:1;}
 /* Defaults menu (TradingView's footer control): the panel owns its surface — the kit
    popover is a transparent positioner. */
 .vela-ind-defaults{display:inline-flex;align-items:center;gap:5px;}
@@ -1132,12 +1132,12 @@ ${overlayScrollbarCss('.vela-dialog.vela-ind-dialog *', 9)}
 .vela-ind-defflash[data-tone='ok']{color:var(--vela-up);}
 /* Touch: the chip is the only legend affordance a phone shows, so it carries a full
    44px target instead of the desktop 24px one. */
-@media (pointer: coarse){.vela-ind-fold{min-height:44px !important;min-width:44px !important;padding:0 8px !important;background-clip:padding-box;}}
+@media (pointer: coarse){.vela-ind-fold{min-height:24px !important;min-width:24px !important;padding:0 3px !important;background-clip:padding-box;}}
 /* A phone's grid wears one of these per cell: four 44px chips is 24% of a 195px cell before
    a single indicator row has been drawn. In the MOBILE layout the chip drops to 34x30 — still
    a comfortable thumb target for a secondary toggle, and the coarse-pointer 44px rule stays
    in force on a lone chart / touch tablet where there is room for it. */
-[data-layout='mobile'] .vela-ind-fold{min-height:30px !important;min-width:34px !important;padding:1px 6px !important;position:relative;}
+[data-layout='mobile'] .vela-ind-fold{min-height:22px !important;min-width:22px !important;padding:0 2px !important;position:relative;}
 /* …but the DRAWN size is not the TAPPABLE size: a 44x44 pseudo-element centred on the chip
    gives the thumb the target it needs without spending a single pixel of the cell. */
 [data-layout='mobile'] .vela-ind-fold::after{content:'';position:absolute;left:50%;top:50%;width:46px;height:46px;transform:translate(-50%,-50%);}`;

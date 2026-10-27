@@ -5,6 +5,7 @@ import type { VisibleRangePreset } from './core/visible-range';
 import type { VelaOptions, VelaTheme, ThemeName, MarketSwitch, MarketSnapshot, AddIndicatorOptions } from './core/options';
 import { resolveAnimations } from './core/options';
 import type { InputValue } from './core/model/inputs';
+import type { OHLCV } from './core/model/ohlcv';
 import type { IndicatorHandle } from './core/IndicatorHandle';
 import type { EngineContextSnapshot } from './core/ports/ScriptingEngine';
 import type { NativeIndicatorInfo } from './core/native-indicators';
@@ -389,6 +390,11 @@ export class Vela {
      */
     get data(): DataControl {
         return this.dataControl;
+    }
+
+    /** The latest loaded bar — a drawing-set template anchors its geometry here. */
+    get lastBar(): OHLCV | null {
+        return this.orchestrator.lastBar;
     }
 
     /**

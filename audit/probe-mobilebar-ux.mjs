@@ -2,7 +2,7 @@
 import { chromium } from 'playwright';
 
 const BASE = process.env.PROBE_BASE ?? 'http://127.0.0.1:5190/offline.html';
-const OUT = process.env.PROBE_OUT ?? '/home/user/shots';
+const OUT = process.env.PROBE_OUT ?? '/tmp/vela-probes';
 const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const page = await ctx.newPage();

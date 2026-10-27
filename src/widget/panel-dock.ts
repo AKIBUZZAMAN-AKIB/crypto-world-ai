@@ -9,7 +9,7 @@
 import type { Vela } from '../Vela';
 import type { PanelsState } from '../state/document';
 import { DEFAULT_PANEL_ORDER, sidePanels, type SidePanelButton, type SidePanelDescriptor, type SidePanelHandle, type SidePanelHeader, type WidgetContext } from './contributions';
-import { SidePanel } from './side-panel';
+import { SidePanel, DEFAULT_PANEL_TOP } from './side-panel';
 
 /** What the dock needs from whatever chrome shows its toggles. */
 export interface PanelChrome {
@@ -56,6 +56,8 @@ export class PanelDock {
     private readonly entries: Entry[] = [];
     /** Widths the USER settled, by panel id — the only ones worth persisting. */
     private readonly widths = new Map<string, number>();
+    /** Mobile sheet tops the USER settled, by panel id — fractions of the host height. */
+    private readonly tops = new Map<string, number>();
     /** Floating panels the USER pinned as columns, by id — remembered for late registrations too. */
     private pinned = new Set<string>();
     /** A restored `open` naming a panel that has not registered yet: honored when it docks. */
@@ -92,7 +94,10 @@ export class PanelDock {
                 minWidth: desc.minWidth,
                 maxWidth: desc.maxWidth,
                 overlay: desc.overlay,
-                maximizable: desc.maximizable,
+                // R86 T10: every docked panel gets the same maximize affordance unless a
+                // contribution explicitly opts out. Mobile sheet movement is in SidePanel
+                // itself, so contributed panels are never stuck fullscreen either.
+                maximizable: desc.maximizable ?? true,
             });
             const entry: Entry = {
                 id: desc.id,
@@ -156,8 +161,9 @@ export class PanelDock {
         const open = this.openId;
         if (open) out.open = open;
         if (this.widths.size > 0) out.widths = Object.fromEntries(this.widths);
+        if (this.tops.size > 0) out.tops = Object.fromEntries(this.tops);
         if (this.pinned.size > 0) out.pinned = [...this.pinned];
-        return out.open || out.widths || out.pinned ? out : null;
+        return out.open || out.widths || out.tops || out.pinned ? out : null;
     }
 
     /**
@@ -177,6 +183,15 @@ export class PanelDock {
                 this.entries.find((e) => e.id === id)?.panel.setWidth(px);
             }
         }
+        // Tops converge to the document: absent = every sheet starts at its default
+        // height again. This is what makes undo restore a panel-movement change.
+        this.tops.clear();
+        if (state.tops) {
+            for (const [id, top] of Object.entries(state.tops)) {
+                this.tops.set(id, top);
+            }
+        }
+        for (const entry of this.entries) entry.panel.setTop(state.tops?.[entry.id] ?? DEFAULT_PANEL_TOP);
         this.pinned = new Set(state.pinned ?? []);
         for (const entry of this.entries) entry.panel.setOverlay(!this.pinned.has(entry.id));
         for (const entry of this.entries) entry.panel.toggle(entry.id === state.open, true);
@@ -194,6 +209,8 @@ export class PanelDock {
         this.entries.sort((a, b) => a.order - b.order);
         const stored = this.widths.get(entry.id);
         if (stored !== undefined) entry.panel.setWidth(stored);
+        const storedTop = this.tops.get(entry.id);
+        if (storedTop !== undefined) entry.panel.setTop(storedTop);
         if (this.pinned.has(entry.id)) entry.panel.setOverlay(false);
         entry.panel.onOpenChange = (open) => {
             if (open) {
@@ -206,6 +223,10 @@ export class PanelDock {
         };
         entry.panel.onWidthChange = (px) => {
             this.widths.set(entry.id, px);
+            this.deps.changed?.();
+        };
+        entry.panel.onTopChange = (top) => {
+            this.tops.set(entry.id, top);
             this.deps.changed?.();
         };
         entry.panel.onPlacementChange = (overlay) => {

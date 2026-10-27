@@ -276,7 +276,9 @@ describe('the More sheet', () => {
                 onDeleteDrawingTemplate: (tool: string, name: string) => removed.push(`${tool}:${name}`),
             }),
         );
-        md.open('main');
+        // The library no longer lives on the first screen: it has its own TAB
+        // (TradingView's Manage layouts), which is where the Drawings stop lives.
+        md.open('layout', { focus: 'manage' });
         const tabs = [...host.querySelectorAll<HTMLButtonElement>('.vela-md-segbtn')].map((b) => b.textContent);
         expect(tabs).toEqual(['Layouts', 'Templates', 'Drawings']);
         host.querySelector<HTMLButtonElement>('.vela-md-segbtn[data-tab="drawings"]')!.click();

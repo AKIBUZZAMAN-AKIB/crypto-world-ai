@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { OHLCV } from '../src/core/model/ohlcv';
 import type { IndicatorModel } from '../src/core/model/indicator';
 import { classicSpecs } from '../src/core/native-indicators/classics/index';
-import { classicPineIndex, classicPineSource } from '../src/core/native-indicators/classics/pine-source';
+import { builtinPineIndex, builtinPineSource, classicPineSource } from '../src/core/native-indicators/classics/pine-source';
 import { PineEngine } from '../playground/vendor/pine-libre/index.js';
 
 /**
@@ -49,6 +49,9 @@ async function run(source: string): Promise<{ model: IndicatorModel | null; erro
             prepared,
             market: { symbol: 'BTCUSDT', timeframe: '60', symbolInfo: { ticker: 'BTCUSDT', mintick: 0.01 } },
             bars: bars(),
+            // Compare's request.security() resolves through the host gateway; in this
+            // contract test the same synthetic bars stand in for the second symbol.
+            fetchSeries: async () => bars(),
             inputs: {},
             mode: 'static',
             historyState: 'complete',
@@ -64,11 +67,15 @@ async function run(source: string): Promise<{ model: IndicatorModel | null; erro
 
 describe('built-in indicator Pine sources', () => {
     const catalog = new Map(classicSpecs.map((s) => [s.type, s]));
+    // The two layer-backed natives are NOT classic catalog rows, but they still ship a
+    // readable Pine source for the legend's `{ }` action. VPVR is the deliberate
+    // exception (TradingView's volume profile has no source either).
+    const nativeOverlay: Record<string, boolean> = { volume: true, compare: true };
 
-    it('every source is keyed to a real catalog type', () => {
-        const unknown = classicPineIndex()
+    it('every source is keyed to a real built-in type', () => {
+        const unknown = builtinPineIndex()
             .map((e) => e.type)
-            .filter((t) => !catalog.has(t));
+            .filter((t) => !catalog.has(t) && !(t in nativeOverlay));
         expect(unknown).toEqual([]);
     });
 
@@ -77,13 +84,20 @@ describe('built-in indicator Pine sources', () => {
         expect(missing).toEqual([]);
     });
 
-    it('covers the studies a trader opens most', () => {
-        for (const type of ['sma', 'ema', 'rsi', 'macd', 'bollinger-bands', 'stochastic', 'average-true-range', 'on-balance-volume']) {
-            expect(classicPineSource(type), `no Pine source for ${type}`).toBeTruthy();
+    it('the layer-backed natives have a readable Pine source too', () => {
+        for (const type of Object.keys(nativeOverlay)) {
+            expect(builtinPineSource(type), `no Pine source for ${type}`).toBeTruthy();
+            expect(classicPineSource(type), `${type} must keep its core-computed path`).toBeUndefined();
         }
     });
 
-    for (const { type, source } of classicPineIndex()) {
+    it('covers the studies a trader opens most', () => {
+        for (const type of ['sma', 'ema', 'rsi', 'macd', 'bollinger-bands', 'stochastic', 'average-true-range', 'on-balance-volume', 'volume', 'compare']) {
+            expect(builtinPineSource(type), `no Pine source for ${type}`).toBeTruthy();
+        }
+    });
+
+    for (const { type, source } of builtinPineIndex()) {
         it(`runs the built-in "${type}" source`, async () => {
             expect(source.startsWith('//@version=6')).toBe(true);
             const { model, errors } = await run(source);
@@ -97,7 +111,7 @@ describe('built-in indicator Pine sources', () => {
             expect(model.series.length + drewLines).toBeGreaterThan(0);
             // The overlay flag decides the PANE — the source must agree with the catalog,
             // or "Source code" would show a study that renders somewhere else.
-            expect(model.overlay).toBe(catalog.get(type)?.overlay);
+            expect(model.overlay).toBe(catalog.get(type)?.overlay ?? nativeOverlay[type]);
             const drawn = drewLines > 0 || model.series.some((s) => {
                 if (s.kind === 'markers') return s.markers.length > 0;
                 if ('points' in s) return (s.points ?? []).some((p) => p.value !== null);

@@ -29,6 +29,6 @@ const after = await page.evaluate(() => ({
   bar: document.querySelector('.vela-mb-drawings')?.getAttribute('aria-label'),
   pillHidden: document.querySelector('.vela-drawpill')?.hidden,
 }));
-await page.screenshot({ path: '/home/user/shots/13-sticky-draw.png' });
+await page.screenshot({ path: '/tmp/vela-probes/13-sticky-draw.png' });
 console.log(JSON.stringify({ before, after, errs }, null, 1));
 await browser.close();

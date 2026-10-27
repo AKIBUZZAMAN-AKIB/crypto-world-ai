@@ -20,7 +20,7 @@ const layoutBtn = page.locator('button[aria-label*="layout" i]').first();
 await layoutBtn.click({ force: true });
 await page.waitForTimeout(700);
 const card = page.locator('.vela-lp').first();
-await card.screenshot({ path: 'audit/r23-layout-icons.png' });
+await card.screenshot({ path: '/tmp/vela-probes/r23-layout-icons.png' });
 out.presets = await page.locator('.vela-lp-preset[data-icon="1"]').count();
 out.scrollCss = await page.evaluate(() => {
     const el = document.querySelector('.vela-lp');
@@ -35,7 +35,7 @@ await patternsBtn.click({ force: true }).catch(() => {});
 await page.waitForTimeout(500);
 const flyout = page.locator('.vela-dtb-flyout').first();
 if (await flyout.count()) {
-    await flyout.screenshot({ path: 'audit/r23-pattern-tools.png' }).catch(() => {});
+    await flyout.screenshot({ path: '/tmp/vela-probes/r23-pattern-tools.png' }).catch(() => {});
     out.flyoutText = (await flyout.innerText()).slice(0, 400);
 }
 out.errors = errors;

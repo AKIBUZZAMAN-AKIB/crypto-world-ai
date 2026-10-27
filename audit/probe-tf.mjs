@@ -16,7 +16,7 @@ facts.before = await page.evaluate(() => {
   const all = [...document.querySelectorAll('.vela-tfd-grid .vela-tfd-chip')].map((c) => c.textContent.trim());
   return { heads, ranges: ranges.slice(0, 3), nRanges: ranges.length, stars: stars.slice(0, 3), nStars: stars.length, favChips: chips, timeframes: all.slice(0, 8), nTf: all.length };
 });
-await page.screenshot({ path: '/home/user/shots/31-timeframe.png' });
+await page.screenshot({ path: '/tmp/vela-probes/31-timeframe.png' });
 // star "1D" interval
 await page.evaluate(() => {
   const chips = [...document.querySelectorAll('.vela-tfd-grid .vela-tfd-chip')];
@@ -30,6 +30,6 @@ facts.after = await page.evaluate(() => ({
   starsOn: [...document.querySelectorAll('.vela-tfd-star[data-on="1"]')].map((s) => s.getAttribute('aria-label')),
   persisted: window.__ws.state?.().timeframeFavorites ?? null,
 }));
-await page.screenshot({ path: '/home/user/shots/31-timeframe-fav.png' });
+await page.screenshot({ path: '/tmp/vela-probes/31-timeframe-fav.png' });
 console.log(JSON.stringify(facts, null, 1));
 await browser.close();

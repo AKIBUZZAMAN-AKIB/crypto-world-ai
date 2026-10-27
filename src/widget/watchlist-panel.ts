@@ -142,7 +142,7 @@ export class WatchlistPanel extends SidePanel {
     private rendered: string[] = [];
 
     constructor(host: HTMLElement, opts: WatchlistPanelOptions) {
-        super(host, 'Watchlist', 'vela-wl', { resizable: true, width: 252, minWidth: 208, maxWidth: 420 });
+        super(host, 'Watchlist', 'vela-wl', { resizable: true, width: 252, minWidth: 208, maxWidth: 420, maximizable: true });
         this.opts = opts;
         injectStyles(STYLE_ID, CSS, host.ownerDocument);
         this.tracker = new QuoteTracker(opts.quote);

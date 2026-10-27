@@ -26,7 +26,7 @@ const movingSheet = await p.evaluate(() => ({
   hint: document.querySelector('.vela-ac-hint')?.textContent,
   placeholder: document.querySelectorAll('.vela-ac-value input')[0]?.placeholder,
 }));
-await p.screenshot({ path: 'shots/90-alert-moving.png' });
+await p.screenshot({ path: '/tmp/vela-probes/90-alert-moving.png' });
 // create it and check the armed row + state round-trip
 await p.evaluate(() => {
   const input = document.querySelectorAll('.vela-ac-value input')[0];

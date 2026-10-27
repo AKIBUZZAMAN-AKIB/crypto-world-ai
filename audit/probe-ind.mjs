@@ -17,7 +17,7 @@ facts.all = await page.evaluate(() => {
   const glyph = rows[0]?.querySelector('.vela-ip-glyph');
   return { tabs, nRows: rows.length, groups, star: sr ? { w: Math.round(sr.width), h: Math.round(sr.height) } : null, glyph: !!glyph?.querySelector('svg'), rowH: Math.round(rows[0]?.getBoundingClientRect().height ?? 0) };
 });
-await page.screenshot({ path: '/home/user/shots/42-ind-all.png' });
+await page.screenshot({ path: '/tmp/vela-probes/42-ind-all.png' });
 // star the first row
 await page.locator('.vela-ip-row .vela-ip-star').first().tap();
 await page.waitForTimeout(300);
@@ -26,12 +26,12 @@ facts.starred = await page.evaluate(() => ({ on: document.querySelectorAll('.vel
 await page.locator('.vela-ip-tab').first().tap();
 await page.waitForTimeout(300);
 facts.favTab = await page.evaluate(() => ({ rows: [...document.querySelectorAll('.vela-ip-row .vela-ip-name')].map((n) => n.textContent), empty: document.querySelector('.vela-ip-empty')?.textContent ?? null }));
-await page.screenshot({ path: '/home/user/shots/43-ind-fav.png' });
+await page.screenshot({ path: '/tmp/vela-probes/43-ind-fav.png' });
 // a category tab
 const catTab = page.locator('.vela-ip-tab').nth(4);
 await catTab.tap();
 await page.waitForTimeout(250);
 facts.catTab = await page.evaluate(() => ({ active: document.querySelector('.vela-ip-tab[data-active="1"]')?.textContent.trim(), n: document.querySelectorAll('.vela-ip-row').length, heads: [...document.querySelectorAll('.vela-ip-group')].map((g) => g.textContent.trim()) }));
-await page.screenshot({ path: '/home/user/shots/44-ind-cat.png' });
+await page.screenshot({ path: '/tmp/vela-probes/44-ind-cat.png' });
 console.log(JSON.stringify(facts, null, 1));
 await browser.close();

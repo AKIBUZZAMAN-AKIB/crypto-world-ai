@@ -20,6 +20,6 @@ const facts = await page.evaluate(() => {
     tiles: sheet?.querySelectorAll('.vela-cts-cell').length ?? 0,
   };
 });
-await page.screenshot({ path: '/home/user/shots/22-more-charttype.png' });
+await page.screenshot({ path: '/tmp/vela-probes/22-more-charttype.png' });
 console.log(JSON.stringify({ facts, errs }, null, 1));
 await browser.close();

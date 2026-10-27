@@ -18,16 +18,25 @@
 // renameTemplate / deleteTemplate / setDefaultTemplate / export·importTemplate). What was
 // missing was the DOOR: the picker's template pane and the phone drawer's row were the only
 // ways in, so this menu is chrome over the same contract, not a second implementation.
+import { Dialog } from '../ui/components/dialog';
 import { Popover } from '../ui/components/popover';
 import { downloadText } from '../ui/download';
 import { iconEl } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
+import {
+    favoriteKeyForBuiltin,
+    favoriteKeyForTemplate,
+    INDICATOR_TEMPLATE_TABS,
+    templatesForTab,
+    type IndicatorTemplateBuiltin,
+    type IndicatorTemplateTab,
+} from './indicator-templates';
 
 export const TEMPLATES_MENU_STYLE_ID = 'vela-templates-menu';
 
 export const TEMPLATES_MENU_CSS = `
 .vela-tm {
-    width: 304px;
+    width: min(344px, calc(100vw - 24px));
     max-height: min(72vh, 560px);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -42,6 +51,36 @@ export const TEMPLATES_MENU_CSS = `
     border-radius: 12px;
     box-shadow: var(--vela-shadow-dialog);
 }
+.vela-tm-tabs {
+    display: flex;
+    gap: 3px;
+    margin: 2px 6px 6px;
+    padding: 3px;
+    border: 1px solid var(--vela-border);
+    border-radius: 8px;
+    background: var(--vela-surface);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.vela-tm-tabs::-webkit-scrollbar { display: none; }
+.vela-tm-tab {
+    all: unset;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    height: 26px;
+    padding: 0 8px;
+    border-radius: 6px;
+    color: var(--vela-fg-muted);
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.vela-tm-tab:hover { color: var(--vela-fg-bright); background: var(--vela-hover); }
+.vela-tm-tab[data-active='1'] { color: var(--vela-fg-on-fill); background: var(--vela-accent); }
+.vela-tm-tab:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: -2px; }
+.vela-tm-fav[data-on='1'] { color: var(--vela-accent); }
 .vela-tm-head { display: flex; align-items: center; gap: 10px; padding: 8px 8px 6px; }
 .vela-tm-mark {
     flex: none;
@@ -86,6 +125,10 @@ export const TEMPLATES_MENU_CSS = `
 }
 .vela-tm-row:hover { background: var(--vela-hover); }
 .vela-tm-row:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: -2px; }
+@media (pointer: coarse) {
+    .vela-tm-dialog .vela-tm-row { min-height: 44px; padding-block: 8px; }
+    .vela-tm-dialog .vela-tm-ico { min-height: 44px; }
+}
 .vela-tm-row[data-current='1'] { background: var(--vela-hover-strong); }
 .vela-tm-glyph {
     flex: none;
@@ -248,6 +291,10 @@ export const TEMPLATES_MENU_CSS = `
 }
 .vela-tm-flash[data-tone='ok'] { color: var(--vela-up); }
 .vela-tm-flash[data-tone='bad'] { color: var(--vela-down, #e5484d); } /* palette-exempt: var() fallback for a menu portalled outside the token scope */
+/* The phone's More-drawer door opens the SAME surface as a compact centred card. */
+.vela-tm-dialog { width: min(360px, calc(100vw - 24px)) !important; max-width: calc(100vw - 24px) !important; }
+.vela-tm-dialog .vela-dialog-body { padding: 0; max-height: min(72vh, 560px); overflow: auto; }
+.vela-tm-dialog .vela-tm { width: 100%; border: 0; box-shadow: none; max-height: none; }
 `;
 
 /** One saved template, as the menu lists it. */
@@ -274,10 +321,13 @@ export interface TemplatesMenuOptions {
     onSetDefault?: (name: string | null) => void;
     /** How many charts the layout has — gates "Apply to all charts". */
     chartCount?: () => number;
-    /** TradingView's six read-only built-ins, listed under the saved templates. Applying
+    /** TradingView's six read-only built-ins, split across Technical and Financial. Applying
      *  one always REPLACES the chart's indicators — the same contract as a saved one. */
-    builtins?: () => Array<{ id: string; name: string; description: string; count: number }>;
+    builtins?: () => IndicatorTemplateBuiltin[];
     onApplyBuiltin?: (id: string) => void;
+    /** `template:<name>` / `builtin:<id>` keys shown on the Favorites tab. */
+    favorites?: () => string[];
+    onToggleFavorite?: (key: string, on: boolean) => void;
     onOpenChange?: (open: boolean) => void;
 }
 
@@ -285,8 +335,11 @@ export class TemplatesMenu {
     private readonly opts: TemplatesMenuOptions;
     private doc: Document;
     private popover: Popover | null = null;
+    private dialog: Dialog | null = null;
     private panel: HTMLElement | null = null;
     private trigger: HTMLElement | null = null;
+    /** The active Favorites / My templates / Technical / Financial category. */
+    private tab: IndicatorTemplateTab = 'my';
     /** Row whose verb strip is unfolded (one at a time). */
     private openRow: string | null = null;
     /** Delete armed for this row — the two-tap convention the rest of the chrome uses. */
@@ -306,7 +359,17 @@ export class TemplatesMenu {
     }
 
     get isOpen(): boolean {
-        return this.popover?.open === true;
+        return this.popover?.open === true || this.dialog?.open === true;
+    }
+
+    /** Reset transient row state when the panel is opened from a new door. */
+    private beginOpen(): void {
+        this.tab = 'my';
+        this.openRow = null;
+        this.armed = null;
+        this.renaming = null;
+        this.saving = false;
+        this.flash = null;
     }
 
     /** Open under the button (or toggle it shut). */
@@ -315,14 +378,11 @@ export class TemplatesMenu {
             this.popover.hide();
             return;
         }
+        this.dialog?.hide();
         this.trigger = trigger;
         this.doc = trigger.ownerDocument;
         injectStyles(TEMPLATES_MENU_STYLE_ID, TEMPLATES_MENU_CSS, this.doc);
-        this.openRow = null;
-        this.armed = null;
-        this.renaming = null;
-        this.saving = false;
-        this.flash = null;
+        this.beginOpen();
         const popover = new Popover({
             trigger,
             className: 'vela-tm-pop',
@@ -331,7 +391,7 @@ export class TemplatesMenu {
             content: (body) => {
                 this.panel = body;
                 body.setAttribute('role', 'dialog');
-                body.setAttribute('aria-label', 'Chart templates');
+                body.setAttribute('aria-label', 'Indicator templates');
                 this.render();
             },
             onClose: () => {
@@ -353,18 +413,60 @@ export class TemplatesMenu {
         }, 0);
     }
 
-    close(): void {
+    /** Open the SAME panel as a centred non-modal dialog — the phone's More-drawer door. */
+    openDialog(host: HTMLElement): void {
+        if (this.dialog?.open) {
+            this.dialog.hide();
+            return;
+        }
         this.popover?.hide();
+        this.doc = host.ownerDocument;
+        injectStyles(TEMPLATES_MENU_STYLE_ID, TEMPLATES_MENU_CSS, this.doc);
+        this.beginOpen();
+        const dialog = new Dialog({
+            title: 'Indicator templates',
+            host,
+            className: 'vela-tm-dialog',
+            modal: false,
+            align: 'center',
+            closeOnInteractOutside: true,
+            content: (body) => {
+                this.panel = body;
+                body.setAttribute('role', 'dialog');
+                body.setAttribute('aria-label', 'Indicator templates');
+                this.render();
+            },
+            onOpenChange: (open) => {
+                if (open) return;
+                this.dialog = null;
+                this.panel = null;
+                this.openRow = null;
+                this.armed = null;
+                this.renaming = null;
+                this.saving = false;
+                this.opts.onOpenChange?.(false);
+            },
+        });
+        this.dialog = dialog;
+        dialog.show();
+        this.opts.onOpenChange?.(true);
     }
 
-    /** Repaint from live state (a template saved or applied elsewhere). */
+    close(): void {
+        this.popover?.hide();
+        this.dialog?.hide();
+    }
+
+    /** Repaint from live state (a template saved, favorited or applied elsewhere). */
     refresh(): void {
-        if (this.popover?.open) this.render();
+        if (this.isOpen) this.render();
     }
 
     destroy(): void {
         this.popover?.destroy();
+        this.dialog?.destroy();
         this.popover = null;
+        this.dialog = null;
         this.panel = null;
     }
 
@@ -375,8 +477,12 @@ export class TemplatesMenu {
         if (!panel) return;
         const d = this.doc;
         const rows = this.opts.templates();
+        const builtins = this.opts.builtins?.() ?? [];
+        const favorites = this.opts.favorites?.() ?? [];
+        const fav = new Set(favorites);
         const house = this.opts.defaultTemplate?.() ?? null;
         const charts = this.opts.chartCount?.() ?? 1;
+        const view = templatesForTab(this.tab, rows, builtins, favorites);
 
         const card = d.createElement('div');
         card.className = 'vela-tm';
@@ -391,7 +497,7 @@ export class TemplatesMenu {
         headId.className = 'vela-tm-headid';
         const title = d.createElement('b');
         title.className = 'vela-tm-title';
-        title.textContent = 'Chart templates';
+        title.textContent = 'Indicator templates';
         const sub = d.createElement('span');
         sub.className = 'vela-tm-sub';
         if (house) {
@@ -400,54 +506,91 @@ export class TemplatesMenu {
         } else {
             sub.textContent = rows.length === 0
                 ? 'A template is a chart’s indicators, settings included'
-                : `${rows.length} saved · clicking one applies it here`;
+                : `${rows.length} saved · choose a category below`;
         }
         headId.append(title, sub);
         head.append(mark, headId);
         card.appendChild(head);
 
-        // ── the list ──
+        // ── the four required categories ──
+        const tabs = d.createElement('div');
+        tabs.className = 'vela-tm-tabs';
+        tabs.setAttribute('role', 'tablist');
+        tabs.setAttribute('aria-label', 'Indicator template categories');
+        for (const t of INDICATOR_TEMPLATE_TABS) {
+            const b = d.createElement('button');
+            b.type = 'button';
+            b.className = 'vela-tm-tab';
+            b.dataset.tab = t.id;
+            b.textContent = t.label;
+            b.setAttribute('role', 'tab');
+            b.setAttribute('aria-selected', String(this.tab === t.id));
+            if (this.tab === t.id) b.dataset.active = '1';
+            b.tabIndex = this.tab === t.id ? 0 : -1;
+            b.addEventListener('click', () => {
+                this.tab = t.id;
+                this.openRow = null;
+                this.armed = null;
+                this.renaming = null;
+                this.saving = false;
+                this.flash = null;
+                this.render();
+            });
+            b.addEventListener('keydown', (e) => {
+                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                e.preventDefault();
+                const at = INDICATOR_TEMPLATE_TABS.findIndex((x) => x.id === this.tab);
+                const step = e.key === 'ArrowRight' ? 1 : -1;
+                this.tab = INDICATOR_TEMPLATE_TABS[(at + step + INDICATOR_TEMPLATE_TABS.length) % INDICATOR_TEMPLATE_TABS.length]!.id;
+                this.render();
+                this.panel?.querySelector<HTMLElement>(`.vela-tm-tab[data-tab="${this.tab}"]`)?.focus();
+            });
+            tabs.appendChild(b);
+        }
+        card.appendChild(tabs);
+
+        // ── the filtered list ──
         const list = d.createElement('div');
         list.className = 'vela-tm-list';
-        const builtins = this.opts.builtins?.() ?? [];
-        if (rows.length === 0) {
+        list.setAttribute('role', 'tabpanel');
+        if (view.rows.length === 0 && view.builtins.length === 0) {
             const empty = d.createElement('div');
             empty.className = 'vela-tm-empty';
-            empty.textContent = builtins.length > 0
-                ? 'No templates of your own yet — start from a built-in below, or set the chart up and save it.'
-                : 'No templates yet. Set the chart up the way you trade it, then save its indicators below.';
+            empty.textContent = view.empty;
             list.appendChild(empty);
         }
-        for (const row of rows) list.appendChild(this.renderRow(row, house, charts));
-        if (builtins.length > 0) {
+        for (const row of view.rows) list.appendChild(this.renderRow(row, house, charts, fav));
+        if (view.builtins.length > 0) {
             const group = d.createElement('div');
             group.className = 'vela-tm-group';
-            group.textContent = 'Built-in';
+            group.textContent = this.tab === 'favorites' ? 'Favorite built-ins' : this.tab === 'financial' ? 'Financial' : 'Technical';
             list.appendChild(group);
-            for (const built of builtins) list.appendChild(this.renderBuiltin(built));
+            for (const built of view.builtins) list.appendChild(this.renderBuiltin(built, fav));
         }
         card.appendChild(list);
 
-        // ── save / import ──
-        const sep = d.createElement('div');
-        sep.className = 'vela-tm-sep';
-        card.appendChild(sep);
-        if (this.saving) card.appendChild(this.saveForm());
-        else if (this.opts.onSave) {
-            const save = this.action('plus', 'Save template…', () => {
-                this.saving = true;
-                this.openRow = null;
-                this.flash = null;
-                this.render();
-                this.panel?.querySelector<HTMLInputElement>('.vela-tm-input')?.focus();
-            });
-            save.classList.add('vela-tm-save');
-            card.appendChild(save);
-        }
-        if (this.opts.onImport) {
-            const importBtn = this.action('upload', 'Import template file…', () => this.pickFile());
-            importBtn.classList.add('vela-tm-import');
-            card.appendChild(importBtn);
+        // Save/import belong to the user's own template library.
+        if (this.tab === 'my' || this.tab === 'favorites') {
+            const sep = d.createElement('div');
+            sep.className = 'vela-tm-sep';
+            card.appendChild(sep);
+            if (this.saving) card.appendChild(this.saveForm());
+            else if (this.opts.onSave) {
+                const save = this.action('plus', 'Save indicator template…', () => {
+                    this.saving = true;
+                    this.openRow = null;
+                    this.flash = null;
+                    this.render();
+                    this.panel?.querySelector<HTMLInputElement>('.vela-tm-input')?.focus();
+                });
+                save.classList.add('vela-tm-save');
+                card.appendChild(save);
+            }
+            if (this.opts.onImport) {
+                const importBtn = this.action('upload', 'Import template file…', () => this.pickFile());
+                importBtn.classList.add('vela-tm-import');
+                card.appendChild(importBtn);
+            }
         }
 
         // ── status line ──
@@ -464,8 +607,29 @@ export class TemplatesMenu {
         panel.replaceChildren(card);
     }
 
-    /** A read-only built-in: apply only — no star, no kebab, no rename field. */
-    private renderBuiltin(built: { id: string; name: string; description: string; count: number }): HTMLElement {
+    /** The pin that puts a saved/built-in template on the Favorites tab. */
+    private favoriteButton(key: string, fav: ReadonlySet<string>): HTMLButtonElement | null {
+        if (!this.opts.onToggleFavorite) return null;
+        const d = this.doc;
+        const on = fav.has(key);
+        const b = d.createElement('button');
+        b.type = 'button';
+        b.className = 'vela-tm-ico vela-tm-fav';
+        b.dataset.on = on ? '1' : '0';
+        b.title = on ? 'Remove from Favorites' : 'Add to Favorites';
+        b.setAttribute('aria-label', b.title);
+        b.setAttribute('aria-pressed', String(on));
+        b.appendChild(iconEl(on ? 'pin-filled' : 'pin', d));
+        b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.opts.onToggleFavorite?.(key, !on);
+            this.render();
+        });
+        return b;
+    }
+
+    /** A read-only built-in: apply only — no default star, no kebab, no rename field. */
+    private renderBuiltin(built: IndicatorTemplateBuiltin, fav: ReadonlySet<string>): HTMLElement {
         const d = this.doc;
         const wrap = d.createElement('div');
         wrap.className = 'vela-tm-item vela-tm-builtin';
@@ -490,13 +654,19 @@ export class TemplatesMenu {
         btn.append(glyph, id);
         btn.addEventListener('click', () => {
             this.opts.onApplyBuiltin?.(built.id);
-            this.popover?.hide();
+            this.close();
         });
-        wrap.appendChild(btn);
+        const head = d.createElement('div');
+        head.style.cssText = 'display:flex;align-items:center;gap:2px;';
+        btn.style.flex = '1 1 auto';
+        head.appendChild(btn);
+        const pin = this.favoriteButton(favoriteKeyForBuiltin(built.id), fav);
+        if (pin) head.appendChild(pin);
+        wrap.appendChild(head);
         return wrap;
     }
 
-    private renderRow(row: TemplatesMenuRow, house: string | null, charts: number): HTMLElement {
+    private renderRow(row: TemplatesMenuRow, house: string | null, charts: number, fav: ReadonlySet<string>): HTMLElement {
         const d = this.doc;
         const wrap = d.createElement('div');
         wrap.className = 'vela-tm-item';
@@ -626,6 +796,8 @@ export class TemplatesMenu {
 
         const head = d.createElement('div');
         head.style.cssText = 'display:flex;align-items:center;gap:2px;';
+        const pin = this.favoriteButton(favoriteKeyForTemplate(row.name), fav);
+        if (pin) head.appendChild(pin);
         if (this.opts.onSetDefault) head.appendChild(star);
         if (this.hasRowActions()) head.appendChild(kebab);
         head.style.paddingRight = '2px';

@@ -23,7 +23,7 @@ try {
             })(),
         };
     });
-    await page.screenshot({ path: 'audit/r22-layout-gallery.png' });
+    await page.screenshot({ path: '/tmp/vela-probes/r22-layout-gallery.png' });
     report('round22-layout-gallery', { ...facts, errors: errors.length });
 } finally {
     await browser.close();

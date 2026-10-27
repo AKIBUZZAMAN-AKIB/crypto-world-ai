@@ -43,6 +43,58 @@ function make() {
     return { line, hover: (ohlc: Bar | null) => move({ ohlc }), measures: () => measures, close };
 }
 
+describe('Statusline fit — the phone rungs', () => {
+    // A chip that only fits once the bar delta has left the values row: the measured
+    // shape of a 360–430px phone, where four O/H/L/C values plus a delta do not fit on
+    // one row but the values alone do.
+    it('keeps all four values and moves the delta onto the symbol line', () => {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const line = new Statusline(host, 'BINANCE:BTCUSDT');
+        const chart = {
+            on: () => () => {},
+            renderer: { onCrosshairMove: (cb: (e: { ohlc: Bar | null }) => void) => { move = cb; return () => {}; } },
+            replay: { state: { active: false } },
+        } as unknown as Vela;
+        let move: (e: { ohlc: Bar | null }) => void = () => {};
+        line.onChart(chart);
+        // Overflow while the delta shares the values row; it fits the moment it rides up.
+        Object.defineProperty(line.el, 'clientWidth', { get: () => 320 });
+        Object.defineProperty(line.el, 'scrollWidth', {
+            get: () => (line.el.querySelector('.vela-sl-identity .vela-sl-change') ? 300 : 520),
+        });
+        move({ ohlc: { open: 80300.5, high: 80500.25, low: 80100, close: 80478.75 } });
+        expect(line.el.classList.contains('vela-sl-stacked')).toBe(true);
+        expect(line.el.querySelectorAll('.vela-sl-ohlc b')).toHaveLength(4);
+        expect(line.el.querySelector('.vela-sl-identity .vela-sl-change')).not.toBeNull();
+        expect(line.el.querySelector('.vela-sl-values .vela-sl-change')).toBeNull();
+        line.destroy();
+    });
+
+    it('drops the delta back to the values row when the chip measures enough room', () => {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const line = new Statusline(host, 'BINANCE:BTCUSDT');
+        let move: (e: { ohlc: Bar | null }) => void = () => {};
+        const chart = {
+            on: () => () => {},
+            renderer: { onCrosshairMove: (cb: typeof move) => { move = cb; return () => {}; } },
+            replay: { state: { active: false } },
+        } as unknown as Vela;
+        line.onChart(chart);
+        // The measured width shrinks after the first fit: a resize (or a shorter readout)
+        // gives the chip room, and the ladder must walk back UP to the widest rung.
+        let width = 520;
+        Object.defineProperty(line.el, 'clientWidth', { get: () => 320 });
+        Object.defineProperty(line.el, 'scrollWidth', { get: () => width });
+        move({ ohlc: { open: 80300.5, high: 80500.25, low: 80100, close: 80478.75 } });
+        width = 300;
+        move({ ohlc: { open: 80300.5, high: 80500.25, low: 80100, close: 80479.75 } });
+        expect(line.el.querySelector('.vela-sl-values .vela-sl-change')).not.toBeNull();
+        line.destroy();
+    });
+});
+
 describe('Statusline fit', () => {
     it('rewrites a digits-only change in place, without measuring', () => {
         const { line, hover, measures, close } = make();

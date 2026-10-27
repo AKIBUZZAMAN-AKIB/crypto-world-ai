@@ -16,7 +16,7 @@ await page.mouse.click(x0 + 300, y0 + 60);
 await page.waitForTimeout(500);
 await page.evaluate(() => window.__ws.cells()[0].chart.drawings.setTool(null));
 await page.waitForTimeout(300);
-await page.screenshot({ path: 'audit/r22-gann-fixed-only.png', clip: { x: b.x, y: b.y, width: Math.min(700, b.width), height: Math.min(500, b.height) } });
+await page.screenshot({ path: '/tmp/vela-probes/r22-gann-fixed-only.png', clip: { x: b.x, y: b.y, width: Math.min(700, b.width), height: Math.min(500, b.height) } });
 const info = await page.evaluate(() => {
   const d = window.__ws.cells()[0].chart.drawings.all()[0];
   return d ? { type: d.type, anchors: d.anchors } : null;

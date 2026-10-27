@@ -519,7 +519,7 @@ describe('WidgetHistory late-resolves the current chart', () => {
         let current: unknown = a;
         const h = new WidgetHistory(() => current as never);
         h.onChart(a as never);
-        a.emit('drawing:created'); // a step recorded while A was the live chart
+        a.emit('drawing:history'); // one core-history entry recorded while A was live
         current = b; // the widget rebuilt — A is destroyed, B is live
         h.undo();
         expect(b.drawings.undo).toHaveBeenCalledTimes(1); // late-resolved to the CURRENT chart

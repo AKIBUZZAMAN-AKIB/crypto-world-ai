@@ -80,8 +80,11 @@ export class CrosshairRenderer {
 
         const cs = scene.style.crosshair;
         const ov = scene.crosshairOverride;
-        const vertical = ov?.vertical !== false;
-        const horizontal = ov?.horizontal !== false;
+        // SHAPE is a configured choice (Cross / vertical only / horizontal only / dot); the
+        // runtime override (a picking session, the replay ruler) can still drop one line.
+        const shape = cs.shape ?? 'cross';
+        const vertical = ov?.vertical !== false && shape !== 'horizontal' && shape !== 'dot';
+        const horizontal = ov?.horizontal !== false && shape !== 'vertical' && shape !== 'dot';
         ctx.font = `${scene.style.fontSize}px ${theme.fontFamily}`;
         ctx.textBaseline = 'middle';
 
@@ -110,7 +113,7 @@ export class CrosshairRenderer {
         ctx.setLineDash([]);
         ctx.lineWidth = 1;
         ctx.globalAlpha = 1;
-        if (style.id === 'dot') this.drawDot(ctx, x, Math.round(ch.y) + 0.5, ov?.color ?? cs.color ?? theme.textColor);
+        if (style.id === 'dot' || shape === 'dot') this.drawDot(ctx, x, Math.round(ch.y) + 0.5, ov?.color ?? cs.color ?? theme.textColor);
 
         // price chip on the right axis for the pane under the cursor. Linear scan
         // over the pane map (no sort/alloc) — panes don't overlap in Y, and this
@@ -124,12 +127,18 @@ export class CrosshairRenderer {
         }
         const chipBg = cs.labelBackground ?? theme.borderColor;
         // An unscaled pane (axisFormat 'none') has no value axis, so no value chip either.
-        if (horizontal && pane && pane.axisFormat !== 'none') {
+        // The label switches hide ONLY the chips: the lines (and the readout the host shows
+        // in its legend) stay, which is what "crosshair labels" means in the reference.
+        // A chip belongs to the line that anchors it: no horizontal line, no value chip (and
+        // no vertical line, no time chip). Hiding the LINE always hides its chip, which is
+        // what the override flags and the shape presets both mean.
+        const dotShape = shape === 'dot';
+        if ((horizontal || dotShape) && cs.priceLabel !== false && pane && pane.axisFormat !== 'none') {
             const price = coords.yToPrice(ch.y, pane.scale, pane.bounds);
             this.chip(ctx, dataW + 1, ch.y, formatAxisValue(pane.scale, pane.bounds.height, price, percentScaleFor(scene, pane), scene.priceMintick, pane.axisFormat, scene.priceCompact), chipBg, 'left', false, theme.background);
         }
         // time chip on the bottom axis
-        if (vertical) this.chip(ctx, x, dataH + 1, formatTimeStamp(coords.logicalToTime(logical), scene.timezone, coords.barInterval), chipBg, 'center', true, theme.background);
+        if ((vertical || dotShape) && cs.timeLabel !== false) this.chip(ctx, x, dataH + 1, formatTimeStamp(coords.logicalToTime(logical), scene.timezone, coords.barInterval), chipBg, 'center', true, theme.background);
     }
 
     /** The dot cursor's anchor: a filled disc with a thin ring in the chart surface color, so

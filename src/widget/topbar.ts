@@ -15,6 +15,7 @@ import { BUILTIN_PRICE_STYLES, priceStyleIds } from '../renderers/native/core/ch
 import { favoriteTimeframeChips, timeframeLabel } from './timeframe';
 import { parseSymbol } from '../data/ProviderRegistry';
 
+import { installSymbolQuickSwitch, type SymbolQuickSwitchHandle } from './symbol-quick-switch';
 // The component owns its stylesheet (id-guarded, injected at construction) so EVERY
 // host that mounts a Topbar — the widget, a multi-chart workspace — gets the same look.
 const STYLE_ID = 'vela-topbar';
@@ -316,6 +317,11 @@ export function priceStyleMarkup(id: string): string | undefined {
 export interface TopbarOptions {
     symbol: string;
     onSymbolClick?: () => void;
+    /** Watchlist-style wheel/drag: +1 = next symbol, -1 = previous. No picker panel opens. */
+    onSymbolStep?: (delta: number) => void;
+    /** Fallback door when the composition hides the layout-name chip but the grid panel
+     *  still needs to reach the separate Manage layouts panel. */
+    onOpenLayoutManager?: () => void;
     timeframe: string;
     timeframes: readonly string[];
     /** Favorite timeframes — duration-sorted quick-switch chips, stars in the
@@ -349,9 +355,12 @@ export interface TopbarOptions {
         onSetDefaultTemplate?: (name: string | null) => void;
         /** Charts in the layout — gates "Apply to all charts". */
         chartCount?: () => number;
-        /** TradingView's six read-only built-ins, listed under the saved templates. */
-        builtins?: () => Array<{ id: string; name: string; description: string; count: number }>;
+        /** TradingView's six read-only built-ins, split across Technical/Financial. */
+        builtins?: () => Array<{ id: string; name: string; description: string; count: number; category?: 'Technical' | 'Financial' }>;
         onApplyBuiltin?: (id: string) => void;
+        /** Favorites tab keys — `template:<name>` / `builtin:<id>`. */
+        favoriteTemplates?: () => string[];
+        onToggleTemplateFavorite?: (key: string, on: boolean) => void;
     };
     /** Optional workspace LAYOUT dropdown (rendered after the style dropdown when
      *  given) — the grid-canvas picker composing uniform grids, with the workspace
@@ -439,6 +448,9 @@ export interface TopbarOptions {
         /** The current layout's 16px glyph (`<svg>` markup) for the button, re-read on
          *  every {@link Topbar.setLayout}. Omitted ⇒ the registered `'layout'` icon. */
         glyph?: () => string;
+        /** Desktop R86 T9: make the grid picker setup-only and open the layout-name
+         *  management popover from its single "Manage layouts" door. */
+        layoutGridSetupOnly?: boolean;
     };
     onIndicatorsClick?: () => void;
     /** Unified undo/redo (same stack as Ctrl+Z / Ctrl+Y). Enabled state is pushed with
@@ -469,6 +481,7 @@ export interface TopbarOptions {
 export class Topbar {
     readonly el: HTMLElement;
     private readonly symbolEl: HTMLElement;
+    private readonly symbolQuick: SymbolQuickSwitchHandle | null = null;
     /** Duration-sorted favorite chips (plus an unstarred current, when needed). */
     private readonly tfChipsHost: HTMLElement;
     private readonly tfCaret: HTMLButtonElement;
@@ -693,6 +706,8 @@ export class Topbar {
         // shell's state (the statusline meta and the picker badges name the venue).
         this.symbolEl.textContent = parseSymbol(opts.symbol).ticker;
         if (opts.onSymbolClick) this.symbolEl.addEventListener('click', opts.onSymbolClick);
+        if (opts.onSymbolStep) this.symbolQuick = installSymbolQuickSwitch(this.symbolEl, opts.onSymbolStep);
+        this.symbolQuick?.label(parseSymbol(opts.symbol).ticker);
         // Duration-sorted chips with highlight in place; the caret is the dropdown
         // trigger (merged with the current label when there are no favorites).
         this.tfFavs = [...(opts.timeframeFavorites ?? [])];
@@ -731,7 +746,10 @@ export class Topbar {
         // second store. A dedicated option group, so a single-chart shell has templates
         // even though it has no layout manager.
         const tpl = opts.templates;
-        if (tpl?.templates && vis('templates')) {
+        if (tpl?.templates) {
+            // The menu exists even when the composition hides the desktop button:
+            // the phone's More drawer opens the SAME surface as a dialog.
+            if (vis('templates')) {
             const btn = doc.createElement('button');
             btn.type = 'button';
             btn.className = 'vela-widget-tool vela-widget-templates';
@@ -741,8 +759,8 @@ export class Topbar {
             // dropdown is LABELLED, and an icon-only glyph left traders hunting for a
             // "Templates" option that was on screen all along. Same narrow-desktop rule —
             // the glyph keeps the door, the word goes first.
-            btn.setAttribute('aria-label', 'Chart templates');
-            btn.title = 'Chart templates';
+            btn.setAttribute('aria-label', 'Indicator templates');
+            btn.title = 'Indicator templates';
             const tplLabel = doc.createElement('span');
             tplLabel.className = 'vela-widget-btnlabel';
             tplLabel.textContent = 'Templates';
@@ -751,6 +769,7 @@ export class Topbar {
             caret.appendChild(iconEl('chevron-down', doc));
             btn.append(iconEl('templates', doc), tplLabel, caret);
             this.templatesBtn = btn;
+            }
             this.templatesMenu = new TemplatesMenu({
                 templates: () => tpl.templates?.() ?? [],
                 ...(tpl.onApplyTemplate ? { onApply: (name: string, target: 'active' | 'all') => tpl.onApplyTemplate?.(name, target) ?? 0 } : {}),
@@ -764,9 +783,13 @@ export class Topbar {
                 ...(tpl.chartCount ? { chartCount: () => tpl.chartCount?.() ?? 1 } : {}),
                 ...(tpl.builtins ? { builtins: () => tpl.builtins?.() ?? [] } : {}),
                 ...(tpl.onApplyBuiltin ? { onApplyBuiltin: (id: string) => tpl.onApplyBuiltin?.(id) } : {}),
-                onOpenChange: (open: boolean) => btn.setAttribute('aria-expanded', String(open)),
+                ...(tpl.favoriteTemplates ? { favorites: () => tpl.favoriteTemplates?.() ?? [] } : {}),
+                ...(tpl.onToggleTemplateFavorite
+                    ? { onToggleFavorite: (key: string, on: boolean) => tpl.onToggleTemplateFavorite?.(key, on) }
+                    : {}),
+                onOpenChange: (open: boolean) => this.templatesBtn?.setAttribute('aria-expanded', String(open)),
             });
-            btn.addEventListener('click', () => this.templatesMenu?.open(btn));
+            this.templatesBtn?.addEventListener('click', () => this.templatesMenu?.open(this.templatesBtn!));
         }
 
         // Right-hand cluster: contributed actions, then icon-only tools — the side-panel
@@ -1015,6 +1038,8 @@ export class Topbar {
             this.layoutPicker = new LayoutPicker({
                 trigger: this.layoutButton,
                 host,
+                ...(layout.layoutGridSetupOnly ? { setupOnly: true } : {}),
+                onOpenManager: (door) => this.openLayoutMenu(door),
                 shape: () => layout.shape(),
                 presets: () => layout.presets().map((p) => ({ ...p, checked: p.id === this.layoutId })),
                 onSelectGrid: (rows, cols) => layout.onSelectGrid(rows, cols),
@@ -1110,8 +1135,37 @@ export class Topbar {
         this.layoutPicker?.openFor(cellId);
     }
 
+    /** The separate Indicator templates door — desktop dropdown. */
+    openTemplatesMenu(): void {
+        if (this.templatesBtn) this.templatesMenu?.open(this.templatesBtn);
+    }
+
+    /** The same Indicator templates surface as a centred dialog — phone More drawer. */
+    openTemplatesDialog(host: HTMLElement): void {
+        this.templatesMenu?.openDialog(host);
+    }
+
+    /** Repaint an open templates panel after a favorite changed elsewhere. */
+    refreshTemplatesMenu(): void {
+        this.templatesMenu?.refresh();
+    }
+
+    /** Open the SEPARATE Manage layouts popover. The grid panel's door closes itself and
+     *  anchors the manager to the layout-name chip, so the two surfaces never stack. */
+    openLayoutMenu(trigger?: HTMLElement | null): void {
+        if (!this.layoutMenu) {
+            this.layoutPicker?.close();
+            this.opts.onOpenLayoutManager?.();
+            return;
+        }
+        const anchor = this.layoutsChip ?? this.layoutButton ?? trigger ?? this.el;
+        this.layoutPicker?.close();
+        this.layoutMenu.open(anchor);
+    }
+
     setSymbol(symbol: string): void {
         this.symbolEl.textContent = parseSymbol(symbol).ticker;
+        this.symbolQuick?.label(parseSymbol(symbol).ticker);
     }
 
     setTimeframe(tf: string): void {

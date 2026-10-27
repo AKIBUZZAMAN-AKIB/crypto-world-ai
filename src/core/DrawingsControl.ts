@@ -241,6 +241,15 @@ export class DrawingsControl {
         return this;
     }
 
+    /**
+     * Insert a prepared drawing SET as ONE undo step (drawing templates). Returns the
+     * fresh ids — the caller groups them in the object tree and selects them on the chart.
+     */
+    insertDocuments(docs: readonly SerializedDrawing[]): string[] {
+        if (!this.ok('paste') || docs.length === 0) return [];
+        return this.ctrl.insertDocuments(docs).map((d) => d.id);
+    }
+
     /** Every drawing as plain JSON, in paint order. */
     all(): SerializedDrawing[] {
         return this.ctrl.all();

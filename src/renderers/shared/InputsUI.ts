@@ -136,7 +136,7 @@ const LEGEND_ROW_MIN_H = LEGEND_CTL_PX + LEGEND_ROW_PAD_Y * 2;
 const LEGEND_TOP_INSET_PX = 8;
 const LEGEND_BOTTOM_INSET_PX = 8;
 /** Room the fold chip claims under the rows (its own height plus the 6px margin-top). */
-const LEGEND_FOLD_CHIP_H = 34;
+const LEGEND_FOLD_CHIP_H = 26;
 /** Narrowest a row may get and still be USABLE: the title keeps a readable stub while the
  *  action cluster (eye / gear / move / extras / ✕) takes its fixed share. A column below
  *  this folds — which is the honest "no room" answer, not a squeezed chip with the buttons
@@ -210,6 +210,10 @@ export class InputsUI {
      *  change (see {@link measureFit}) — the ONE rule behind the fold, identical on every
      *  device, so a wide phone with room keeps its rows and a short pane folds theirs. */
     private fits = true;
+    /** How many whole legend rows the CURRENT pane height can show before the list scrolls. */
+    private readonly visibleRows = new Map<string, number>();
+    /** The measured pixel height those rows may occupy, per pane. */
+    private readonly visibleHeight = new Map<string, number>();
     /** Titles switched off entirely (a settings toggle): every pane's legend container
      *  hides — rows, fold chevron and all — unlike the fold, which leaves its chip. */
     private titlesVisible = true;
@@ -457,41 +461,68 @@ export class InputsUI {
      * chip able to unfold the moment room appears.
      */
     private measureFit(): void {
+        this.visibleRows.clear();
+        this.visibleHeight.clear();
         if (this.rows.size === 0 || !this.paneBoundsOf) {
             this.fits = true;
             return;
         }
+        // Folded rows measure 0 — lay them out for the read, then put them straight back.
         const restored: Array<[HTMLElement, string]> = [];
         for (const row of this.rows.values()) {
             if (row.el.style.display !== 'none') continue;
             restored.push([row.el, row.el.style.display]);
             row.el.style.display = 'flex';
         }
-        const need = new Map<string, number>();
+        const byPane = new Map<string, LegendRow[]>();
         for (const row of this.rows.values()) {
-            need.set(row.paneId, (need.get(row.paneId) ?? 0) + (row.el.offsetHeight || LEGEND_ROW_MIN_H));
+            const list = byPane.get(row.paneId) ?? [];
+            list.push(row);
+            byPane.set(row.paneId, list);
         }
-        let fits = true;
-        // The fold chip sits under the price pane's rows whenever it will exist at all.
+        // A minimal down/up control sits under the rows whenever it will exist at all.
         const chip = this.rows.size >= 2 || this.mobileLayout || this.overviewAction !== null ? LEGEND_FOLD_CHIP_H : 0;
-        for (const [paneId, height] of need) {
+        let anyVisible = false;
+        for (const [paneId, list] of byPane) {
             const bounds = this.paneBoundsOf(paneId);
-            if (!Number.isFinite(bounds.height)) continue;
-            if (height + LEGEND_TOP_INSET_PX + LEGEND_BOTTOM_INSET_PX + chip > bounds.height) fits = false;
+            const available = Number.isFinite(bounds.height)
+                ? Math.max(0, bounds.height - LEGEND_TOP_INSET_PX - LEGEND_BOTTOM_INSET_PX - chip)
+                : Infinity;
+            let height = 0;
+            let count = 0;
+            for (const row of list) {
+                const rowH = row.el.offsetHeight || LEGEND_ROW_MIN_H;
+                if (height + rowH > available) break;
+                height += rowH;
+                count += 1;
+            }
+            this.visibleRows.set(paneId, count);
+            this.visibleHeight.set(paneId, Number.isFinite(available) ? Math.min(available, height) : Infinity);
+            // Zero usable rows is the only true "no room" case; extra rows scroll instead of
+            // folding the whole legend away (R86 Task 3).
+            if (count > 0) anyVisible = true;
         }
-        // WIDTH matters as much as height: a grid cell on a phone can be tall enough and still
-        // too narrow for a title plus the action cluster — the squeeze that pushed the ✕ out of
-        // the chip. Every row in a pane must fit that column.
+        // A short study pane must not fold the WHOLE chart: as long as one pane can show a
+        // row, the legend stays open and every pane's overflow scrolls. Only zero usable rows
+        // anywhere is the true no-room fallback.
+        let fits = anyVisible;
+        // WIDTH still matters: a grid cell too narrow for a title plus the action cluster
+        // cannot honestly show a row, so the count chip/object tree remains its fallback.
         for (const row of this.rows.values()) {
             const column = this.legends.get(row.paneId)?.offsetWidth ?? 0;
-            if (column <= 0) continue; // container not laid out yet — height still governs
+            if (column <= 0) continue; // not laid out yet — height governs
             const cluster = row.ctlSlots * (LEGEND_CTL_PX + LEGEND_ACTION_GAP_PX);
             if (LEGEND_MIN_TITLE_W + cluster > column) fits = false;
         }
         for (const [el, display] of restored) el.style.display = display;
-        if (fits === this.fits) return;
+        const changed = fits !== this.fits;
         this.fits = fits;
-        this.syncFoldToggle(true); // the chip follows the new state; the caller re-lays the rows
+        if (changed) this.syncFoldToggle(true);
+    }
+
+    /** The measured number of whole rows a pane can show before its legend scrolls. */
+    visibleRowCount(paneId = 'price'): number {
+        return this.visibleRows.get(paneId) ?? 0;
     }
 
     /** Reposition the per-pane legend containers after a layout change. */
@@ -695,6 +726,20 @@ export class InputsUI {
         // (the container's intended layout — set in its cssText), NOT '' which would revert it
         // to block: block children stretch to the widest row, fusing the chips into one slab.
         lg.style.display = bounds.height < 4 || !this.titlesVisible ? 'none' : 'flex';
+        // R86 Task 3: show the MEASURED number of rows, then scroll the overflow instead of
+        // hiding the whole legend. The minimal fold control sticks to the bottom so it never
+        // scrolls out of reach.
+        const paneRows = [...this.rows.values()].filter((r) => r.paneId === paneId);
+        const visible = this.visibleRows.get(paneId) ?? paneRows.length;
+        const maxH = this.visibleHeight.get(paneId) ?? Infinity;
+        const scrolls = !this.foldedNow && paneRows.length > visible && Number.isFinite(maxH);
+        lg.style.maxHeight = scrolls ? `${Math.max(0, Math.round(maxH))}px` : '';
+        lg.style.overflowY = scrolls ? 'auto' : '';
+        lg.style.overflowX = scrolls ? 'hidden' : '';
+        lg.style.overscrollBehavior = scrolls ? 'contain' : '';
+        lg.style.scrollbarWidth = scrolls ? 'thin' : '';
+        lg.dataset.visibleRows = String(visible);
+        lg.dataset.scrolls = scrolls ? '1' : '0';
         // The container spans the price scale too: give the column an EXPLICIT width over the
         // data area (not just a max-width on the rows) so a row's max-width resolves against
         // the real plot — a shrink-to-fit column let a narrow cell's rows collapse onto
@@ -784,19 +829,23 @@ export class InputsUI {
         // near-white count on a white chip. Extra margin-top clears the last indicator
         // title; the legend column's own 3px gap is too tight under a bordered chip.
         const ink = this.theme.textColor;
-        btn.style.cssText = `pointer-events:auto;display:inline-flex;align-items:center;gap:4px;background:${this.theme.background};color:${ink};border:1px solid ${this.theme.borderColor};border-radius:4px;padding:3px 6px;margin-top:6px;cursor:pointer;font:inherit;line-height:0;`;
+        // Minimal: a transparent 22px chevron, no bordered chip. The count appears only
+        // while folded, and sticky positioning keeps the control visible in a scrolled list.
+        btn.style.cssText = `pointer-events:auto;display:inline-flex;align-items:center;gap:2px;background:transparent;color:${ink};border:0;border-radius:3px;padding:0 3px;margin-top:2px;cursor:pointer;font:inherit;line-height:0;min-height:22px;min-width:22px;position:sticky;bottom:0;z-index:2;align-self:flex-start;opacity:0.78;`;
         btn.replaceChildren();
         const icon = document.createElement('span');
         // Slightly muted against the count — currentColor rides the button's ink.
-        icon.style.cssText = 'display:inline-flex;align-items:center;line-height:0;opacity:0.7;';
+        icon.style.cssText = 'display:inline-flex;align-items:center;line-height:0;opacity:0.8;width:14px;height:14px;';
         // The cramped-cell override wears the list glyph — the chip opens the host's
         // indicator overview rather than unfolding rows in place.
-        icon.innerHTML = this.chipOpensOverview ? OVERVIEW_SVG : folded ? UNFOLD_SVG : FOLD_SVG;
+        icon.innerHTML = this.chipOpensOverview
+            ? iconAt('objects', 14)
+            : folded ? iconAt('chevron-down', 14) : iconAt('chevron-up', 14);
         btn.appendChild(icon);
         if (folded) {
             const label = document.createElement('span');
             label.textContent = String(count);
-            label.style.cssText = `font-weight:600;line-height:normal;font-size:12px;color:${ink};`;
+            label.style.cssText = `font-weight:600;line-height:normal;font-size:11px;color:${ink};`;
             btn.appendChild(label);
         }
         // The toggle lives on the PRICE pane's legend (created on demand — the price pane

@@ -22,9 +22,33 @@ export interface BuiltinTemplate {
 
 const RIBBON = ['#5b9cf6', '#4fb3bf', '#3fb98d', '#8fbf4d', '#d0a83f']; // palette-exempt: the template ribbon is a fixed five-step series ramp (a design constant, not a semantic colour)
 
+/**
+ * A classic native has TWO possible input key-spaces at apply time. With a scripting engine
+ * present the study runs its own v6 Pine source, whose `input.*` variables are `len`, `src`,
+ * `offset`, `ink`; WITHOUT an engine it is core-computed from the classic descriptor, whose
+ * keys are `length`, `source`, `offset`, `color`. `ChartCell.applyNativeLedgerEntry` diffs an
+ * entry's inputs against the LIVE declared schema, and `EngineOrchestrator.startIndicator`
+ * merges them over the prepared Pine defaults — so an override only lands if its key matches
+ * the schema the host actually booted. A built-in is static data applied on either host, so
+ * every override is stored under BOTH spellings; the schema simply ignores the keys it does
+ * not declare (they never reach `setInputs`), which keeps a value correct on both paths.
+ */
+const CLASSIC_KEY_ALIASES: Record<string, string> = {
+    length: 'len', len: 'length',
+    source: 'src', src: 'source',
+    color: 'ink', ink: 'color',
+};
+const withMirrorKeys = (inputs: Record<string, InputValue>): Record<string, InputValue> => {
+    const out: Record<string, InputValue> = { ...inputs };
+    for (const [key, alias] of Object.entries(CLASSIC_KEY_ALIASES)) {
+        if (key in out && !(alias in out)) out[alias] = out[key]!;
+    }
+    return out;
+};
+
 const ema = (length: number, inputs: Record<string, InputValue> = {}): PersistedNativeEntry => ({
     type: 'ema',
-    inputs: { length, ...inputs },
+    inputs: withMirrorKeys({ length, ...inputs }),
 });
 
 export const BUILTIN_TEMPLATES: readonly BuiltinTemplate[] = [

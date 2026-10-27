@@ -161,5 +161,5 @@ assert(measured.line > 150, 'the RSI plot line is painted inside the study pane'
 assert(measured.green + measured.red > 60, 'a divergence label is painted (label pill ink)', measured);
 assert(errors.length === 0, 'no page errors', errors);
 
-await page.screenshot({ path: 'shots/pine-subpane.png', fullPage: false });
+await page.screenshot({ path: '/tmp/vela-probes/pine-subpane.png', fullPage: false });
 await browser.close();

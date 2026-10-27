@@ -361,6 +361,8 @@ const CSS = `
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
+.vela-md-navtrack[data-stops='3'] .vela-md-navbtn { font-size: 11.5px; padding: 0 4px; white-space: nowrap; }
+.vela-md-navtrack[data-stops='3'] { gap: 1px; }
 .vela-md-navbtn[data-active] {
     background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 22%, transparent);
     color: var(--vela-fg-bright);
@@ -460,6 +462,8 @@ const CSS = `
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
+.vela-md-navtrack[data-stops='3'] .vela-md-navbtn { font-size: 11.5px; padding: 0 4px; white-space: nowrap; }
+.vela-md-navtrack[data-stops='3'] { gap: 1px; }
 .vela-md-navbtn[data-active] {
     background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 22%, transparent);
     color: var(--vela-fg-bright);
@@ -924,6 +928,13 @@ export interface MoreDrawerAction {
 
 export interface MoreDrawerOptions {
     host: HTMLElement;
+    /** Open the COMPACT layout-management panel instead of the grid sheet's library tab. */
+    onOpenLayoutManager?: () => void;
+    /** Open the SEPARATE Indicator templates panel. Templates no longer live in the
+     *  Manage-layouts library; this is their own door in the main More list. */
+    onOpenIndicatorTemplates?: () => void;
+    /** Saved indicator-template count for that row's value. */
+    indicatorTemplateCount?: () => number;
     /** Omitted (with onRedo) ⇒ no undo/redo action buttons — the shell's topbar
      *  composition removed `'undo-redo'`; the keyboard chords are the shell's call. */
     onUndo?: () => void;
@@ -974,6 +985,13 @@ export interface MoreDrawerOptions {
     onDeleteDrawingTemplate?: (tool: string, name: string) => void;
     /** Export one saved drawing template as JSON. */
     onExportDrawingTemplate?: (tool: string, name: string) => string | null;
+    /** Saved DRAWING SETS (whole bundles, relative geometry) — a distinct section of
+     *  the Drawings library stop, with their own insert/export/import/delete verbs. */
+    drawingSetTemplates?: () => Array<{ name: string; count: number; createdAt: number }>;
+    onInsertDrawingSetTemplate?: (name: string) => number;
+    onDeleteDrawingSetTemplate?: (name: string) => void;
+    onExportDrawingSetTemplate?: (name: string) => string | null;
+    onImportDrawingSetTemplate?: (json: string) => string | null;
     /** The pointer style over the plot (Cross / Dot / Arrow / Demonstration / Magic /
      *  Eraser / None), read live — the Cursors row's value. Omitted ⇒ no row. */
     cursorStyle?: () => CursorStyle;
@@ -1092,7 +1110,7 @@ export interface MoreDrawerOptions {
     onOpenChange?: (open: boolean) => void;
 }
 
-type MoreView = 'main' | 'style' | 'layout' | 'alerts' | 'cursor' | 'hidden';
+type MoreView = 'main' | 'style' | 'layout' | 'manage' | 'alerts' | 'cursor' | 'hidden';
 
 export class MoreDrawer {
     private readonly drawer: Drawer;
@@ -1101,7 +1119,9 @@ export class MoreDrawer {
     /** "Show all N layouts" — the sheet shows the newest few until asked for more. */
     private layoutsExpanded = false;
     /** Which half of the library is showing (layouts sit first: they are the workspace). */
-    private libTab: 'layouts' | 'templates' | 'drawings' = 'layouts';
+    /** Manage layouts keeps saved layouts and drawing templates; indicator templates
+     *  have their own panel (see onOpenIndicatorTemplates). */
+    private libTab: 'layouts' | 'drawings' = 'layouts';
     /** The row whose `⋯` menu is open, keyed `L:<name>` / `T:<name>`. */
     private openRow: string | null = null;
     /** The name field a "+ save" row unfolded, if any. */
@@ -1117,15 +1137,23 @@ export class MoreDrawer {
         if (this.view !== 'alerts') return;
         this.render();
     }
+
+    /** A drawing set was saved/inserted/deleted from the object tree (or imported) while
+     *  the library tab is on screen — repaint its rows instead of showing a stale count. */
+    refreshLibrary(): void {
+        if (!this.drawer.open) return;
+        if (this.view !== 'manage' && !(this.view === 'layout' && this.tab === 'manage')) return;
+        this.render();
+    }
     /** The main view's search query (D: 60+ rows with no way to narrow them). */
     private query = '';
     /** Scroll the layout sheet to its sync block on the next paint. */
-    private focus: 'sync' | undefined;
+    private focus: 'manage' | 'sync' | undefined;
     /** The chart whose links panel opens straight away (the status line's badge names
      *  it, so the sheet must not make the user hunt for that row). */
     private focusCell: string | undefined;
     /** Which of the sheet's two tabs was last open — reopening keeps the place. */
-    private tab: 'layouts' | 'sync' = 'layouts';
+    private tab: 'layouts' | 'manage' | 'sync' = 'layouts';
 
     constructor(private readonly opts: MoreDrawerOptions) {
         injectStyles(STYLE_ID, CSS, opts.host.ownerDocument);
@@ -1135,7 +1163,7 @@ export class MoreDrawer {
 
     /** Show the sheet. `focus: 'sync'` lands on the Sync tab (the status line's marks
      *  open there) — same surface, TV's Layout setup, just the second tab. */
-    open(view: MoreView = 'main', opts: { focus?: 'sync'; cell?: string } = {}): void {
+    open(view: MoreView = 'main', opts: { focus?: 'manage' | 'sync'; cell?: string } = {}): void {
         this.view = view;
         this.focus = opts.focus;
         this.focusCell = opts.cell;
@@ -1157,9 +1185,10 @@ export class MoreDrawer {
         this.drawer.destroy();
     }
 
-    private show(view: MoreView): void {
+    private show(view: MoreView, opts: { focus?: 'manage' | 'sync'; cell?: string } = {}): void {
         this.view = view;
-        this.focus = undefined;
+        this.focus = opts.focus;
+        this.focusCell = opts.cell;
         this.render();
     }
 
@@ -1173,7 +1202,7 @@ export class MoreDrawer {
             const back = doc.createElement('button');
             back.className = 'vela-md-back';
             back.appendChild(iconEl('chevron-left', doc));
-            const backLabel = this.view === 'style' ? 'Chart type' : this.view === 'cursor' ? 'Cursor' : this.view === 'hidden' ? 'More' : 'Alerts';
+            const backLabel = this.view === 'style' ? 'Chart type' : this.view === 'cursor' ? 'Cursor' : this.view === 'hidden' || this.view === 'manage' ? 'More' : 'Alerts';
             back.appendChild(doc.createTextNode(backLabel));
             back.addEventListener('click', () => this.show('main'));
             this.drawer.body.appendChild(back);
@@ -1185,6 +1214,7 @@ export class MoreDrawer {
         }
         else if (this.view === 'style') this.renderStyle(doc);
         else if (this.view === 'layout') this.renderLayout(doc, this.focus, this.focusCell);
+        else if (this.view === 'manage') this.renderManage(doc);
         else if (this.view === 'cursor') this.renderCursor(doc);
         else if (this.view === 'hidden') this.renderHidden(doc);
         else this.renderAlerts(doc);
@@ -1351,15 +1381,45 @@ export class MoreDrawer {
         const list = doc.createElement('div');
         list.className = 'vela-md-list';
 
-        // ── the library, first ─────────────────────────────────────────────────
-        // TradingView's layout manager verbs (open / save / autosave / make a copy and
-        // the templates) belong on the FIRST screen: they are the reason this drawer
-        // gets opened, while the rows beneath are occasional settings.
+        // ── the library, behind its OWN door ──────────────────────────────────
+        // TradingView splits "Layout setup" (the grid) from "Manage layouts" (the saved
+        // library) into two screens; a phone needs that split twice over, because the
+        // library's rows — saved layouts, autosave, templates, drawings — buried every
+        // other row of this sheet under a wall of them. One row is the door; the
+        // library keeps its own page and its own back button (see renderManage).
         if (this.opts.layout) {
-            const lib = doc.createElement('div');
-            lib.className = 'vela-md-list vela-md-lib';
-            this.renderLibrary(doc, lib, this.opts.layout);
-            if (lib.childElementCount > 0) this.drawer.body.append(lib);
+            const saved = this.opts.layout.savedLayouts?.().length ?? 0;
+            list.appendChild(
+                this.row(doc, 'Manage layouts', {
+                    icon: 'layout',
+                    glyph: this.opts.layout.glyph?.(),
+                    value: saved > 0 ? `${saved} saved` : undefined,
+                    chevron: true,
+                    onClick: () => {
+                        if (this.opts.onOpenLayoutManager) {
+                            this.drawer.hide();
+                            this.opts.onOpenLayoutManager();
+                        } else {
+                            this.show('layout', { focus: 'manage' });
+                        }
+                    },
+                }),
+            );
+        }
+        // Indicator templates are their OWN panel now — never a tab inside Manage layouts.
+        if (this.opts.onOpenIndicatorTemplates) {
+            const count = this.opts.indicatorTemplateCount?.() ?? 0;
+            list.appendChild(
+                this.row(doc, 'Indicator templates', {
+                    icon: 'templates',
+                    value: count > 0 ? `${count} saved` : undefined,
+                    chevron: true,
+                    onClick: () => {
+                        this.drawer.hide();
+                        this.opts.onOpenIndicatorTemplates?.();
+                    },
+                }),
+            );
         }
         const current = this.opts.priceStyles().find((s) => s.id === this.opts.priceStyle());
         list.appendChild(
@@ -1573,7 +1633,7 @@ export class MoreDrawer {
      * Switch and chip taps repaint in place (values, aria-checked, marks) — the sheet is
      * never rebuilt under the finger, so the list does not jump to the top mid-edit.
      */
-    private renderLayout(doc: Document, focus?: 'sync', focusCell?: string): void {
+    private renderLayout(doc: Document, focus?: 'manage' | 'sync', focusCell?: string): void {
         const layout = this.opts.layout;
         if (!layout) return;
         type LayoutOpts = NonNullable<MoreDrawerOptions['layout']>;
@@ -1649,7 +1709,7 @@ export class MoreDrawer {
         // sync column side by side; a phone gets the same two panes one at a time. Two
         // scroll stops in one long sheet read as "one page with a jump menu" — and the
         // jump menu was the only thing making the sheet feel long.
-        const goTo = (key: 'layouts' | 'sync'): void => {
+        const goTo = (key: 'layouts' | 'manage' | 'sync'): void => {
             for (const b of navButtons) {
                 const on = b.dataset.tab === key;
                 b.toggleAttribute('data-active', on);
@@ -1658,12 +1718,19 @@ export class MoreDrawer {
                 b.tabIndex = on ? 0 : -1;
             }
             layoutsSec.hidden = key !== 'layouts';
+            manageSec.hidden = key !== 'manage';
             syncSec.hidden = key !== 'sync';
             this.tab = key;
             // A tab is a fresh page, not a scroll position shared with the other one.
             this.drawer.body.scrollTop = 0;
         };
-        for (const [key, label] of [['layouts', 'Layout'], ['sync', 'Sync']] as const) {
+        navTrack.dataset.stops = '3';
+        const stops: Array<['layouts' | 'manage' | 'sync', string]> = [
+            ['layouts', 'Layout setup'],
+            ['manage', 'Manage layouts'],
+            ['sync', 'Sync'],
+        ];
+        for (const [key, label] of stops) {
             const b = doc.createElement('button');
             b.type = 'button';
             b.className = 'vela-md-navbtn';
@@ -1675,7 +1742,9 @@ export class MoreDrawer {
             b.addEventListener('keydown', (e) => {
                 if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
                 e.preventDefault();
-                const next: 'layouts' | 'sync' = key === 'layouts' ? 'sync' : 'layouts';
+                const at = stops.findIndex(([k]) => k === key);
+                const step = e.key === 'ArrowRight' ? 1 : -1;
+                const next = stops[(at + step + stops.length) % stops.length]?.[0] ?? 'layouts';
                 goTo(next);
                 navButtons.find((x) => x.dataset.tab === next)?.focus();
             });
@@ -1689,7 +1758,7 @@ export class MoreDrawer {
         layoutsSec.className = 'vela-md-sec';
         layoutsSec.id = 'vela-md-pane-layouts';
         layoutsSec.setAttribute('role', 'tabpanel');
-        layoutsSec.setAttribute('aria-label', 'Layout');
+        layoutsSec.setAttribute('aria-label', 'Layout setup');
 
         const caption = doc.createElement('div');
         caption.className = 'vela-md-section';
@@ -1816,6 +1885,23 @@ export class MoreDrawer {
         }
 
         // ── sync ───────────────────────────────────────────────────────────────
+        // ── Manage layouts — TradingView's SEPARATE tab, not a wall of rows under
+        // the grid. The same library the full-page route uses lives here, so the two
+        // surfaces never drift.
+        const manageSec = doc.createElement('section');
+        manageSec.className = 'vela-md-sec';
+        manageSec.id = 'vela-md-pane-manage';
+        manageSec.setAttribute('role', 'tabpanel');
+        manageSec.setAttribute('aria-label', 'Manage layouts');
+        const manageHead = doc.createElement('div');
+        manageHead.className = 'vela-md-section';
+        manageHead.textContent = 'Saved layouts & drawing templates';
+        manageSec.append(manageHead);
+        const manageLib = doc.createElement('div');
+        manageLib.className = 'vela-md-list vela-md-lib';
+        this.renderLibrary(doc, manageLib, layout);
+        manageSec.append(manageLib);
+
         const syncSec = doc.createElement('section');
         syncSec.className = 'vela-md-sec';
         syncSec.id = 'vela-md-pane-sync';
@@ -2002,7 +2088,7 @@ export class MoreDrawer {
 
         }
 
-        list.append(layoutsSec, syncSec);
+        list.append(layoutsSec, manageSec, syncSec);
         // The library (saved layouts, autosave, templates) lives on the MAIN tab — it is
         // the thing a trader opens this drawer FOR, and burying it one tab down mirrors
         // a desktop popover, not a phone. This pane stays "the grid and its links".
@@ -2025,51 +2111,55 @@ export class MoreDrawer {
         };
         refresh();
         repaint = refresh;
-        // A plain open lands on Layout; the status-line "Chart syncing" entry (and the
-        // sheet's own focus option) opens straight on the Sync tab.
+        // A plain open lands on Layout setup; "Chart syncing" opens on Sync, and the
+        // Manage-layouts door opens on its own tab.
         goTo(focus ?? this.tab ?? 'layouts');
         // Opened from a chart's own marks badge: unfold THAT chart's links and bring the
         // row into view, so the tap lands on a chip instead of on a list to hunt through.
         if (focusCell) matrix?.focus(focusCell);
     }
 
+    /** The layout library on a page of its own — TradingView's "Manage layouts". */
+    private renderManage(doc: Document): void {
+        const layout = this.opts.layout;
+        if (!layout) return;
+        const head = doc.createElement('div');
+        head.className = 'vela-md-section';
+        head.textContent = 'Manage layouts';
+        this.drawer.body.append(head);
+        const lib = doc.createElement('div');
+        lib.className = 'vela-md-list vela-md-lib';
+        this.renderLibrary(doc, lib, layout);
+        this.drawer.body.append(lib);
+    }
+
     // ── the library ─────────────────────────────────────────────────────────────
     /**
-     * Layouts and indicator templates, on ONE screen with a two-stop toggle.
-     *
-     * TradingView keeps these apart on purpose: a LAYOUT is the whole workspace
-     * (Ctrl+S, "Manage layouts"), a TEMPLATE is an indicator set that re-skins any
-     * chart. Printing both as one long list made the drawer read as a wall of rows —
-     * the measured complaint — so the sheet gives each its own pane, and every row is
-     * one tap to USE plus one `⋯` to manage (rename / copy / export / delete). The
-     * four bordered buttons a row used to wear are gone.
+     * Manage layouts owns SAVED WORKSPACES and drawing-set templates only. Indicator
+     * templates are a separate panel (Favorites / My templates / Technical / Financial),
+     * reached from the main More row — exactly the TradingView split.
      */
     private renderLibrary(doc: Document, list: HTMLElement, layout: NonNullable<MoreDrawerOptions['layout']>): void {
         const hasLayouts = !!layout.savedLayouts;
-        const hasTemplates = !!(layout.onSaveTemplate && layout.templates);
-        const hasDrawings = !!this.opts.drawingTemplates;
-        if (!hasLayouts && !hasTemplates && !hasDrawings) return;
-        if (this.libTab === 'layouts' && !hasLayouts) this.libTab = hasTemplates ? 'templates' : 'drawings';
-        if (this.libTab === 'templates' && !hasTemplates) this.libTab = hasLayouts ? 'layouts' : 'drawings';
-        if (this.libTab === 'drawings' && !hasDrawings) this.libTab = hasLayouts ? 'layouts' : 'templates';
-        const stopCount = Number(hasLayouts) + Number(hasTemplates) + Number(hasDrawings);
+        const hasDrawings = !!this.opts.drawingTemplates || !!this.opts.drawingSetTemplates;
+        if (!hasLayouts && !hasDrawings) return;
+        if (this.libTab === 'layouts' && !hasLayouts) this.libTab = 'drawings';
+        if (this.libTab === 'drawings' && !hasDrawings) this.libTab = 'layouts';
+        const stopCount = Number(hasLayouts) + Number(hasDrawings);
 
         const head = doc.createElement('div');
         head.className = 'vela-md-libhead';
-        // With both panes the toggle IS the heading — printing "LAYOUTS" beside a
-        // control that already says Layouts is the kind of noise this screen is losing.
         if (stopCount === 1) {
-            head.appendChild(this.sectionLabel(doc, hasLayouts ? 'Layouts' : hasTemplates ? 'Templates' : 'Drawings'));
+            head.appendChild(this.sectionLabel(doc, hasLayouts ? 'Layouts' : 'Drawing templates'));
         }
         if (stopCount > 1) {
             const seg = doc.createElement('div');
             seg.className = 'vela-md-seg';
             seg.setAttribute('role', 'tablist');
-            seg.setAttribute('aria-label', 'Layouts, templates or drawings');
-            const stops: Array<['layouts' | 'templates' | 'drawings', string]> = [];
+            seg.setAttribute('aria-label', 'Layouts or drawing templates');
+            const stops: Array<['layouts' | 'drawings', string]> = [];
             if (hasLayouts) stops.push(['layouts', 'Layouts']);
-            if (hasTemplates) stops.push(['templates', 'Templates']);
-            if (hasDrawings) stops.push(['drawings', 'Drawings']);
+            if (hasDrawings) stops.push(['drawings', 'Drawing templates']);
             for (const [key, label] of stops) {
                 const b = doc.createElement('button');
                 b.type = 'button';
@@ -2086,9 +2176,6 @@ export class MoreDrawer {
                     this.libTab = key;
                     this.openRow = null;
                     this.saveField = null;
-                    // Re-render replaces this node, so the tab that was just chosen asks
-                    // for focus back — a toggle that drops focus to the document makes
-                    // the next arrow key scroll the page instead of moving the tab.
                     this.pendingFocus = '.vela-md-segbtn[data-active]';
                     this.render();
                 });
@@ -2112,13 +2199,10 @@ export class MoreDrawer {
 
         const pane = doc.createElement('div');
         pane.className = 'vela-md-libpane';
-        // A real tabpanel: the toggle is a tablist, so the pane it swaps must say which
-        // tab it belongs to (a bare div leaves the screen reader with two tabs and no body).
         pane.setAttribute('role', 'tabpanel');
         pane.id = 'vela-md-libpane';
         pane.setAttribute('aria-labelledby', `vela-md-libtab-${this.libTab}`);
         if (this.libTab === 'layouts') this.renderLayoutsPane(doc, pane, layout);
-        else if (this.libTab === 'templates') this.renderTemplatesPane(doc, pane, layout);
         else this.renderDrawingsPane(doc, pane);
         // Focus lands after the pane is in the document (see render()): focusing a
         // detached input is a no-op and leaves the phone keyboard closed.
@@ -2462,164 +2546,6 @@ export class MoreDrawer {
         }
     }
 
-    /** Indicator templates: tap to apply, `⋯` to manage. */
-    private renderTemplatesPane(doc: Document, pane: HTMLElement, layout: NonNullable<MoreDrawerOptions['layout']>): void {
-        const templates = layout.templates?.() ?? [];
-        if (templates.length === 0) {
-            const empty = doc.createElement('div');
-            empty.className = 'vela-md-hint';
-            empty.textContent = 'No templates yet — save this chart’s indicators below and they re-skin any chart.';
-            pane.appendChild(empty);
-        }
-        for (const t of templates) {
-            const row = doc.createElement('div');
-            row.className = 'vela-md-lrow';
-            row.dataset.template = t.name;
-            if (layout.defaultTemplate?.() === t.name) row.dataset.house = '1';
-            const main = doc.createElement('button');
-            main.type = 'button';
-            main.className = 'vela-md-lmain';
-            main.setAttribute('aria-label', `Apply template ${t.name} to this chart`);
-            const text = doc.createElement('span');
-            text.className = 'vela-md-ltext';
-            const name = doc.createElement('b');
-            name.textContent = t.name;
-            text.appendChild(name);
-            const meta = doc.createElement('small');
-            meta.className = 'vela-md-lmeta';
-            // "tap to apply" is not decoration: the row has no chevron and no Apply
-            // button, so the meta line is the only place that says what a tap does.
-            meta.textContent = `${t.count} indicator${t.count === 1 ? '' : 's'}${t.symbol ? ` · ${t.symbol}` : ''} · tap to apply`;
-            text.appendChild(meta);
-            main.appendChild(text);
-            main.addEventListener('click', () => {
-                layout.onApplyTemplate?.(t.name, 'active');
-                this.drawer.hide();
-            });
-            row.appendChild(main);
-            // The house template is a STATE, so it is a star, not a verb in the menu.
-            if (layout.onSetDefaultTemplate) {
-                const isDefault = layout.defaultTemplate?.() === t.name;
-                const star = doc.createElement('button');
-                star.type = 'button';
-                star.className = 'vela-md-star';
-                star.dataset.on = isDefault ? '1' : '0';
-                star.setAttribute('aria-pressed', String(isDefault));
-                const label = isDefault ? `${t.name} seeds new charts — turn off` : `Start new charts with ${t.name}`;
-                star.setAttribute('aria-label', label);
-                star.title = label;
-                star.appendChild(iconEl(isDefault ? 'star-filled' : 'star', doc));
-                star.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    layout.onSetDefaultTemplate?.(isDefault ? null : t.name);
-                    this.render();
-                });
-                row.appendChild(star);
-            }
-            row.appendChild(
-                this.kebab(doc, `Actions for ${t.name}`, this.openRow === `T:${t.name}`, () => {
-                    this.openRow = this.openRow === `T:${t.name}` ? null : `T:${t.name}`;
-                    this.saveField = null;
-                    this.render();
-                }),
-            );
-            pane.appendChild(row);
-            if (this.openRow === `T:${t.name}`) {
-                pane.appendChild(
-                    this.actionsStrip(doc, [
-                        ...((layout.charts?.() ?? []).length > 1 && layout.onApplyTemplate
-                            ? [{ label: 'Apply to all charts', run: () => { this.openRow = null; layout.onApplyTemplate?.(t.name, 'all'); this.drawer.hide(); } }]
-                            : []),
-                        ...(layout.onExportTemplate ? [{ label: 'Export', run: () => { const json = layout.onExportTemplate?.(t.name); if (json) downloadText(doc, `${t.name}.vela-template.json`, json); } }] : []),
-                        ...(layout.onDeleteTemplate ? [{ label: 'Delete', danger: true, run: () => { this.openRow = null; layout.onDeleteTemplate?.(t.name); this.render(); } }] : []),
-                    ]),
-                );
-            }
-        }
-
-        const builtins = layout.builtins?.() ?? [];
-        if (builtins.length > 0) {
-            const head = doc.createElement('div');
-            head.className = 'vela-md-lgroup';
-            head.textContent = 'Built-in';
-            pane.appendChild(head);
-            for (const b of builtins) {
-                const row = doc.createElement('div');
-                row.className = 'vela-md-lrow';
-                row.dataset.builtin = b.id;
-                const main = doc.createElement('button');
-                main.type = 'button';
-                main.className = 'vela-md-lmain';
-                main.setAttribute('aria-label', `Apply the built-in template ${b.name} to this chart`);
-                const text = doc.createElement('span');
-                text.className = 'vela-md-ltext';
-                const name = doc.createElement('b');
-                name.textContent = b.name;
-                const meta = doc.createElement('small');
-                meta.className = 'vela-md-lmeta';
-                meta.textContent = `${b.description} · ${b.count} indicator${b.count === 1 ? '' : 's'} · tap to apply`;
-                text.append(name, meta);
-                main.appendChild(text);
-                main.addEventListener('click', () => {
-                    layout.onApplyBuiltin?.(b.id);
-                    this.drawer.hide();
-                });
-                row.appendChild(main);
-                pane.appendChild(row);
-            }
-        }
-
-        if (layout.onSaveTemplate) {
-            if (this.saveField === 'template') {
-                const form = doc.createElement('div');
-                form.className = 'vela-md-saveas';
-                const input = doc.createElement('input');
-                input.type = 'text';
-                input.placeholder = 'Template name';
-                input.setAttribute('aria-label', 'Save chart template as');
-                const chip = doc.createElement('label');
-                chip.className = 'vela-md-tplmarket';
-                chip.title = 'Also store the symbol and timeframe';
-                const box = doc.createElement('input');
-                box.type = 'checkbox';
-                const chipText = doc.createElement('span');
-                chipText.textContent = 'market';
-                chip.append(box, chipText);
-                const button = doc.createElement('button');
-                button.type = 'button';
-                button.textContent = 'Save';
-                const commit = (): void => {
-                    const name = input.value.trim();
-                    if (!name) return;
-                    this.saveField = null;
-                    layout.onSaveTemplate?.(name, box.checked);
-                    this.render();
-                };
-                button.addEventListener('click', commit);
-                input.addEventListener('keydown', (e) => {
-                    e.stopPropagation();
-                    if (e.key === 'Enter') commit();
-                    if (e.key === 'Escape') {
-                        this.saveField = null;
-                        this.render();
-                    }
-                });
-                form.append(input, chip, button);
-                pane.appendChild(form);
-                input.focus();
-            } else {
-                pane.appendChild(
-                    this.ghostButton(doc, 'plus', 'Save indicators as template', () => {
-                        this.saveField = 'template';
-                        this.openRow = null;
-                        this.render();
-                    }),
-                );
-            }
-        }
-        if (layout.onImportTemplate) pane.appendChild(this.fileButton(doc, 'template', layout.onImportTemplate));
-    }
-
     /**
      * Drawing templates — the SAVED LOOKS of the drawing tools, grouped by tool. The
      * reference keeps these on the floating drawing toolbar (Vela has them there too, and
@@ -2627,12 +2553,70 @@ export class MoreDrawer {
      * saved look in one place, use one for the NEXT drawing of its tool, export or delete.
      */
     private renderDrawingsPane(doc: Document, pane: HTMLElement): void {
+        // ── DRAWING SETS first: these are the real templates (a whole bundle of
+        // drawings), so they lead the stop. Per-tool saved LOOKS follow below.
+        const sets = this.opts.drawingSetTemplates?.() ?? [];
+        if (sets.length > 0) {
+            pane.appendChild(this.sectionLabel(doc, 'Drawing sets'));
+            for (const s of sets) {
+                const key = `S:${s.name}`;
+                const row = doc.createElement('div');
+                row.className = 'vela-md-lrow';
+                row.dataset.drawingSet = s.name;
+                const main = doc.createElement('button');
+                main.type = 'button';
+                main.className = 'vela-md-lmain';
+                main.setAttribute('aria-label', `Insert drawing template ${s.name}`);
+                const swatch = doc.createElement('span');
+                swatch.className = 'vela-md-lswatch';
+                swatch.style.background = 'repeating-linear-gradient(45deg, var(--vela-fg-muted) 0 1.5px, transparent 1.5px 4px)';
+                const text = doc.createElement('span');
+                text.className = 'vela-md-ltext';
+                const name = doc.createElement('b');
+                name.textContent = s.name;
+                const meta = doc.createElement('small');
+                meta.className = 'vela-md-lmeta';
+                meta.textContent = `${s.count} drawing${s.count === 1 ? '' : 's'} · relative geometry · tap to insert`;
+                text.append(name, meta);
+                main.append(swatch, text);
+                main.addEventListener('click', () => {
+                    this.opts.onInsertDrawingSetTemplate?.(s.name);
+                    this.drawer.hide();
+                });
+                row.appendChild(main);
+                row.appendChild(
+                    this.kebab(doc, `Actions for drawing set ${s.name}`, this.openRow === key, () => {
+                        this.openRow = this.openRow === key ? null : key;
+                        this.saveField = null;
+                        this.render();
+                    }),
+                );
+                pane.appendChild(row);
+                if (this.openRow === key) {
+                    pane.appendChild(
+                        this.actionsStrip(doc, [
+                            { label: 'Insert', run: () => { this.openRow = null; this.opts.onInsertDrawingSetTemplate?.(s.name); this.drawer.hide(); } },
+                            ...(this.opts.onExportDrawingSetTemplate
+                                ? [{ label: 'Export', run: () => { const json = this.opts.onExportDrawingSetTemplate?.(s.name); if (json) downloadText(doc, `${s.name}.vela-drawings.json`, json); } }]
+                                : []),
+                            ...(this.opts.onDeleteDrawingSetTemplate
+                                ? [{ label: 'Delete', danger: true, run: () => { this.openRow = null; this.opts.onDeleteDrawingSetTemplate?.(s.name); this.render(); } }]
+                                : []),
+                        ]),
+                    );
+                }
+            }
+        }
+        if (this.opts.onImportDrawingSetTemplate) {
+            pane.appendChild(this.fileButton(doc, 'drawing-set', this.opts.onImportDrawingSetTemplate));
+        }
+
         const all = this.opts.drawingTemplates?.() ?? [];
         const hint = doc.createElement('div');
         hint.className = 'vela-md-hint';
         hint.textContent = all.length
-            ? 'Tap a template to use it for the next drawing of that tool. Save a look from any drawing’s Templates button.'
-            : 'No drawing templates yet. Select a drawing → Templates → Save as template, and it lands here.';
+            ? 'Saved looks per tool — tap one to use it for the next drawing. Save a whole BUNDLE from the object tree → Drawing templates.'
+            : 'No saved looks yet. Select a drawing → Templates → Save as template. To save a whole SET, use the object tree → Drawing templates.';
         pane.appendChild(hint);
         let lastTool = '';
         for (const t of all) {
@@ -2703,12 +2687,12 @@ export class MoreDrawer {
     }
 
     /** Import a JSON file; the picker lives in the body so iOS can open it. */
-    private fileButton(doc: Document, kind: 'layout' | 'template', apply: (json: string) => unknown): HTMLElement {
+    private fileButton(doc: Document, kind: 'layout' | 'template' | 'drawing-set', apply: (json: string) => unknown): HTMLElement {
         const b = doc.createElement('button');
         b.type = 'button';
         b.className = 'vela-md-lghost vela-md-limport';
         b.appendChild(iconEl('upload', doc));
-        b.appendChild(doc.createTextNode(kind === 'layout' ? 'Import layout file' : 'Import template file'));
+        b.appendChild(doc.createTextNode(kind === 'layout' ? 'Import layout file' : kind === 'drawing-set' ? 'Import drawing set' : 'Import template file'));
         b.addEventListener('click', () => {
             const picker = doc.createElement('input');
             picker.type = 'file';

@@ -1,7 +1,7 @@
 {
   "report": {
     "Renko": {
-      "file": "audit/r23-style-renko.png",
+      "file": "/tmp/vela-probes/r23-style-renko.png",
       "sig": {
         "ink": 0,
         "mean": null,
@@ -10,7 +10,7 @@
       }
     },
     "Range": {
-      "file": "audit/r23-style-range.png",
+      "file": "/tmp/vela-probes/r23-style-range.png",
       "sig": {
         "ink": 0,
         "mean": null,
@@ -19,7 +19,7 @@
       }
     },
     "Kagi": {
-      "file": "audit/r23-style-kagi.png",
+      "file": "/tmp/vela-probes/r23-style-kagi.png",
       "sig": {
         "ink": 0,
         "mean": null,
@@ -28,7 +28,7 @@
       }
     },
     "Point & figure": {
-      "file": "audit/r23-style-point-figure.png",
+      "file": "/tmp/vela-probes/r23-style-point-figure.png",
       "sig": {
         "ink": 0,
         "mean": null,
@@ -37,7 +37,7 @@
       }
     },
     "Line break": {
-      "file": "audit/r23-style-line-break.png",
+      "file": "/tmp/vela-probes/r23-style-line-break.png",
       "sig": {
         "ink": 0,
         "mean": null,

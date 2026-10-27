@@ -1004,10 +1004,43 @@ export class SettingsDialog {
         body.append(sid(this.boolRow('Last price label', config.priceScale.priceLabel, (v) => this.emit({ priceScale: { priceLabel: v } })), 'scales.price-scale.last-price-label'));
         body.append(sid(this.boolRow('Countdown to bar close', config.priceScale.countdown, (v) => this.emit({ priceScale: { countdown: v } })), 'scales.price-scale.countdown'));        body.append(sid(this.boolRow('Axis labels', config.priceScale.labelsVisible, (v) => this.emit({ priceScale: { labelsVisible: v } })), 'scales.price-scale.axis-labels'));
         body.append(sid(this.colorRow('Scale border color', config.priceScale.borderColor, (v) => this.emit({ priceScale: { borderColor: v } })), 'scales.price-scale.border-color'));
-        body.append(sid(this.sectionTitle('Crosshair'), 'scales.crosshair'));
-        body.append(sid(this.colorRow('Color', config.crosshair.color, (v) => this.emit({ crosshair: { color: v } })), 'scales.crosshair.color'));
-        body.append(sid(this.numberRow('Width', config.crosshair.width, 0.5, 8, 0.5, (v) => this.emit({ crosshair: { width: v } })), 'scales.crosshair.width'));
-        body.append(sid(this.selectRowLabeled('Style', config.crosshair.style, [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted']] as const, (v) => this.emit({ crosshair: { style: v } })), 'scales.crosshair.style'));
+
+        // ══ CROSSHAIR — its own tab (TradingView's chart-properties page): what it is, how
+        // it inks, whether each axis wears its chip, and what the horizontal line snaps to.
+        body.append(sid(this.section('Crosshair'), 'crosshair'));
+        body.append(sid(this.sectionTitle('Crosshair'), 'crosshair.style'));
+        body.append(
+            sid(this.selectRowLabeled(
+                'Shape',
+                config.crosshair.shape,
+                [['cross', 'Cross'], ['vertical', 'Vertical line'], ['horizontal', 'Horizontal line'], ['dot', 'Dot']] as const,
+                (v) => this.emit({ crosshair: { shape: v } }),
+            ), 'crosshair.style.shape'),
+        );
+        body.append(sid(this.colorRow('Line color', config.crosshair.color, (v) => this.emit({ crosshair: { color: v } })), 'crosshair.style.color'));
+        body.append(sid(this.numberRow('Line width', config.crosshair.width, 0.5, 8, 0.5, (v) => this.emit({ crosshair: { width: v } })), 'crosshair.style.width'));
+        body.append(
+            sid(this.selectRowLabeled(
+                'Line style',
+                config.crosshair.style,
+                [['solid', 'Solid'], ['dashed', 'Dashed'], ['dotted', 'Dotted']] as const,
+                (v) => this.emit({ crosshair: { style: v } }),
+            ), 'crosshair.style.line-style'),
+        );
+        body.append(sid(this.numberRow('Opacity', Math.round(config.crosshair.opacity * 100), 0, 100, 5, (v) => this.emit({ crosshair: { opacity: v / 100 } }), '%'), 'crosshair.style.opacity'));
+        body.append(sid(this.sectionTitle('Labels'), 'crosshair.labels'));
+        body.append(sid(this.boolRow('Price label', config.crosshair.priceLabel, (v) => this.emit({ crosshair: { priceLabel: v } })), 'crosshair.labels.price'));
+        body.append(sid(this.boolRow('Time label', config.crosshair.timeLabel, (v) => this.emit({ crosshair: { timeLabel: v } })), 'crosshair.labels.time'));
+        body.append(sid(this.colorRow('Label background', config.crosshair.labelBackground, (v) => this.emit({ crosshair: { labelBackground: v } })), 'crosshair.labels.background'));
+        body.append(sid(this.sectionTitle('Magnet'), 'crosshair.magnet'));
+        body.append(
+            sid(this.selectRowLabeled(
+                'Snap to',
+                config.crosshair.magnet,
+                [['off', 'Off (free)'], ['close', 'Close price'], ['ohlc', 'Nearest O/H/L/C']] as const,
+                (v) => this.emit({ crosshair: { magnet: v } }),
+            ), 'crosshair.magnet.snap'),
+        );
 
         // ══ CANVAS — background/text + grid (the reference tab) ══
         body.append(sid(this.section('Canvas'), 'canvas'));

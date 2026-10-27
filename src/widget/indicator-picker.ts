@@ -9,6 +9,7 @@
 import { Dialog } from '../ui/components/dialog';
 import { injectStyles } from '../ui/styles';
 import { iconEl } from '../ui/icons';
+import { downloadText } from '../ui/download';
 import { favoritesOf, isFavorite as isStoredFavorite, onFavoritesChange, recentOf, toggleFavorite } from './favorites';
 import type { Unsubscribe } from '../core/util/types';
 
@@ -43,6 +44,7 @@ const CSS = `
     border: 1px solid var(--vela-border);
     border-radius: 8px;
 }
+.vela-ip-searchrow[hidden] { display: none !important; }
 .vela-ip-searchrow:focus-within { border-color: var(--vela-border-strong); }
 .vela-ip-searchrow .vela-icon { color: var(--vela-fg-muted); }
 .vela-ip-search { flex: 1; background: transparent; color: var(--vela-fg); border: none; font-size: 14px; outline: none; }
@@ -179,12 +181,50 @@ const CSS = `
     .vela-ip-tab { min-height: 36px; }
 }
 .vela-ip-empty { padding: var(--vela-space-3); color: var(--vela-fg-muted); text-align: center; }
+.vela-ip-tab[data-templates='1'] { color: var(--vela-accent); font-weight: 700; }
+.vela-ip-tab[data-templates='1'][data-active] { box-shadow: inset 0 -2px 0 var(--vela-accent); }
+/* ── Templates tab ─────────────────────────────────────────────────────────── */
+.vela-ip-tpl { cursor: default; }
+.vela-ip-tpl .vela-ip-name { cursor: pointer; }
+.vela-ip-tpl[data-default='1'] .vela-ip-name { color: var(--vela-fg-bright); font-weight: 600; }
+.vela-ip-tplmeta { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vela-fg-muted); font-size: var(--vela-font-size-sm, 11px); font-variant-numeric: tabular-nums; }
+.vela-ip-flash { margin: 6px 2px; padding: 8px 10px; border-radius: var(--vela-radius-sm); background: var(--vela-hover); color: var(--vela-fg); font-size: var(--vela-font-size-md); }
+.vela-ip-flash[data-tone='bad'] { color: var(--vela-down); }
+.vela-ip-rename { flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--vela-border-strong); border-radius: var(--vela-radius-sm); background: var(--vela-surface); color: var(--vela-fg-bright); font: inherit; }
+.vela-ip-tplacts { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 8px 10px 34px; }
+.vela-ip-verb {
+    all: unset;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--vela-border);
+    border-radius: 999px;
+    color: var(--vela-fg);
+    font-size: var(--vela-font-size-md);
+    cursor: pointer;
+}
+.vela-ip-verb:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-ip-verb[data-primary='1'] { border-color: var(--vela-accent); color: var(--vela-accent); }
+.vela-ip-verb[data-danger='1'] { color: var(--vela-down); }
+.vela-ip-verb[data-armed='1'] { background: var(--vela-down); color: var(--vela-fg-on-fill); border-color: transparent; }
+.vela-ip-tplfoot { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 2px 4px; }
+.vela-ip-saveform { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 2px; }
+.vela-ip-market { display: inline-flex; align-items: center; gap: 6px; color: var(--vela-fg-muted); font-size: var(--vela-font-size-md); white-space: nowrap; }
+.vela-ip-market input { width: 16px; height: 16px; accent-color: var(--vela-accent); }
+@media (pointer: coarse) {
+    .vela-ip-verb { min-height: 40px; padding: 0 14px; }
+    .vela-ip-rename { height: 40px; }
+}
 `;
 
 /** Tab sentinels — never real category names. */
 const FAV_TAB = '\u0000fav';
 const RECENT_TAB = '\u0000recent';
 const ALL_TAB = '\u0000all';
+const TEMPLATES_TAB = '\u0000templates';
 
 /**
  * The order a trader scans the families in — price overlays first, then the studies that
@@ -244,19 +284,62 @@ export interface IndicatorPickerOptions {
     onFavorite?: (key: string, on: boolean) => void;
     /** Recently added keys, newest first. Omitted ⇒ the shared store's own recents. */
     recent?: () => readonly string[];
+    /**
+     * INDICATOR TEMPLATES — TradingView's own surface, given its own TAB here (the
+     * desktop shell also has the labelled Templates dropdown in the topbar; a phone does
+     * not, and a template stack is exactly what a thumb wants when it re-skins a chart).
+     * Every verb the desktop menu carries is wired through the same host callbacks.
+     */
+    templates?: IndicatorTemplatesDoor;
     onOpenChange?: (open: boolean) => void;
     host?: HTMLElement;
+}
+
+/** One saved indicator template, as the tab lists it. */
+export interface IndicatorTemplateRow {
+    name: string;
+    count: number;
+    symbol?: string;
+    timeframe?: string;
+}
+
+/** The template verbs the picker's Templates tab drives — the same set the desktop
+ *  dropdown offers: apply (this chart / every chart), save, rename, delete, export,
+ *  import, set the default new charts open with, and the read-only built-ins. */
+export interface IndicatorTemplatesDoor {
+    rows: () => readonly IndicatorTemplateRow[];
+    onApply: (name: string, target: 'active' | 'all') => number;
+    onSave?: (name: string, includeMarket: boolean) => boolean;
+    onRename?: (from: string, to: string) => boolean;
+    onDelete?: (name: string) => void;
+    onExport?: (name: string) => string | null;
+    onImport?: (json: string) => string | null;
+    defaultName?: () => string | null;
+    onSetDefault?: (name: string | null) => void;
+    /** Charts in the layout — gates "Apply to all charts". */
+    chartCount?: () => number;
+    builtins?: () => readonly { id: string; name: string; description: string; count: number }[];
+    onApplyBuiltin?: (id: string) => void;
 }
 
 export class IndicatorPicker {
     private readonly dialog: Dialog;
     private readonly list: HTMLElement;
     private readonly search: HTMLInputElement;
+    private readonly searchRow: HTMLElement;
     private readonly tabs: HTMLElement;
     private readonly opts: IndicatorPickerOptions;
     private readonly offFavorite: Unsubscribe;
     private isOpen = false;
     private activeTab = ALL_TAB;
+    /** Templates tab state: the row whose verbs are unfolded, the row being renamed (and
+     *  the draft in its field), the save form, two-tap delete, and inline feedback. */
+    private tplOpenRow: string | null = null;
+    private tplRenaming: string | null = null;
+    private tplRenameDraft = '';
+    private tplSaving = false;
+    private tplArmed: string | null = null;
+    private tplFlash: { text: string; tone: 'ok' | 'bad' } | null = null;
 
     constructor(opts: IndicatorPickerOptions) {
         this.opts = opts;
@@ -270,6 +353,7 @@ export class IndicatorPicker {
         const searchRow = doc.createElement('div');
         searchRow.className = 'vela-ip-searchrow';
         searchRow.append(iconEl('search', doc), this.search);
+        this.searchRow = searchRow;
         this.tabs = doc.createElement('div');
         this.tabs.className = 'vela-ip-tabs';
         this.list = doc.createElement('div');
@@ -282,7 +366,7 @@ export class IndicatorPicker {
             draggable: true,
             closeOnInteractOutside: true,
             // The picker adds/removes indicators live — keep the chart undimmed behind it.
-            content: (body) => body.append(searchRow, this.tabs, this.list),
+            content: (body) => body.append(this.searchRow, this.tabs, this.list),
             onOpenChange: (open) => {
                 this.isOpen = open;
                 if (open) {
@@ -378,7 +462,7 @@ export class IndicatorPicker {
     private renderTabs(library: readonly IndicatorRow[]): void {
         const doc = this.tabs.ownerDocument;
         const cats = this.categories(library);
-        if (this.activeTab !== ALL_TAB && this.activeTab !== FAV_TAB && this.activeTab !== RECENT_TAB && !cats.includes(this.activeTab)) {
+        if (this.activeTab !== ALL_TAB && this.activeTab !== FAV_TAB && this.activeTab !== RECENT_TAB && this.activeTab !== TEMPLATES_TAB && !cats.includes(this.activeTab)) {
             this.activeTab = ALL_TAB;
         }
         this.tabs.replaceChildren();
@@ -386,6 +470,10 @@ export class IndicatorPicker {
             const el = doc.createElement('button');
             el.className = 'vela-ip-tab';
             el.type = 'button';
+            if (id === TEMPLATES_TAB) {
+                el.dataset.templates = '1';
+                el.title = 'Indicator templates';
+            }
             if (opts.icon) {
                 el.dataset.icon = '1';
                 el.appendChild(iconEl(id === FAV_TAB && this.activeTab === FAV_TAB ? 'star-filled' : (opts.icon ?? 'indicators'), doc));
@@ -405,6 +493,10 @@ export class IndicatorPicker {
         };
         tab('Favourites', FAV_TAB, { icon: 'star', fav: true });
         tab('Recent', RECENT_TAB, { icon: 'clock' });
+        // Templates sits BEFORE the families, not at the tail: at 390 px a tab after ten
+        // category names is scrolled out of sight — the labelled dropdown's whole point on
+        // a phone is that a trader can SEE it. It lists STACKS to apply, not studies to add.
+        if (this.opts.templates) tab('Templates', TEMPLATES_TAB);
         tab('All', ALL_TAB);
         for (const cat of cats) tab(cat, cat);
     }
@@ -416,6 +508,15 @@ export class IndicatorPicker {
         const instances = this.opts.onChart();
         this.list.replaceChildren();
         this.renderTabs(library);
+        // Search narrows STUDIES, not template stacks — hide it on the Templates page
+        // instead of leaving a dead field above a list it cannot filter.
+        this.searchRow.hidden = this.activeTab === TEMPLATES_TAB;
+        // The Templates tab is its own page: no "on chart" card, no search narrowing (the
+        // field searches STUDIES), just the stack list and its verbs.
+        if (this.activeTab === TEMPLATES_TAB && this.opts.templates) {
+            this.renderTemplates(doc);
+            return;
+        }
         const match = (r: IndicatorRow): boolean => !q || r.name.toLowerCase().includes(q);
 
         const rowEl = (r: IndicatorRow, where: { library?: number; instance?: number }): HTMLElement => {
@@ -569,5 +670,297 @@ export class IndicatorPicker {
             empty.textContent = library.length ? 'No indicators match.' : 'No indicators in the manifest.';
             this.list.appendChild(empty);
         }
+    }
+
+    // ── Templates tab ───────────────────────────────────────────────────────────
+    /**
+     * The saved stacks, TradingView's own vocabulary on every row: the name and what it
+     * holds (`4 indicators · BTCUSDT · 1h` when it was saved with the market), a star for
+     * the DEFAULT template new charts open with, and a ⋯ that unfolds Apply / Apply to all
+     * charts / Rename / Export / Delete. Saving and importing sit at the foot of the list,
+     * where a thumb arrives after scrolling the stacks it already has.
+     */
+    private renderTemplates(doc: Document): void {
+        const t = this.opts.templates;
+        if (!t) return;
+        if (this.tplFlash) {
+            const flash = doc.createElement('div');
+            flash.className = 'vela-ip-flash';
+            flash.dataset.tone = this.tplFlash.tone;
+            flash.textContent = this.tplFlash.text;
+            this.list.appendChild(flash);
+            this.tplFlash = null;
+        }
+        const rows = t.rows();
+        const def = t.defaultName?.() ?? null;
+        if (rows.length === 0) {
+            const empty = doc.createElement('div');
+            empty.className = 'vela-ip-empty';
+            empty.textContent = 'No templates yet. Add the indicators you want, then Save the current stack as a template — it re-skins any chart in one tap.';
+            this.list.appendChild(empty);
+        }
+        for (const r of rows) {
+            const row = doc.createElement('div');
+            row.className = 'vela-ip-row vela-ip-tpl';
+            row.dataset.template = r.name;
+            row.dataset.default = def === r.name ? '1' : '';
+
+            const glyph = doc.createElement('span');
+            glyph.className = 'vela-ip-glyph';
+            glyph.appendChild(iconEl('templates', doc));
+            row.appendChild(glyph);
+
+            if (this.tplRenaming === r.name) {
+                const field = doc.createElement('input');
+                field.className = 'vela-ip-rename';
+                field.value = this.tplRenameDraft;
+                field.setAttribute('aria-label', 'Template name');
+                field.addEventListener('input', () => { this.tplRenameDraft = field.value; });
+                field.addEventListener('keydown', (e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter') this.commitRename(r.name);
+                    if (e.key === 'Escape') { this.tplRenaming = null; this.refresh(); }
+                });
+                const ok = doc.createElement('button');
+                ok.type = 'button';
+                ok.className = 'vela-ip-trash';
+                ok.appendChild(iconEl('check', doc));
+                ok.setAttribute('aria-label', 'Save name');
+                ok.addEventListener('click', () => this.commitRename(r.name));
+                row.append(field, ok);
+                this.list.appendChild(row);
+                setTimeout(() => { field.focus(); field.select(); }, 0);
+                continue;
+            }
+
+            const name = doc.createElement('span');
+            name.className = 'vela-ip-name';
+            name.textContent = r.name;
+            row.appendChild(name);
+            const meta = doc.createElement('span');
+            meta.className = 'vela-ip-tplmeta';
+            meta.textContent = `${r.count} indicator${r.count === 1 ? '' : 's'}${r.symbol ? ` · ${r.symbol}` : ''}${r.timeframe ? ` · ${r.timeframe}` : ''}`;
+            row.appendChild(meta);
+
+            // Applying is the row's tap (TV's rule: click a template, the chart re-skins).
+            name.addEventListener('click', () => this.applyTemplate(r.name, 'active'));
+
+            if (t.onSetDefault) {
+                const star = doc.createElement('button');
+                star.className = 'vela-ip-star';
+                const on = def === r.name;
+                star.dataset.on = on ? '1' : '';
+                star.appendChild(iconEl(on ? 'star-filled' : 'star', doc));
+                star.setAttribute('aria-pressed', on ? 'true' : 'false');
+                star.setAttribute('aria-label', on ? `${r.name} is the default template` : `Make ${r.name} the default template`);
+                star.addEventListener('click', () => {
+                    t.onSetDefault?.(on ? null : r.name);
+                    this.tplFlash = { text: on ? 'Default template cleared.' : `New charts will open with “${r.name}”.`, tone: 'ok' };
+                    this.refresh();
+                });
+                row.appendChild(star);
+            }
+            const more = doc.createElement('button');
+            more.className = 'vela-ip-star vela-ip-tplmore';
+            more.appendChild(iconEl('kebab', doc));
+            more.setAttribute('aria-label', `${r.name} actions`);
+            more.setAttribute('aria-expanded', this.tplOpenRow === r.name ? 'true' : 'false');
+            more.addEventListener('click', () => {
+                this.tplOpenRow = this.tplOpenRow === r.name ? null : r.name;
+                this.tplArmed = null;
+                this.refresh();
+            });
+            row.appendChild(more);
+            this.list.appendChild(row);
+
+            if (this.tplOpenRow === r.name) this.list.appendChild(this.templateActions(doc, r.name, (t.chartCount?.() ?? 1) > 1));
+        }
+
+        const builtins = t.builtins?.() ?? [];
+        if (builtins.length > 0) {
+            const head = doc.createElement('div');
+            head.className = 'vela-ip-group';
+            head.textContent = 'Built-in · read-only';
+            this.list.appendChild(head);
+            for (const b of builtins) {
+                const row = doc.createElement('div');
+                row.className = 'vela-ip-row vela-ip-tpl';
+                row.dataset.builtin = b.id;
+                const glyph = doc.createElement('span');
+                glyph.className = 'vela-ip-glyph';
+                glyph.appendChild(iconEl('templates', doc));
+                const name = doc.createElement('span');
+                name.className = 'vela-ip-name';
+                name.textContent = b.name;
+                const meta = doc.createElement('span');
+                meta.className = 'vela-ip-tplmeta';
+                meta.textContent = `${b.description} · ${b.count}`;
+                row.append(glyph, name, meta);
+                row.addEventListener('click', () => {
+                    t.onApplyBuiltin?.(b.id);
+                    this.tplFlash = { text: `Applied the built-in “${b.name}”.`, tone: 'ok' };
+                    this.refresh();
+                });
+                this.list.appendChild(row);
+            }
+        }
+        this.renderTemplatesSaveRow(doc);
+    }
+
+    private templateActions(doc: Document, name: string, multi: boolean): HTMLElement {
+        const t = this.opts.templates;
+        const strip = doc.createElement('div');
+        strip.className = 'vela-ip-tplacts';
+        if (!t) return strip;
+        const verb = (label: string, run: () => void, opts: { danger?: boolean; armed?: boolean } = {}): void => {
+            const b = doc.createElement('button');
+            b.type = 'button';
+            b.className = 'vela-ip-verb';
+            b.textContent = opts.armed ? `Tap again to ${label.toLowerCase()}` : label;
+            if (opts.danger) b.dataset.danger = '1';
+            if (opts.armed) b.dataset.armed = '1';
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                run();
+            });
+            strip.appendChild(b);
+        };
+        verb('Apply to this chart', () => this.applyTemplate(name, 'active'));
+        if (multi && t.onApply) {
+            verb('Apply to all charts', () => {
+                const n = t.onApply(name, 'all');
+                this.tplOpenRow = null;
+                this.tplFlash = { text: `Applied “${name}” to ${n} chart${n === 1 ? '' : 's'}.`, tone: 'ok' };
+                this.refresh();
+            });
+        }
+        if (t.onRename) {
+            verb('Rename', () => {
+                this.tplRenaming = name;
+                this.tplRenameDraft = name;
+                this.tplOpenRow = null;
+                this.refresh();
+            });
+        }
+        if (t.onExport) {
+            verb('Export', () => {
+                const json = t.onExport?.(name);
+                if (json) downloadText(doc, `${name}.vela-template.json`, json);
+                this.tplOpenRow = null;
+                this.refresh();
+            });
+        }
+        if (t.onDelete) {
+            verb('Delete', () => {
+                if (this.tplArmed !== name) {
+                    this.tplArmed = name;
+                    this.refresh();
+                    return;
+                }
+                t.onDelete?.(name);
+                this.tplArmed = null;
+                this.tplOpenRow = null;
+                this.tplFlash = { text: `Deleted “${name}”.`, tone: 'ok' };
+                this.refresh();
+            }, { danger: true, armed: this.tplArmed === name });
+        }
+        return strip;
+    }
+
+    private applyTemplate(name: string, target: 'active' | 'all'): void {
+        const t = this.opts.templates;
+        if (!t) return;
+        const n = t.onApply(name, target);
+        this.tplOpenRow = null;
+        this.tplFlash = n > 0 ? { text: `Applied “${name}”.`, tone: 'ok' } : { text: `“${name}” could not be applied.`, tone: 'bad' };
+        this.refresh();
+    }
+
+    private commitRename(from: string): void {
+        const t = this.opts.templates;
+        const to = this.tplRenameDraft.trim();
+        if (!t?.onRename || !to) return;
+        const ok = t.onRename(from, to);
+        this.tplFlash = ok ? { text: `Renamed to “${to}”.`, tone: 'ok' } : { text: `“${to}” is already taken.`, tone: 'bad' };
+        if (ok) this.tplRenaming = null;
+        this.refresh();
+    }
+
+    /** Save the current stack + import, at the foot of the Templates tab. */
+    private renderTemplatesSaveRow(doc: Document): void {
+        const t = this.opts.templates;
+        if (!t) return;
+        if (this.tplSaving && t.onSave) {
+            const form = doc.createElement('div');
+            form.className = 'vela-ip-saveform';
+            const input = doc.createElement('input');
+            input.className = 'vela-ip-rename';
+            input.placeholder = 'Template name';
+            input.setAttribute('aria-label', 'Save indicator template as');
+            const chip = doc.createElement('label');
+            chip.className = 'vela-ip-market';
+            const box = doc.createElement('input');
+            box.type = 'checkbox';
+            const chipText = doc.createElement('span');
+            chipText.textContent = 'remember market';
+            chip.append(box, chipText);
+            const save = doc.createElement('button');
+            save.type = 'button';
+            save.className = 'vela-ip-verb';
+            save.dataset.primary = '1';
+            save.textContent = 'Save';
+            const commit = (): void => {
+                const name = input.value.trim();
+                if (!name) { input.focus(); return; }
+                const ok = t.onSave?.(name, box.checked) ?? false;
+                this.tplFlash = ok ? { text: `Saved “${name}”.`, tone: 'ok' } : { text: 'That name is empty or already used.', tone: 'bad' };
+                if (ok) { this.tplSaving = false; }
+                this.refresh();
+            };
+            save.addEventListener('click', commit);
+            input.addEventListener('keydown', (e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') commit();
+                if (e.key === 'Escape') { this.tplSaving = false; this.refresh(); }
+            });
+            form.append(input, chip, save);
+            this.list.appendChild(form);
+            setTimeout(() => input.focus(), 0);
+            return;
+        }
+        const foot = doc.createElement('div');
+        foot.className = 'vela-ip-tplfoot';
+        if (t.onSave) {
+            const save = doc.createElement('button');
+            save.type = 'button';
+            save.className = 'vela-ip-verb';
+            save.dataset.primary = '1';
+            save.appendChild(iconEl('plus', doc));
+            save.appendChild(doc.createTextNode(`Save current (${this.opts.onChart().length}) as template`));
+            save.addEventListener('click', () => { this.tplSaving = true; this.refresh(); });
+            foot.appendChild(save);
+        }
+        if (t.onImport) {
+            const file = doc.createElement('input');
+            file.type = 'file';
+            file.accept = 'application/json,.json';
+            file.hidden = true;
+            const btn = doc.createElement('button');
+            btn.type = 'button';
+            btn.className = 'vela-ip-verb';
+            btn.appendChild(iconEl('download', doc));
+            btn.appendChild(doc.createTextNode('Import'));
+            btn.addEventListener('click', () => file.click());
+            file.addEventListener('change', async () => {
+                const f = file.files?.[0];
+                if (!f) return;
+                const text = await f.text();
+                const name = t.onImport?.(text) ?? null;
+                this.tplFlash = name ? { text: `Imported “${name}”.`, tone: 'ok' } : { text: 'That file is not a Vela template.', tone: 'bad' };
+                this.refresh();
+            });
+            foot.append(file, btn);
+        }
+        this.list.appendChild(foot);
     }
 }

@@ -6,7 +6,7 @@
 // chart instance survives every market change and only dies with the cell itself, on a
 // layout change — its state then round-trips through the workspace pool, so shrinking
 // 4 → 2 → 4 restores the third and fourth exactly, indicators and drawings included).
-import { classicPineSource } from '../core/native-indicators/classics/pine-source';
+import { builtinPineSource } from '../core/native-indicators/classics/pine-source';
 import { Vela } from '../Vela';
 import { normalizeSession, type MarketSession, type NativeBackend, type VelaOptions, type VelaTheme } from '../core/options';
 import type { OHLCV } from '../core/model/ohlcv';
@@ -37,7 +37,7 @@ import {
     type ExternalIndicatorEntry,
     type WidgetContext,
 } from '../widget/contributions';
-import { prefixedSymbol, type CellState } from '../state/document';
+import { prefixedSymbol, type CellRuntimeState, type CellState, type PaneState } from '../state/document';
 import { parseSymbol } from '../data/ProviderRegistry';
 import { isExchangeTimezone, normalizeTimezone, resolveTimezone, timezoneMenuRows } from '../core/timezones';
 import { applyPlotOverlayTokens } from '../ui';
@@ -1412,7 +1412,7 @@ export class ChartCell {
                 native: true,
                 nativeType: n.type,
                 beta: n.beta,
-                ...(classicPineSource(n.type) ? { source: classicPineSource(n.type) as string } : {}),
+                ...(builtinPineSource(n.type) ? { source: builtinPineSource(n.type) as string } : {}),
             })),
             ...this.manifest.map((e) => ({ name: e.name, language: e.language, category: e.category, source: e.script })),
         ];
@@ -1702,6 +1702,11 @@ export class ChartCell {
         if (cs.rendererConfig != null) this.inner.renderer.applyConfig(cs.rendererConfig);
         if (cs.drawings != null) this.inner.drawings.fromJSON(cs.drawings);
         if (cs.indicators) this.applyIndicatorLedger(cs.indicators as { manifest: LedgerManifestEntry[]; natives: LedgerNativeEntry[] });
+        // Pane layout is durable state, not just a renderer side effect: restore it after
+        // the indicator ledger has recreated the studies, so every indicator can be put
+        // back on its snapshot pane and scale column.
+        if (cs.panes) this.inner.panes.restore(cs.panes);
+        this.applyRuntimeState(cs.runtime);
         // Per-chart timezone: the document's cell-scoped choice wins (absent = follow the
         // workspace default), and the axis re-labels in place.
         if (cs.timezone !== this.state.timezone) {
@@ -1734,6 +1739,49 @@ export class ChartCell {
         if (Object.keys(next).length > 0) void this.inner.setMarket(next);
     }
 
+    /** Runtime view flags are chart edits too (hide candles, freeze autoscale), even
+     *  though the cosmetic config document deliberately excludes them. */
+    private runtimeState(): CellRuntimeState | undefined {
+        const r = this.inner?.renderer;
+        if (!r) return undefined;
+        const out: CellRuntimeState = {};
+        try {
+            if (r.supports('candleVisible')) out.candleVisible = r.get('candleVisible') !== false;
+            if (r.supports('autoScale')) out.autoScale = r.get('autoScale') !== false;
+        } catch {
+            /* a minimal renderer may throw on an unknown getter — its flags aren't durable */
+        }
+        return Object.keys(out).length > 0 ? out : undefined;
+    }
+
+    private applyRuntimeState(runtime: CellRuntimeState | undefined): void {
+        const r = this.inner?.renderer;
+        if (!r || !runtime) return;
+        try {
+            if (runtime.candleVisible !== undefined && r.supports('candleVisible')) r.set('candleVisible', runtime.candleVisible);
+            if (runtime.autoScale !== undefined && r.supports('autoScale') && r.get('autoScale') !== runtime.autoScale) r.set('autoScale', runtime.autoScale);
+        } catch {
+            /* unsupported runtime flags are simply not restored */
+        }
+    }
+
+    /** Durable pane stack — only the fields a restore needs, never transient titles. */
+    private paneState(): PaneState[] | undefined {
+        if (!this.inner?.panes.supported) return undefined;
+        try {
+            return this.inner.panes.list().map((p) => ({
+                id: p.id,
+                kind: p.kind,
+                order: p.order,
+                collapsed: p.collapsed,
+                maximized: p.maximized,
+                indicators: p.indicators.map((i) => ({ id: i.id, ownScale: i.ownScale })),
+            }));
+        } catch {
+            return undefined;
+        }
+    }
+
     /** Snapshot everything the pool needs to restore this slot later. The market fields
      *  come from the LIVE config (`chart.market`) — the requested identity — so a switch
      *  still loading when the snapshot is taken (persist-on-close) is not lost. */
@@ -1751,6 +1799,8 @@ export class ChartCell {
             indicatorTitles: this.indicatorTitlesOn,
             indicatorValues: this.indicatorValuesOn,
             rendererConfig: this.inner?.renderer.getConfig() ?? undefined,
+            runtime: this.runtimeState(),
+            panes: this.paneState(),
             drawings: this.inner ? this.inner.drawings.toJSON() : undefined,
             // Natives from the chart's SYNC registry read — an async catalog mirror here
             // lost unload-time saves, and the old empty-set fallbacks resurrected removed

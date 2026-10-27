@@ -41,9 +41,22 @@ export interface MenuOptions extends MenuControllerOptions {
     iconBadges?: boolean;
 }
 
+/** Nested lists on a phone cannot rely on a bare right-flip: a 180px branch next to a
+ *  180px parent at x=100 has no room on EITHER side, so Floating UI would park the child
+ *  at x<0. Fixed strategy + viewport boundary + vertical fallbacks keeps it on screen. */
+const SUBMENU_POSITIONING: Partial<zagMenu.PositioningOptions> = {
+    strategy: 'fixed',
+    flip: ['right-start', 'left-start', 'bottom-start', 'top-start'],
+    slide: true,
+    overlap: true,
+    overflowPadding: 12,
+    boundary: () => document.documentElement,
+};
+
 interface SurfaceOptions {
     host: HTMLElement;
     placement: MenuControllerOptions['placement'];
+    positioning?: Partial<zagMenu.PositioningOptions>;
     onSelect: (id: string) => void;
     onOpenChange?: (open: boolean) => void;
     trigger?: HTMLElement;
@@ -119,6 +132,7 @@ class Surface {
             items: [],
             id: opts.id,
             placement: opts.placement,
+            positioning: opts.positioning,
             onSelect: (id) => this.onSelect(id),
             getAnchorRect: () => this.pinnedAnchor,
             onOpenChange: (open) => {
@@ -382,6 +396,7 @@ class Surface {
                 const sub = new Surface(doc, {
                     host: this.host,
                     placement: 'right-start',
+                    positioning: SUBMENU_POSITIONING,
                     opener: li,
                     onSelect: this.onSelect,
                     onFavorite: this.onFavorite,
@@ -408,6 +423,7 @@ export class Menu {
         this.root = new Surface(doc, {
             host,
             placement: opts.placement,
+            positioning: opts.positioning,
             onSelect: (id) => opts.onSelect?.(id),
             onOpenChange: opts.onOpenChange,
             trigger: opts.trigger,

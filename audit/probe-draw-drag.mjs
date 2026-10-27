@@ -22,5 +22,5 @@ out.state = await page.evaluate(() => {
 });
 out.btns = await page.evaluate(() => [...document.querySelectorAll('.vela-drawpill-btn')].slice(0, 2).map((b) => b.disabled));
 console.log(JSON.stringify(out, null, 1));
-await page.screenshot({ path: '/home/user/shots/40-pill-drawn.png' });
+await page.screenshot({ path: '/tmp/vela-probes/40-pill-drawn.png' });
 await browser.close();

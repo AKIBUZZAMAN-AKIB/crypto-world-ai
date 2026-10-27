@@ -14,7 +14,7 @@ facts.tabs = await page.evaluate(() => [...document.querySelectorAll('.vela-dd-t
 await page.locator('.vela-dd-tab[aria-label="Recent tools"]').tap();
 await page.waitForTimeout(350);
 facts.recent = await page.evaluate(() => ({ rows: [...document.querySelectorAll('.vela-dd-row')].map((r) => r.textContent.trim()), empty: document.querySelector('.vela-dd-empty')?.textContent ?? null }));
-await page.screenshot({ path: '/home/user/shots/41-drawings-recent.png' });
+await page.screenshot({ path: '/tmp/vela-probes/41-drawings-recent.png' });
 await page.locator('.vela-dd-tab[aria-label="Favourites"]').tap();
 await page.waitForTimeout(300);
 facts.fav = await page.evaluate(() => ({ empty: document.querySelector('.vela-dd-empty')?.textContent ?? null }));

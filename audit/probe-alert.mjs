@@ -37,7 +37,7 @@ const sheet = await page.evaluate(() => {
     bodies: body.length,
   };
 });
-await page.screenshot({ path: 'shots/50-alert-sheet.png' });
+await page.screenshot({ path: '/tmp/vela-probes/50-alert-sheet.png' });
 
 // pick "Crossing up" + a level just below the market so it fires on the next tick
 await page.locator('.vela-ac-opt', { hasText: 'Crossing up' }).tap();
@@ -54,7 +54,7 @@ const afterCreate = await page.evaluate(() => ({
   toast: document.querySelector('.vela-toast')?.textContent ?? null,
   alerts: window.__ws.alertEntries?.().length ?? null,
 }));
-await page.screenshot({ path: 'shots/51-alert-created.png' });
+await page.screenshot({ path: '/tmp/vela-probes/51-alert-created.png' });
 
 // Back into More → Alerts: the armed level must be listed with its state
 await page.locator('.vela-mb-more').tap();
@@ -67,7 +67,7 @@ const manager = await page.evaluate(() => ({
   armedCount: document.querySelectorAll('.vela-md-lkebab').length,
   sections: [...document.querySelectorAll('.vela-md-section')].map((e) => e.textContent),
 }));
-await page.screenshot({ path: 'shots/52-alert-manager.png' });
+await page.screenshot({ path: '/tmp/vela-probes/52-alert-manager.png' });
 // A "Greater than" level BELOW the market is already true — it must fire at creation.
 await page.locator('.vela-md-createalert').tap();
 await page.waitForTimeout(600);
@@ -92,6 +92,6 @@ const fired = await page.evaluate(() => {
     lines,
   };
 });
-await page.screenshot({ path: 'shots/53-alert-fired.png' });
+await page.screenshot({ path: '/tmp/vela-probes/53-alert-fired.png' });
 console.log(JSON.stringify({ price, alertsView, sheet, afterCreate, manager, fired, errors: errors.slice(0, 4) }, null, 1));
 await browser.close();

@@ -18,7 +18,7 @@ facts.inert = await page.evaluate(() => ({
   barInert: document.querySelector('.vela-mobilebar')?.closest('[inert]') !== null,
   sheetInert: document.querySelector('.vela-drawer-positioner')?.hasAttribute('inert'),
 }));
-await page.screenshot({ path: '/home/user/shots/30-more.png' });
+await page.screenshot({ path: '/tmp/vela-probes/30-more.png' });
 await page.locator('.vela-md-search input').fill('alert');
 await page.waitForTimeout(300);
 facts.filtered = await page.evaluate(() => ({
@@ -26,7 +26,7 @@ facts.filtered = await page.evaluate(() => ({
   heads: [...document.querySelectorAll('.vela-md-section:not([hidden]), .vela-md-charthead:not([hidden])')].map((h) => h.textContent.trim()),
   nomatch: document.querySelector('.vela-md-nomatch')?.textContent ?? null,
 }));
-await page.screenshot({ path: '/home/user/shots/30-more-search.png' });
+await page.screenshot({ path: '/tmp/vela-probes/30-more-search.png' });
 await page.locator('.vela-md-search input').fill('zzz');
 await page.waitForTimeout(250);
 facts.none = await page.evaluate(() => ({ nomatch: document.querySelector('.vela-md-nomatch')?.textContent ?? null, visibleRows: document.querySelectorAll('.vela-md-row:not([hidden])').length }));

@@ -57,7 +57,7 @@ const dark = await sample('dark');
 await p.evaluate(() => window.__ws.setTheme('light'));
 await p.waitForTimeout(1400);
 const light = await sample('light');
-await p.screenshot({ path: 'shots/A1-light-measured.png' });
+await p.screenshot({ path: '/tmp/vela-probes/A1-light-measured.png' });
 
 console.log(JSON.stringify({ spots, dark, light }, null, 1));
 await b.close();

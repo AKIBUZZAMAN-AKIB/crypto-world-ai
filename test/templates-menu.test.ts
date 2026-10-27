@@ -126,13 +126,14 @@ describe('the templates menu', () => {
         expect(row('Swing')?.querySelector('.vela-tm-meta')?.textContent).toBe('4 indicators · BTCUSDT · 60');
         expect(row('Scalp')?.querySelector('.vela-tm-meta')?.textContent).toBe('2 indicators');
         // The header answers "what is this", not just "here is a list".
-        expect(panel()?.querySelector('.vela-tm-title')?.textContent).toBe('Chart templates');
+        expect(panel()?.querySelector('.vela-tm-title')?.textContent).toBe('Indicator templates');
+        expect([...document.querySelectorAll('.vela-tm-tab')].map((t) => t.textContent)).toEqual(['Favorites', 'My templates', 'Technical', 'Financial']);
     });
 
     it('says what to do when nothing is saved yet', () => {
         open(stub());
         expect(rows()).toHaveLength(0);
-        expect(panel()?.querySelector('.vela-tm-empty')?.textContent).toContain('No templates yet');
+        expect(panel()?.querySelector('.vela-tm-empty')?.textContent).toContain('No templates of your own yet');
     });
 
     it('applies a template to this chart and closes — TV closes on pick', () => {
@@ -296,7 +297,7 @@ describe('the templates button in the top bar', () => {
             el.classList.contains('vela-widget-templates') ? 'templates' : 'indicators',
         );
         expect(order).toEqual(['indicators', 'templates']);
-        expect(document.querySelector('.vela-widget-templates')?.getAttribute('aria-label')).toBe('Chart templates');
+        expect(document.querySelector('.vela-widget-templates')?.getAttribute('aria-label')).toBe('Indicator templates');
     });
 
     it('opens the menu and mirrors aria-expanded', async () => {

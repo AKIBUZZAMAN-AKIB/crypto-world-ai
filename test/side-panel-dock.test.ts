@@ -3,7 +3,7 @@
 // env like the rest, so the DOM is a MINIMAL stub — enough for the panel/dock logic (element
 // tree, listeners, dataset, inline style); real painting is proven in the browser.
 import { describe, it, expect, vi } from 'vitest';
-import { SidePanel, clampPanelWidth, DEFAULT_PANEL_MIN_WIDTH, DEFAULT_PANEL_MAX_WIDTH } from '../src/widget/side-panel';
+import { SidePanel, clampPanelWidth, clampPanelTop, DEFAULT_PANEL_MIN_WIDTH, DEFAULT_PANEL_MAX_WIDTH, DEFAULT_PANEL_TOP, MAX_PANEL_TOP } from '../src/widget/side-panel';
 import { PanelDock } from '../src/widget/panel-dock';
 import { registerSidePanel, sidePanels, unregisterSidePanel, type SidePanelButton, type WidgetContext } from '../src/widget/contributions';
 import { sanitizeState } from '../src/state/document';
@@ -89,6 +89,52 @@ describe('clampPanelWidth', () => {
         expect(clampPanelWidth(10_000)).toBe(DEFAULT_PANEL_MAX_WIDTH);
         // A max below the min would otherwise produce an empty range.
         expect(clampPanelWidth(400, 300, 100)).toBe(300);
+    });
+});
+
+describe('clampPanelTop', () => {
+    it('keeps a mobile sheet between fullscreen and its short limit', () => {
+        expect(clampPanelTop(-1)).toBe(0);
+        expect(clampPanelTop(0.42)).toBe(0.42);
+        expect(clampPanelTop(4)).toBe(MAX_PANEL_TOP);
+        expect(clampPanelTop(Number.NaN)).toBe(DEFAULT_PANEL_TOP);
+    });
+});
+
+describe('SidePanel mobile sheet', () => {
+    it('moves up/down by buttons, keyboard, drag and reset without losing the top', () => {
+        const { root } = stubDoc();
+        const panel = new SidePanel(root as never, 'Sheet', 'x-sheet', { maximizable: true });
+        const seen: number[] = [];
+        panel.onTopChange = (top) => seen.push(top);
+        expect(panel.top).toBe(DEFAULT_PANEL_TOP);
+        const header = find(panel.el as never, 'vela-panel-header')!;
+        const moves = header.children.filter((c) => c.className.includes('vela-panel-move'));
+        const up = moves[0]!;
+        const down = moves[1]!;
+        const grip = find(panel.el as never, 'vela-panel-grip')!;
+        expect(grip).toBeDefined();
+        down.fire('click');
+        expect(panel.top).toBeCloseTo(0.34, 3);
+        up.fire('click');
+        expect(panel.top).toBe(DEFAULT_PANEL_TOP);
+        grip.fire('keydown', { key: 'ArrowDown' });
+        expect(panel.top).toBeCloseTo(0.34, 3);
+        grip.fire('keydown', { key: 'Home' });
+        expect(panel.top).toBe(0);
+        grip.fire('dblclick');
+        expect(panel.top).toBe(DEFAULT_PANEL_TOP);
+        // 128px on the 640px fallback host = +0.2 of the height.
+        grip.fire('pointerdown', { clientY: 100 });
+        grip.fire('pointermove', { clientY: 228 });
+        grip.fire('pointerup', { clientY: 228 });
+        expect(panel.top).toBeCloseTo(0.42, 3);
+        expect(seen[seen.length - 1]).toBeCloseTo(0.42, 3);
+        // Restore/maximize are independent: restoring keeps the user's chosen top.
+        panel.setMaximized(true);
+        expect((panel.el as unknown as StubEl).dataset.maximized).toBe('1');
+        panel.setMaximized(false);
+        expect(panel.top).toBeCloseTo(0.42, 3);
     });
 });
 
@@ -322,6 +368,16 @@ describe('PanelDock', () => {
         expect(changed()).toBeGreaterThan(0);
     });
 
+    it('persists and restores a mobile sheet top', () => {
+        const { dock: d, panels } = dock();
+        panels.a.setTop(0.42, true);
+        expect(d.getState()).toEqual({ tops: { a: 0.42 } });
+        d.applyState({ tops: { a: 0.55 } });
+        expect(panels.a.top).toBe(0.55);
+        const state = sanitizeState({ version: 1, layout: '1', charts: [], panels: { tops: { a: 0.55, bad: 4 } } });
+        expect(state?.panels?.tops).toEqual({ a: 0.55 });
+    });
+
     it('persists the floating panels the user pinned, applies them on restore, and remembers them for late panels', () => {
         const { dock: d, root, changed } = dock();
         const off = registerSidePanel({ id: 'x', title: 'X', icon: 'ix', overlay: true, mount: () => {} });
@@ -474,7 +530,15 @@ describe('PanelDock', () => {
         expect(slotChildren).toBe(1); // the control landed in the slot
         // The slot sits between the title and the close button in the header row.
         const header = find(panel, 'vela-panel-header')!;
-        expect(header.children.map((c) => c.className)).toEqual(['vela-panel-title', 'vela-panel-header-slot', 'vela-panel-close']);
+        expect(header.children.map((c) => c.className)).toEqual([
+            'vela-panel-title',
+            'vela-panel-grip',
+            'vela-panel-header-slot',
+            'vela-panel-move',
+            'vela-panel-move',
+            'vela-panel-max',
+            'vela-panel-close',
+        ]);
         off();
         d.refresh();
     });

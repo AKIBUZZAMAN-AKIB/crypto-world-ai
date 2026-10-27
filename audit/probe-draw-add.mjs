@@ -13,6 +13,6 @@ const out = await page.evaluate(() => {
 });
 await page.waitForTimeout(400);
 out.btns = await page.evaluate(() => [...document.querySelectorAll('.vela-drawpill-btn')].slice(0, 2).map((b) => ({ d: b.disabled, o: getComputedStyle(b).opacity })));
-await page.screenshot({ path: '/home/user/shots/40-pill-drawn.png' });
+await page.screenshot({ path: '/tmp/vela-probes/40-pill-drawn.png' });
 console.log(JSON.stringify(out));
 await browser.close();

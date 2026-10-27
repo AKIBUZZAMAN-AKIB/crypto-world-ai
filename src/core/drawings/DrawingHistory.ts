@@ -22,8 +22,17 @@ export class DrawingHistory {
     private pending: DrawingsDocument | null = null; // pre-mutation snapshot of the open transaction
     private dirtied = false; // promoted-once guard within a transaction
     private depth = 0; // transaction nesting (re-entrancy)
+    private readonly pushed = new Set<() => void>();
 
     constructor(private readonly cap = 100) {}
+
+    /** One notification per ACTUAL history entry, however many drawing events a
+     *  transaction emits. The host's unified timeline uses this instead of guessing
+     *  from `drawing:created` / `drawing:edited` / `drawing:removed`. */
+    onPush(cb: () => void): () => void {
+        this.pushed.add(cb);
+        return () => this.pushed.delete(cb);
+    }
 
     /** Open a transaction; `snapshot` is the model state BEFORE any mutation in it. */
     begin(snapshot: DrawingsDocument): void {
@@ -102,5 +111,6 @@ export class DrawingHistory {
         this.undoStack.push(doc);
         if (this.undoStack.length > this.cap) this.undoStack.shift();
         this.redoStack = []; // a fresh mutation invalidates redo
+        for (const cb of this.pushed) cb();
     }
 }

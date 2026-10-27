@@ -1265,6 +1265,48 @@ if not na(pivotLow)
 );
 
 
+/**
+ * The two LAYER-BACKED natives. They are NOT classic catalog rows, so they keep their own
+ * core-computed paint path (a volume column stack and a second symbol fetched through the
+ * host's feed) — but TradingView still opens a `{ }` source for them, and a trader can
+ * read, copy and fork that script. These are the reference implementations of the same
+ * study, written in Pine v6. VPVR (visible-range volume profile) remains the ONE study
+ * without a source, exactly as on TradingView: it is a viewport-dependent layer, not a
+ * plottable series.
+ */
+const VOLUME_NATIVE = script(
+    'Volume',
+    true,
+    `up = input.color(${BULLISH}, "Up color")
+down = input.color(${BEARISH}, "Down color")
+
+plot(volume, title="Volume", style=plot.style_columns, color=close >= open ? up : down)`,
+);
+
+const COMPARE_NATIVE = script(
+    'Compare',
+    true,
+    `sym = input.symbol("BTCUSDT", "Compare symbol")
+tf = input.timeframe("60", "Timeframe")
+ink = input.color(${ACCENT}, "Color")
+
+otherClose = request.security(sym, tf, close)
+plot(otherClose, title="Compare", color=ink, linewidth=2)`,
+);
+
+/** Sources for natives OUTSIDE the classic catalog. Kept separate so the engine's
+ *  built-in fast path (which runs the classic scripts as Pine) is unchanged. */
+const NATIVE_SOURCES: Record<string, string> = {
+    volume: VOLUME_NATIVE,
+    compare: COMPARE_NATIVE,
+};
+
+/** Titles for the editor's built-in picker — the classic catalog supplies its own. */
+const NATIVE_TITLES: Record<string, string> = {
+    volume: 'Volume',
+    compare: 'Compare',
+};
+
 const SOURCES: Record<string, string> = {
     sma: SMA,
     ema: EMA,
@@ -1342,9 +1384,30 @@ const SOURCES: Record<string, string> = {
     zigzag: ZIGZAG,
 };
 
-/** The Pine v6 source behind a built-in study, or `undefined` when it has none. */
+/** The Pine v6 source behind a CLASSIC built-in study, or `undefined` when it has none.
+ *  This is also the set the engine may EXECUTE in place of the core compute. */
 export function classicPineSource(type: string): string | undefined {
     return SOURCES[type];
+}
+
+/** The Pine source a study's `{ }` action opens — classic scripts AND the two
+ *  layer-backed natives. This is the truth source for "every indicator has Pine". */
+export function builtinPineSource(type: string): string | undefined {
+    return SOURCES[type] ?? NATIVE_SOURCES[type];
+}
+
+/** Every built-in that ships a Pine source (editor list + test contract). */
+export function builtinPineIndex(): Array<{ type: string; source: string }> {
+    return [...classicPineIndex(), ...Object.entries(NATIVE_SOURCES).map(([type, source]) => ({ type, source }))];
+}
+
+/** The editor's built-in scripts… picker: title-sorted, including the two natives. */
+export function builtinPineEntries(): Array<{ type: string; title: string; source: string }> {
+    const titles = new Map<string, string>(classicSpecs.map((spec) => [spec.type, spec.title]));
+    for (const [type, title] of Object.entries(NATIVE_TITLES)) titles.set(type, title);
+    return Object.entries({ ...SOURCES, ...NATIVE_SOURCES })
+        .map(([type, source]) => ({ type, title: titles.get(type) ?? type, source }))
+        .sort((a, b) => a.title.localeCompare(b.title));
 }
 
 /** Every built-in study that ships a Pine implementation (the editor's "Built-in" list). */

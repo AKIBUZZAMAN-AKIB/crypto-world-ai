@@ -155,7 +155,9 @@ describe('the kebab drawer’s Sync view', () => {
         expect(labels).not.toContain('Sync');
         (document.querySelectorAll<HTMLElement>('.vela-md-row')[labels.indexOf('Layout')] as HTMLElement).click();
         const tabs = [...document.querySelectorAll<HTMLElement>('.vela-md-navbtn')];
-        expect(tabs.map((t) => t.textContent)).toEqual(['Layout', 'Sync']);
+        // TradingView's two destinations are literal TABS on a phone: the grid is
+        // "Layout setup" and the saved library is "Manage layouts".
+        expect(tabs.map((t) => t.textContent)).toEqual(['Layout setup', 'Manage layouts', 'Sync']);
         drawer.destroy();
     });
 
@@ -163,20 +165,27 @@ describe('the kebab drawer’s Sync view', () => {
         const { drawer } = setup();
         drawer.open('layout');
         const secs = [...document.querySelectorAll<HTMLElement>('.vela-md-sec')];
-        expect(secs.length).toBe(2);
-        // Layout is the landing tab.
+        expect(secs.length).toBe(3);
+        // Layout setup is the landing tab; Manage and Sync are their own panes.
         expect(secs[0]!.hidden).toBe(false);
         expect(secs[1]!.hidden).toBe(true);
-        const [layoutTab, syncTab] = [...document.querySelectorAll<HTMLElement>('.vela-md-navbtn')];
+        expect(secs[2]!.hidden).toBe(true);
+        const [layoutTab, manageTab, syncTab] = [...document.querySelectorAll<HTMLElement>('.vela-md-navbtn')];
         expect(layoutTab!.getAttribute('aria-selected')).toBe('true');
-        syncTab!.click();
+        manageTab!.click();
         expect(secs[0]!.hidden).toBe(true);
         expect(secs[1]!.hidden).toBe(false);
+        expect(secs[2]!.hidden).toBe(true);
+        syncTab!.click();
+        expect(secs[0]!.hidden).toBe(true);
+        expect(secs[1]!.hidden).toBe(true);
+        expect(secs[2]!.hidden).toBe(false);
         expect(syncTab!.getAttribute('aria-selected')).toBe('true');
         expect(syncTab!.hasAttribute('data-active')).toBe(true);
         layoutTab!.click();
         expect(secs[0]!.hidden).toBe(false);
         expect(secs[1]!.hidden).toBe(true);
+        expect(secs[2]!.hidden).toBe(true);
         drawer.destroy();
     });
 
@@ -185,7 +194,8 @@ describe('the kebab drawer’s Sync view', () => {
         drawer.open('layout', { focus: 'sync' });
         const secs = [...document.querySelectorAll<HTMLElement>('.vela-md-sec')];
         expect(secs[0]!.hidden).toBe(true);
-        expect(secs[1]!.hidden).toBe(false);
+        expect(secs[1]!.hidden).toBe(true);
+        expect(secs[2]!.hidden).toBe(false);
         drawer.destroy();
     });
 
@@ -323,9 +333,9 @@ describe('the kebab drawer’s Sync view', () => {
                 onSaveLayout: (n) => saved.push(n),
             },
         });
-        // The library lives on the FIRST screen now (TradingView puts its layout verbs
-        // up front too) — the Layout pane is the grid and its links, nothing else.
-        drawer.open('main');
+        // The library lives on its OWN tab now (TradingView's "Manage layouts") —
+        // the Layout setup pane is the grid and its links, nothing else.
+        drawer.open('layout', { focus: 'manage' });
         const rows = [...document.querySelectorAll<HTMLElement>('.vela-md-lrow')];
         expect(rows.map((r) => r.querySelector('.vela-md-ltext b')?.textContent)).toEqual(['Scalp', 'Swing']);
         // The row ITSELF is the open verb — no per-row Open button to hunt for.
@@ -347,10 +357,10 @@ describe('the kebab drawer’s Sync view', () => {
         input.value = 'Breakout';
         (document.querySelector('.vela-md-saveas button') as HTMLElement).click();
         expect(saved).toEqual(['Breakout']);
-        // The Layout tab must not repeat the library — two homes for one list is how a
-        // "move it to main" turns into "it is in both places and they disagree".
+        // Layout setup must not SHOW the library — one home for one list; the Manage
+        // pane stays in the DOM but hidden behind its own tab.
         drawer.open('layout');
-        expect(document.querySelectorAll('.vela-md-lrow')).toHaveLength(0);
+        expect(document.querySelectorAll('.vela-md-sec:not([hidden]) .vela-md-lrow')).toHaveLength(0);
         drawer.destroy();
     });
 
@@ -378,7 +388,7 @@ describe('the kebab drawer’s Sync view', () => {
                 onDeleteLayout: () => {},
             },
         });
-        drawer.open('main');
+        drawer.open('layout', { focus: 'manage' });
         (document.querySelector('.vela-md-lkebab') as HTMLElement).click();
         expect(document.querySelector('.vela-md-lkebab')?.getAttribute('aria-expanded')).toBe('true');
         (document.querySelector('.vela-md-lghost') as HTMLElement).click();
@@ -392,7 +402,7 @@ describe('the kebab drawer’s Sync view', () => {
         (document.querySelector('.vela-md-lghost') as HTMLElement).click();
         expect(document.querySelector('.vela-md-saveas')).not.toBeNull();
         drawer.open('layout');
-        drawer.open('main');
+        drawer.open('layout', { focus: 'manage' });
         expect(document.querySelector('.vela-md-saveas')).toBeNull();
         expect(document.querySelectorAll('.vela-md-lact')).toHaveLength(0);
         expect(saved).toEqual([]);
@@ -434,7 +444,7 @@ describe('the kebab drawer’s Sync view', () => {
                 defaultTemplate: () => null,
             },
         });
-        drawer.open('main');
+        drawer.open('layout', { focus: 'manage' });
         // The open layout, its drift and its one-tap write.
         expect(document.querySelector('.vela-md-lopen')?.textContent).toBe('Aunsaved changesSave');
         expect(document.querySelector('.vela-md-switchrow')?.getAttribute('aria-checked')).toBe('false');
@@ -453,6 +463,17 @@ describe('the kebab drawer’s Sync view', () => {
         expect(star.getAttribute('aria-pressed')).toBe('false');
         star.click();
         expect(house).toEqual(['Trend']);
+        drawer.destroy();
+    });
+
+    it('the standalone Manage layouts page still owns the library', () => {
+        const { drawer } = setup();
+        drawer.open('manage');
+        expect(document.querySelector('.vela-md-back')?.textContent).toContain('More');
+        expect(document.querySelector('.vela-md-section')?.textContent).toContain('Manage layouts');
+        expect(document.querySelector('.vela-md-lib')).not.toBeNull();
+        // It is a page, not a tab: no sticky three-stop nav here.
+        expect(document.querySelectorAll('.vela-md-navbtn')).toHaveLength(0);
         drawer.destroy();
     });
 

@@ -579,12 +579,14 @@ export class NativeRenderer implements IChartRenderer {
                 this.scene.invertScale = Boolean(value);
                 break;
             case 'autoScale':
-                // Auto on ⇒ drop every pane's frozen window so autoscale resumes (same as
-                // double-clicking the price axis). Auto off ⇒ freeze each pane's current
-                // window into manual mode, unlocking vertical price pan/drag.
+                // Auto on ⇒ drop EVERY frozen window — panes and the study scales that own a
+                // column of their own — so autoscale really resumes everywhere (the same
+                // reset a double-click on the axis makes). Auto off ⇒ freeze each pane's
+                // current window into manual mode, unlocking vertical price pan/drag.
                 for (const pane of this.scene.panes.values()) {
                     pane.manualScale = value ? null : { ...pane.scale };
                 }
+                if (value) for (const sl of this.scene.indicatorScales.values()) sl.manualScale = null;
                 break;
             case 'timezone':
                 this.scene.timezone = typeof value === 'string' && value ? value : 'UTC';
@@ -703,9 +705,16 @@ export class NativeRenderer implements IChartRenderer {
             case 'invertScale': return this.scene.invertScale;
             case 'paneScales': return this.paneScaleInfos();
             case 'autoScale': {
-                // Auto when the price pane isn't holding a frozen (manual) window.
-                const price = this.scene.orderedPanes().find((p) => p.kind === 'price');
-                return price ? price.manualScale == null : true;
+                // Auto only while NOTHING holds a frozen window. Asking the price pane alone
+                // was the bug behind "auto is on but the chart stopped fitting": a pinch that
+                // froze a study pane (or a study's own scale column) left the price pane
+                // auto, so every toggle that reads this flag showed ON while the visible
+                // panes sat on stale windows — and only a toggle off→on (which clears them
+                // all) looked like a fix. Any frozen window now reads as auto OFF, and the
+                // same toggle clears every one of them.
+                for (const pane of this.scene.panes.values()) if (pane.manualScale) return false;
+                for (const sl of this.scene.indicatorScales.values()) if (sl.manualScale) return false;
+                return true;
             }
             case 'timezone': return this.scene.timezone;
             case 'priceStyle': return this.scene.priceStyle;
@@ -841,6 +850,10 @@ export class NativeRenderer implements IChartRenderer {
                 style: s.crosshair.style,
                 opacity: s.crosshair.opacity,
                 labelBackground: s.crosshair.labelBackground ?? t.textColor,
+                shape: s.crosshair.shape,
+                priceLabel: s.crosshair.priceLabel,
+                timeLabel: s.crosshair.timeLabel,
+                magnet: s.crosshair.magnet,
             },
             priceScale: {
                 mode: this.scene.scaleMode,
@@ -980,6 +993,10 @@ export class NativeRenderer implements IChartRenderer {
             style: next.crosshair.style,
             opacity: next.crosshair.opacity,
             labelBackground: next.crosshair.labelBackground,
+            shape: next.crosshair.shape,
+            priceLabel: next.crosshair.priceLabel,
+            timeLabel: next.crosshair.timeLabel,
+            magnet: next.crosshair.magnet,
         };
         // price scale
         this.scene.scaleMode = next.priceScale.mode;
@@ -1601,6 +1618,12 @@ export class NativeRenderer implements IChartRenderer {
             zoomTo: (target, anchorLogical, anchorX) => this.zoomTo(target, anchorLogical, anchorX),
             fling: (v) => this.fling(v),
             onPointerMove: (x, y) => this.handlePointerMove(x, y),
+            // Touch TRACKING (long-press crosshair) is public state: the container carries
+            // `data-vela-tracking` so chrome/probes can react without new renderer events.
+            onTrackingChange: (on) => {
+                const el = this.mountContainer;
+                if (el && el.dataset) el.dataset.velaTracking = on ? '1' : '';
+            },
             onClick: (x, y, alt) => {
                 if (this.handleMarkClick(x, y)) return; // a lane glyph takes the click whole
                 this.userDrawings?.deselect(); // a click on the empty plot ends a (multi-)selection
@@ -1802,7 +1825,7 @@ export class NativeRenderer implements IChartRenderer {
             },
         });
         // Honor a layout mode pushed before mount — mobile keeps the hover clusters away.
-        this.paneControls.setSuspended(this.layoutMode === 'mobile');
+        this.paneControls.setTouchMode(this.layoutMode === 'mobile');
 
         this.axisScaleButtons = new AxisScaleButtons(this.plot, theme, {
             panes: () => this.axisScaleViews(),
@@ -2494,9 +2517,9 @@ export class NativeRenderer implements IChartRenderer {
         this.userDrawings?.setLayoutMode(mode);
         this.settingsDialog?.setLayoutMode(mode);
         this.inputsUI?.setLayoutMode(mode);
-        // Hover clusters need a cursor — mobile suppresses them (collapsed panes keep
-        // their expand chips; the shell's own chrome covers pane/chart maximize).
-        this.paneControls?.setSuspended(mode === 'mobile');
+        // Touch: no cursor to reveal a cluster, so panes that MEASURE enough room keep
+        // theirs up (and cramped ones hand every verb to the object tree).
+        this.paneControls?.setTouchMode(mode === 'mobile');
         if (this.scrollButton) {
             // A finger needs a larger target (and a larger glyph) than a cursor.
             const px = mode === 'mobile' ? SCROLL_BTN_SIZE_TOUCH : SCROLL_BTN_SIZE;
@@ -2888,7 +2911,11 @@ export class NativeRenderer implements IChartRenderer {
             return;
         }
         const inData = x >= 0 && y >= 0 && x <= this.coords.width && y <= this.coords.height;
-        this.scene.crosshair = inData ? { x, y } : null;
+        // MAGNET (TradingView's crosshair magnet): the horizontal line parks on the bar's
+        // close, or on whichever of O/H/L/C is nearest the finger, instead of floating
+        // between values. Free movement stays the default — snapping is opt-in.
+        const magnetY = inData ? this.magnetSnapY(x, y) : null;
+        this.scene.crosshair = inData ? { x, y: magnetY ?? y } : null;
         this.lastPointer = inData ? { x, y } : null;
         if (inData) this.layInk(x, y);
         // The separator spans data + gutter, so its hover highlight tracks the full width (not just
@@ -2926,6 +2953,36 @@ export class NativeRenderer implements IChartRenderer {
         this.hoverLogical = onBar ? logical : null;
         const event: CrosshairEvent = { time, price, paneKind: inData && pane ? pane.kind : null, values, ohlc };
         for (const cb of this.crosshairCbs) cb(event);
+    }
+
+    /**
+     * The y the crosshair's horizontal line should sit on, or null when magnet is off (or
+     * the pointer is not over a bar). Screen-space nearest wins: the user is choosing a
+     * VALUE to look at, and the four OHLC prices of a bar are already the four candidates.
+     */
+    private magnetSnapY(x: number, y: number): number | null {
+        const mode = this.scene.style.crosshair.magnet;
+        if (mode === 'off') return null;
+        if (this.coords.barCount === 0) return null;
+        const logical = Math.round(this.coords.xToLogical(x));
+        const bar = logical >= 0 && logical < this.coords.barCount ? this.bars[logical] : undefined;
+        if (!bar) return null;
+        const pane = this.paneNodeAtY(y);
+        if (!pane) return null;
+        const candidates = mode === 'close' ? [bar.close] : [bar.open, bar.high, bar.low, bar.close];
+        let best: number | null = null;
+        let bestDy = Infinity;
+        for (const price of candidates) {
+            const py = this.coords.priceToY(price, pane.scale, pane.bounds);
+            const dy = Math.abs(py - y);
+            if (dy < bestDy) {
+                bestDy = dy;
+                best = py;
+            }
+        }
+        // A magnet with a long leash: past a comfortable reach the free line is kinder than
+        // a jump across the bar, so beyond ~a third of the pane the line stays where it is.
+        return best !== null && bestDy <= Math.max(18, pane.bounds.height / 3) ? best : null;
     }
 
     private handleClick(x: number, alt = false): void {
@@ -4625,8 +4682,13 @@ export class NativeRenderer implements IChartRenderer {
         // data area drives the coordinate transform so series sit clear of them.
         this.coords.setSize(Math.max(1, pw - this.rightAxisW), Math.max(1, ph - TIME_AXIS_H), dpr);
         // Geometry changed — the retained crosshair {x,y} now points at the wrong
-        // bar/price, so drop it (LWC hides the crosshair until the next move).
+        // bar/price, so drop it (LWC hides the crosshair until the next move). The one
+        // exception is touch tracking: the finger is off the glass, so nothing will
+        // "move next" and the crosshair would silently vanish — re-issue the last point.
         this.scene.crosshair = null;
+        if (this.input?.isTracking && this.lastPointer) {
+            this.handlePointerMove(this.lastPointer.x, this.lastPointer.y);
+        }
         this.layoutPanes();
         this.userDrawings?.onResize(); // dismiss the settings popup on a resize
         if (!this.didInitialFit && this.coords.barCount > 0) {

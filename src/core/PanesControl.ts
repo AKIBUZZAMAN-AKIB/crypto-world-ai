@@ -1,5 +1,15 @@
 import type { MoveTarget, PaneInfo } from './options';
 
+/** The durable subset of `PaneInfo` a state document/history snapshot carries. */
+export interface PaneRestoreState {
+    id: string;
+    kind: 'price' | 'study';
+    order: number;
+    collapsed: boolean;
+    maximized: boolean;
+    indicators: Array<{ id: string; ownScale: boolean }>;
+}
+
 /** Callback surface `PanesControl` uses to drive the orchestrator. */
 export interface PaneController {
     /** Whether the active renderer supports pane management (move/merge/reorder/collapse). */
@@ -10,6 +20,8 @@ export interface PaneController {
     collapsePane(paneId: string, collapsed: boolean): void;
     maximizePane(paneId: string | null): void;
     moveIndicator(id: string, target: MoveTarget): void;
+    /** Restore a complete pane snapshot (order, collapse, maximize, indicator placement). */
+    restorePanes(state: readonly PaneRestoreState[]): void;
 }
 
 /**
@@ -57,6 +69,12 @@ export class PanesControl {
     /** Move/merge an indicator to a pane — sugar for `handle.moveTo(...)` by id. */
     moveIndicator(id: string, target: MoveTarget): this {
         if (this.guard()) this.controller.moveIndicator(id, target);
+        return this;
+    }
+
+    /** Restore a pane snapshot captured from `list()` — used by undo/redo and state apply. */
+    restore(state: readonly PaneRestoreState[]): this {
+        if (this.guard()) this.controller.restorePanes(state);
         return this;
     }
 

@@ -8,7 +8,7 @@ import type { ValuePatch, SeriesValueDelta } from '../model/patch';
 import { isLineLikeSeries } from '../model/series';
 import type { InputSchema, InputValue } from '../model/inputs';
 import type { VelaTheme, MarketConfig, MarketSwitch, MarketSnapshot, AddIndicatorOptions, PriceStyle, MoveTarget, PaneInfo } from '../options';
-import type { PaneController } from '../PanesControl';
+import type { PaneController, PaneRestoreState } from '../PanesControl';
 import type { PaneAction } from '../ports/IChartRenderer';
 import type { CodeUpdateResult, IndicatorHandle } from '../IndicatorHandle';
 import type { ContextSelect, EngineContextSnapshot } from '../ports/ScriptingEngine';
@@ -25,7 +25,7 @@ import {
     type NativeIndicatorInfo,
     type NativeIndicatorOutput,
 } from '../native-indicators/NativeIndicator';
-import { classicPineSource } from '../native-indicators/classics/pine-source';
+import { builtinPineSource, classicPineSource } from '../native-indicators/classics/pine-source';
 import { LiveSession } from './LiveSession';
 import { IndicatorHandleImpl, type IndicatorController } from './IndicatorHandleImpl';
 import { inspectModels, type SceneInspection } from './inspect';
@@ -274,6 +274,11 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
     /** A load is in flight with nothing painted — the state behind the renderer's loading
      *  affordance and the `load:start`/`load:end` event pair (transition-guarded). */
     private loadingUp = false;
+
+    /** The latest loaded bar (a view of the model, never a mutable reference). */
+    get lastBar(): OHLCV | null {
+        return this.bars.length > 0 ? { ...this.bars[this.bars.length - 1]! } : null;
+    }
 
     constructor(
         container: HTMLElement,
@@ -1964,22 +1969,26 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
      */
     addNativeIndicator(type: string, options: { inputs?: Record<string, InputValue> } = {}): IndicatorHandle {
         const descriptor = getNativeIndicator(type);
+        // `pineSource` is the EXECUTABLE classic script; `sourceForEditor` is what the
+        // legend's `{ }` opens. The two layer-backed natives have readable Pine source but
+        // keep their core-computed paint path (columns / a second symbol from the feed).
         const pineSource = classicPineSource(type);
+        const sourceForEditor = builtinPineSource(type);
         const sameType = (r: { native?: { type: string }; builtinType?: string }): boolean => r.native?.type === type || r.builtinType === type;
         if (!descriptor?.multiInstance) {
             const existing = this.registry.all().find(sameType);
-            if (existing) return this.handles.get(existing.id) ?? new IndicatorHandleImpl(existing.id, existing.title, this, pineSource, type);
+            if (existing) return this.handles.get(existing.id) ?? new IndicatorHandleImpl(existing.id, existing.title, this, sourceForEditor, type);
         }
 
         // A built-in that HAS a Pine implementation runs that implementation: the values on
         // screen are produced by the study's own Pine code (TradingView's built-ins are Pine
         // too), while the handle keeps the built-in's identity so the legend, the settings
         // dialog, layout persistence and the `{ }` source view all still see a built-in.
-        // A study whose visuals are not expressible as Pine (volume profile, compare, the
-        // layer-backed column studies) has no source and keeps the core-computed path.
+        // A study whose visuals are not expressible as a plain Pine plot (volume profile,
+        // compare, the layer-backed column studies) keeps the core-computed path.
         if (pineSource !== undefined && descriptor !== undefined && this.hasEngine()) {
             const id = this.registry.nextId('native', (candidate) => this.handles.has(candidate));
-            const builtinHandle = new IndicatorHandleImpl(id, descriptor.title, this, pineSource, type);
+            const builtinHandle = new IndicatorHandleImpl(id, descriptor.title, this, sourceForEditor, type);
             this.handles.set(id, builtinHandle);
             const language = this.defaultLanguage;
             const scriptOptions: AddIndicatorOptions = { title: descriptor.title, language, ...(options.inputs ? { inputs: { ...options.inputs } } : {}) };
@@ -1990,10 +1999,10 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
 
         const id = this.registry.nextId('native', (candidate) => this.handles.has(candidate));
         const title = descriptor?.title ?? type;
-        // A native study that HAS a Pine implementation carries it, so the legend can offer
-        // "Source code" exactly like TradingView's built-ins (a study without one — a volume
-        // profile, a layer-backed study — keeps `source` undefined and shows no icon).
-        const handle = new IndicatorHandleImpl(id, title, this, pineSource, type);
+        // A native study carries its Pine source so the legend can offer "Source code"
+        // exactly like TradingView's built-ins. VPVR — a viewport-dependent layer — is the
+        // only one without a script, and shows no icon (same rule as the reference).
+        const handle = new IndicatorHandleImpl(id, title, this, sourceForEditor, type);
         this.handles.set(id, handle);
         if (!descriptor) {
             console.warn(`[vela] addNativeIndicator("${type}") — no native indicator registered for this type.`);
@@ -2058,8 +2067,19 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
     /** IndicatorController: re-run an indicator with merged input overrides (Pine session OR native instance). */
     applyInputs(id: string, values: Record<string, InputValue>): void {
         const record = this.registry.get(id);
-        if (!record || (!record.session && !record.native)) return;
+        if (!record) return;
+        // Merge ALWAYS. A Pine-backed built-in (and any script) is registered BEFORE its
+        // async session starts, so both `record.session` and `record.native` are still
+        // undefined for a short window. A setInputs() that lands in that window — e.g. a
+        // template applying its overrides right after addNativeIndicator(), or "Save as
+        // default" seeding a fresh handle — used to be dropped by the guard below, and the
+        // study opened on declaration defaults. startIndicator()/executeIndicator() read
+        // record.inputValues once ready, so persisting here is enough for that path.
         record.inputValues = { ...record.inputValues, ...values };
+        // No compute path is online yet — there is nothing to re-run or repaint. The merged
+        // values are picked up when the session/native comes online; avoid faking a
+        // structural change or a spinner before the first model even exists.
+        if (!record.session && !record.native) return;
         // Reflect the new value in the open dialog immediately (the model arrives async).
         if (record.renderHandle) this.renderer.setIndicatorInputs(record.renderHandle, record.inputValues);
         // The next emitted model structurally remounts (input changes can restructure).
@@ -2839,6 +2859,47 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
         this.maximizedPaneId = paneId;
         this.renderer.setPaneMaximized?.(paneId);
         this.events.emit('pane:changed', undefined);
+    }
+
+    /** Restore a complete pane snapshot. Used by history/state restore; unlike the public
+     *  one-step moves this can recreate several panes and put every indicator back on the
+     *  exact pane/scale it had, in the same order. */
+    restorePanes(state: readonly PaneRestoreState[]): void {
+        if (!this.paneManagementSupported() || state.length === 0) return;
+        const sorted = [...state].sort((a, b) => a.order - b.order);
+        const desired = [...new Set(['price', ...sorted.map((p) => p.id)])];
+        for (const paneId of desired) this.ensurePaneFor(paneId);
+        const wantedIndicator = new Map<string, { paneId: string; ownScale: boolean }>();
+        for (const pane of sorted) {
+            for (const i of pane.indicators) wantedIndicator.set(i.id, { paneId: pane.id, ownScale: i.ownScale === true });
+        }
+        for (const [id, target] of wantedIndicator) {
+            const record = this.registry.get(id);
+            if (!record?.model) continue;
+            const model = record.model;
+            model.ownScale = target.ownScale;
+            record.paneLocked = true;
+            this.placeModel(model, id, target.paneId);
+            if (record.renderHandle) this.renderer.setIndicatorPane?.(record.renderHandle, target.paneId, { ownScale: target.ownScale });
+        }
+        // A pane that lost its last indicator must disappear from BOTH the core order and
+        // the renderer; otherwise undo of a "move to new pane" leaves a ghost strip.
+        for (const paneId of this.existingPaneIds()) {
+            if (paneId !== 'price' && !desired.includes(paneId)) {
+                this.renderer.removePane(paneId);
+                this.forgetPane(paneId);
+            }
+        }
+        this.collapsedPanes.clear();
+        let maximized: string | null = null;
+        for (const pane of sorted) {
+            if (pane.collapsed) this.collapsedPanes.add(pane.id);
+            if (pane.maximized) maximized = pane.id;
+            this.renderer.setPaneCollapsed?.(pane.id, pane.collapsed);
+        }
+        this.maximizedPaneId = maximized;
+        this.renderer.setPaneMaximized?.(maximized);
+        this.reorderPanes(desired);
     }
 
     /** IndicatorController/PaneController: move (or merge) an indicator to another pane. */

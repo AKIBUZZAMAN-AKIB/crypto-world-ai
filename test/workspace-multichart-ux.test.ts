@@ -69,10 +69,30 @@ const PAGE = {
 const openPicker = (ws: VelaWorkspace): void => {
     ws.root.querySelector<HTMLElement>('button[aria-label^="Layout"]')!.click();
 };
+/** Desktop management is a separate popover on the layout-name chip (R86 T9). */
+const openManager = (ws: VelaWorkspace): void => {
+    ws.root.querySelector<HTMLElement>('.vela-widget-layoutname')!.click();
+};
 const syncRow = (ws: VelaWorkspace, label: string): HTMLElement | null =>
     [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-sync-row')].find((r) => r.textContent?.startsWith(label)) ?? null;
 
 describe('the layout dropdown exposes every link and reads grouped links as ON', () => {
+    it('keeps desktop Layout setup separate from Manage layouts', () => {
+        const ws = mountWorkspace(PAGE);
+        openPicker(ws);
+        expect(ws.root.querySelector('.vela-lp[data-setup-only]')).not.toBeNull();
+        expect(ws.root.querySelector('.vela-lp-auto')).toBeNull();
+        expect(ws.root.querySelector('.vela-lp-save')).toBeNull();
+        expect(ws.root.querySelector('.vela-lp-csv')).toBeNull();
+        expect(ws.root.querySelector('.vela-lp-grouphead')).toBeNull();
+        const door = ws.root.querySelector<HTMLElement>('.vela-lp-managerdoor')!;
+        expect(door.textContent).toContain('Manage layouts');
+        door.click();
+        expect(ws.root.querySelector('.vela-lm')).not.toBeNull();
+        expect(ws.root.querySelector('.vela-lm-switch')).not.toBeNull();
+        expect([...ws.root.querySelectorAll('.vela-lm-row')].some((r) => r.textContent?.includes('Export chart data'))).toBe(true);
+    });
+
     it('lists all seven links, in TradingView order', () => {
         const ws = mountWorkspace(PAGE);
         openPicker(ws);
@@ -512,13 +532,13 @@ describe('named layouts', () => {
         expect(doc.Two?.savedLayouts).toBeUndefined();
     });
 
-    it('the picker footer lists them and opens on a name click', () => {
+    it('the separate manager lists them and opens on a name click', () => {
         const ws = mountWorkspace(PAGE);
         ws.saveLayout('Alpha');
         ws.setLayout('1');
-        openPicker(ws);
-        const row = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-saved')].find((r) => r.textContent?.includes('Alpha'))!;
-        row.querySelector<HTMLElement>('.vela-lp-name')!.click();
+        openManager(ws);
+        const main = ws.root.querySelector<HTMLElement>('.vela-lm-srow[data-name="Alpha"] .vela-lm-smain')!;
+        main.click();
         expect(ws.getState().layout).toBe('4');
     });
 
@@ -582,35 +602,39 @@ describe('named layouts', () => {
         expect(doc.C?.savedLayouts).toBeUndefined(); // stripped on the way in
     });
 
-    it('the picker footer offers rename, export and import', () => {
+    it('the separate manager offers rename, copy, export, share, delete and import', () => {
         const ws = mountWorkspace(PAGE);
         ws.saveLayout('Alpha');
-        openPicker(ws);
-        const row = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-saved')].find((r) => r.dataset.layout === 'Alpha')!;
-        const labels = [...row.querySelectorAll<HTMLElement>('button')].map((b) => b.getAttribute('aria-label'));
-        // The share-link action sits between the JSON export and Delete (round 23).
-        expect(labels).toEqual(['Rename Alpha', 'Duplicate “Alpha”', 'Export Alpha as JSON', 'Copy a link to “Alpha”', 'Delete Alpha']);
-        // The importer is a compact action in the Save-layout row (it used to be a
-        // full-width dashed bar of its own, which cost the panel a whole line).
-        expect(ws.root.querySelector('.vela-lp-save .vela-lp-importbtn')?.getAttribute('aria-label')).toBe('Import layout file…');
+        openManager(ws);
+        // File verbs moved OUT of the grid panel: import is now a management row.
+        expect([...ws.root.querySelectorAll<HTMLElement>('.vela-lm-row')].some((r) => r.textContent?.includes('Import layout file…'))).toBe(true);
+        ws.root.querySelector<HTMLElement>('.vela-lm-srow[data-name="Alpha"] .vela-lm-kebab')!.click();
+        const actions = [...ws.root.querySelectorAll<HTMLElement>('.vela-lm-act')].map((b) => b.textContent?.trim());
+        expect(actions).toEqual(['Open', 'Rename…', 'Copy…', 'Share', 'Export', 'Delete']);
     });
 
-    it('an inline rename commits on Enter and cancels on Escape', () => {
+    it('the manager rename dialog commits and cancels without losing the layout', () => {
         const ws = mountWorkspace(PAGE);
         ws.saveLayout('Alpha');
-        openPicker(ws);
-        const row = (): HTMLElement => [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-saved')].find((r) => r.dataset.layout !== undefined && r.querySelector('.vela-lp-name, .vela-lp-rename') !== null)!;
-        row().querySelector<HTMLElement>('button[aria-label="Rename Alpha"]')!.click();
-        const input = ws.root.querySelector<HTMLInputElement>('.vela-lp-rename')!;
+        const openRename = (name: string): void => {
+            openManager(ws);
+            ws.root.querySelector<HTMLElement>(`.vela-lm-srow[data-name="${name}"] .vela-lm-kebab`)!.click();
+            [...ws.root.querySelectorAll<HTMLElement>('.vela-lm-act')].find((b) => b.textContent?.includes('Rename'))!.click();
+        };
+        openRename('Alpha');
+        const input = ws.root.querySelector<HTMLInputElement>('.vela-lm-input')!;
         expect(input.value).toBe('Alpha');
         input.value = 'Beta';
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        ws.root.querySelector<HTMLElement>('.vela-lm-btn[data-primary]')!.click();
         expect(ws.savedLayoutList().map((l) => l.name)).toEqual(['Beta']);
 
-        row().querySelector<HTMLElement>('button[aria-label="Rename Beta"]')!.click();
-        const again = ws.root.querySelector<HTMLInputElement>('.vela-lp-rename')!;
+        openRename('Beta');
+        const again = ws.root.querySelector<HTMLInputElement>('.vela-lm-input')!;
         again.value = 'Nope';
-        again.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        again.dispatchEvent(new Event('input', { bubbles: true }));
+        const cancel = [...ws.root.querySelectorAll<HTMLElement>('.vela-lm-btn')].find((b) => !b.hasAttribute('data-primary'))!;
+        cancel.click();
         expect(ws.savedLayoutList().map((l) => l.name)).toEqual(['Beta']);
     });
 });

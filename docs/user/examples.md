@@ -88,7 +88,6 @@ plot(ta.rsi(close, input.int(14, "Length")), "RSI", color.purple)`,
 rsi.on('ready', () => console.log(rsi.title, '→', rsi.inputs.length, 'inputs'));
 rsi.on('error', ({ error }) => console.error('RSI failed:', error.message));
 
-
 // Chart-level events.
 chart.on('bar', (bar) => { /* the forming bar updated or a new bar appended */ });
 chart.on('indicator:error', ({ id, error }) => console.error(id, error.message));

@@ -42,6 +42,9 @@ export interface MenuControllerOptions {
             : never
         : never;
     onOpenChange?: (open: boolean) => void;
+    /** Extra Floating-UI positioning options (flip/shift/boundary…) for surfaces that
+     *  need more than a placement — e.g. a nested submenu on a 390px phone. */
+    positioning?: Partial<menu.PositioningOptions>;
     /** Pin the floating list to this rect (viewport coords). Used to keep an open
      *  menu still when its trigger moves — starring a timeframe adds a chip and
      *  would otherwise drag the list with the caret. `null` falls through to the
@@ -71,7 +74,8 @@ export function menuController(opts: MenuControllerOptions): MenuController {
             id: opts.id ?? nextUid('vela-menu'),
             ids: opts.triggerId ? { trigger: opts.triggerId } : undefined,
             positioning: {
-                placement: opts.placement ?? 'bottom-start',
+                ...(opts.positioning ?? {}),
+                placement: opts.placement ?? opts.positioning?.placement ?? 'bottom-start',
                 ...(opts.getAnchorRect ? { getAnchorRect: () => opts.getAnchorRect!() } : {}),
             },
             onSelect: (d: menu.SelectionDetails) => opts.onSelect?.(d.value),

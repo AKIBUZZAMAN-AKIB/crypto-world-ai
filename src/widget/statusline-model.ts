@@ -22,23 +22,50 @@ export function segmentVisibility(parts: Record<StatuslinePart, boolean>, chartH
  *  percent delta alone ('minimal'). */
 export type StatuslineLevel = 'full' | 'compact' | 'minimal';
 
+/** How much of the bar delta a rung prints: the absolute change and the percent
+ *  ('+84.74 (+0.11%)'), or the percent alone ('(+0.11%)') — the figure the phone
+ *  layouts read out, where the absolute figure is the wider of the two and says the
+ *  least (the price is already on screen). */
+export type StatuslineChangeFormat = 'both' | 'pct';
+
+/** Which row the bar delta rides on. 'values' keeps it after the O/H/L/C cells, as on
+ *  TradingView's desktop legend; 'identity' moves it to the end of the symbol line, so
+ *  a phone keeps all four values AND the delta instead of trading the values away —
+ *  measured, never assumed: the ladder only picks it when the symbol line still fits
+ *  whole (see `Statusline.fit`'s truncation guard). */
+export type StatuslineChangeSlot = 'values' | 'identity';
+
 /** One rung of the width ladder: whether the value readout sits on its own row under
- *  the symbol line, and how much of it is kept. */
+ *  the symbol line, how much of it is kept, and where the bar delta rides. */
 export interface StatuslineLayout {
     stacked: boolean;
     level: StatuslineLevel;
+    change: StatuslineChangeFormat;
+    changeSlot: StatuslineChangeSlot;
 }
 
-/** The width ladder the status line walks down until its row fits, widest first: the
- *  values first move under the symbol line, then shed O/H/L, then the absolute change.
+/** The width ladder the status line walks down until its row fits, widest first.
+ *
+ *  The values first move under the symbol line; then only the DELTA gives ground —
+ *  first its absolute half (§ the phone readout keeps the percent, as TradingView's
+ *  does), then the whole delta, which rides up onto the symbol line so the four
+ *  O/H/L/C values keep a row of their own. O/H/L only ever leave once the close alone
+ *  is what fits, and the last rung drops the label too. A phone at 360 CSS px lands on
+ *  the "values stacked, percent on the symbol line" rung, which fits its ~270 px of
+ *  plot and reads out O/H/L/C; before this rung existed every phone skipped straight
+ *  from "four values + delta" (≈350 px) to "close + delta" and lost O/H/L on the way.
+ *
  *  Every status line — single chart, phone, multi-chart cell — walks the same rungs; in
  *  fit mode whatever still overflows after the last one is hidden segment by segment
  *  (see `Statusline.fit`). */
 export const STATUSLINE_LADDER: readonly StatuslineLayout[] = [
-    { stacked: false, level: 'full' },
-    { stacked: true, level: 'full' },
-    { stacked: true, level: 'compact' },
-    { stacked: true, level: 'minimal' },
+    { stacked: false, level: 'full', change: 'both', changeSlot: 'values' },
+    { stacked: true, level: 'full', change: 'both', changeSlot: 'values' },
+    { stacked: true, level: 'full', change: 'pct', changeSlot: 'values' },
+    { stacked: true, level: 'full', change: 'both', changeSlot: 'identity' },
+    { stacked: true, level: 'full', change: 'pct', changeSlot: 'identity' },
+    { stacked: true, level: 'compact', change: 'both', changeSlot: 'values' },
+    { stacked: true, level: 'minimal', change: 'pct', changeSlot: 'values' },
 ];
 
 /** Which of the O/H/L/C cells a level keeps, given the price style's readout shape.

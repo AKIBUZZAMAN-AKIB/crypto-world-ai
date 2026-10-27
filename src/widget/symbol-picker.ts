@@ -3,6 +3,7 @@
 // the ticker upward (the widget rebuilds the chart on it).
 import type { SymbolDescriptor } from '../core/ports/DataProvider';
 import { Dialog } from '../ui/components/dialog';
+import { Drawer } from '../ui/components/drawer';
 import { injectStyles } from '../ui/styles';
 import { iconEl } from '../ui/icons';
 import { tickerIconEl, baseOf } from './symbol-icon';
@@ -259,6 +260,20 @@ const CSS = `
 }
 .vela-sp-expander:hover { background: var(--vela-surface-elev); color: var(--vela-fg); }
 .vela-sp-row[data-member] { padding-left: 34px; }
+
+/* ── phone sheet mode ──
+   The same picker as a bottom sheet: roughly 60% of the screen, the chart still visible
+   above it, the list scrolling under a sticky search row. Nothing here is dialog-sized. */
+/* Two classes' worth of specificity: the drawer's own stylesheet is injected when it is
+   built (after this one) and would otherwise win the cascade. */
+.vela-drawer[data-sp-sheet='1'] { max-height: 62%; }
+.vela-drawer[data-sp-sheet='1'] .vela-drawer-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.vela-sp-content { display: flex; flex-direction: column; min-height: 0; }
+[data-sp-sheet='1'] .vela-sp-content { flex: 1 1 auto; }
+[data-sp-sheet='1'] .vela-sp-head { flex: none; }
+[data-sp-sheet='1'] .vela-sp-list { flex: 1 1 auto; max-height: none; margin-bottom: 0; }
+/* One row per pair, 44 px tall at the least: a list you can flick at. */
+[data-sp-sheet='1'] .vela-sp-row { min-height: 44px; padding-top: 0; padding-bottom: 0; }
 `;
 
 export interface SymbolPickerOptions {
@@ -283,6 +298,12 @@ export interface SymbolPickerOptions {
     onApplyAll?: (symbol: string) => void;
     /** Dialog title — the Compare sheet reuses this picker for a second series. */
     title?: string;
+    /**
+     * Open as a BOTTOM SHEET (a scrolling list over the chart) instead of a full-screen
+     * dialog — the phone answer to "swapping the pair should not take the whole screen".
+     * Evaluated per opening, so a layout change is followed without a rebuild.
+     */
+    sheet?: () => boolean;
 }
 
 /** Rows rendered per page — the list GROWS by this much every time the scroll nears the
@@ -296,6 +317,14 @@ const FIRST_PAINT_ROWS = 16;
 
 export class SymbolPicker {
     private readonly dialog: Dialog;
+    /** The sheet the picker becomes on a phone; built on first use, so a desktop shell
+     *  never pays for it. Destroyed and rebuilt when the title changes (Compare reuses us). */
+    private sheetView: { drawer: Drawer; title: string } | null = null;
+    /** head + list, re-parented between the dialog body and the sheet body. */
+    private readonly content: HTMLElement;
+    /** The dialog's own body, kept so the shared content can move back into it when the
+     *  shell returns to a pointer layout. */
+    private dialogBody: HTMLElement | null = null;
     private readonly input: HTMLInputElement;
     private readonly list: HTMLElement;
     private source: () => readonly SymbolDescriptor[] = () => [];
@@ -360,12 +389,19 @@ export class SymbolPicker {
             this.grow();
         });
 
+        this.content = doc.createElement('div');
+        this.content.className = 'vela-sp-content';
+        this.content.append(head, this.list);
+
         this.dialog = new Dialog({
             title: (this.baseTitle = opts.title ?? 'Symbol Search'),
             host: opts.host,
             closeOnInteractOutside: true,
             flush: true,
-            content: (body) => body.append(head, this.list),
+            content: (body) => {
+                this.dialogBody = body;
+                body.appendChild(this.content);
+            },
             onOpenChange: (open) => {
                 if (open) {
                     this.input.value = this.seed.toUpperCase();
@@ -429,12 +465,52 @@ export class SymbolPicker {
      */
     open(initialQuery = '', title?: string): void {
         this.seed = initialQuery;
+        if (this.opts.sheet?.() === true) {
+            this.openSheet(title ?? this.baseTitle);
+            return;
+        }
+        // Leaving sheet mode never leaves the sheet open behind the dialog — and the shared
+        // content has to come back into the dialog's own body first.
+        this.sheetView?.drawer.hide();
         this.dialog.titleEl.textContent = title ?? this.baseTitle;
+        if (this.dialogBody && this.content.parentElement !== this.dialogBody) this.dialogBody.appendChild(this.content);
         this.dialog.show();
     }
 
+    /**
+     * The phone path: a bottom sheet over the chart. The list is the SAME element the dialog
+     * uses, so ranking, paging and the star all behave identically — the sheet only changes
+     * how much of the screen the surface takes and that the field does NOT grab focus (so the
+     * keyboard does not cover the list: a finger can just scroll and tap a pair).
+     */
+    private openSheet(title: string): void {
+        if (this.sheetView === null || this.sheetView.title !== title) {
+            this.sheetView?.drawer.destroy();
+            const host = this.opts.host;
+            const drawer = new Drawer({
+                title,
+                host,
+                content: (body) => body.appendChild(this.content),
+                onOpenChange: (open) => {
+                    if (open) {
+                        this.refresh();
+                        return;
+                    }
+                    this.input.blur();
+                    this.opts.onOpenChange?.(false);
+                },
+            });
+            // 60% of the screen: the chart stays visible above it — that is the whole point.
+            const panel = drawer.body.parentElement;
+            if (panel) panel.dataset.spSheet = '1';
+            this.sheetView = { drawer, title };
+        }
+        this.sheetView.drawer.show();
+        this.opts.onOpenChange?.(true);
+    }
+
     get isOpen(): boolean {
-        return this.dialog.open;
+        return this.dialog.open || this.sheetView?.drawer.open === true;
     }
 
     /** Text typed at the picker that never reached its field: closed, it opens seeded
@@ -451,10 +527,13 @@ export class SymbolPicker {
 
     close(): void {
         this.dialog.hide(); // onOpenChange(false) blurs the field (iOS focus-zoom)
+        this.sheetView?.drawer.hide();
     }
 
     destroy(): void {
         this.dialog.destroy();
+        this.sheetView?.drawer.destroy();
+        this.sheetView = null;
     }
 
     /** Route a row activation: a GROUP row loads its default member (the root itself is

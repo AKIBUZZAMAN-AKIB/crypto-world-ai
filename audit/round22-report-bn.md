@@ -18,7 +18,7 @@
 | HLC bars | HLC bars | 21 | high-low স্টিক + close টিক |
 
 * দুটি ব্যাকএন্ডেই (Canvas2D + WebGL2) আলাদা পেইন্টার — সব আটটি স্টাইল একই সাথে কাজ করে।
-* যাচাই: `audit/probe-variants.mjs` → ৮টি স্টাইল قبول, প্রতিটির আলাদা পিক্সেল স্বাক্ষর, ০ কনসোল এরর; কনট্যাক্ট শিট `audit/r22-variants-sheet.png`।
+* যাচাই: `audit/probe-variants.mjs` → ৮টি স্টাইল قبول, প্রতিটির আলাদা পিক্সেল স্বাক্ষর, ০ কনসোল এরর।
 
 ## ২. লেআউট — ৬৩ প্রিসেট
 
@@ -47,7 +47,7 @@
 * `npm run typecheck` → **০ এরর**; `npx eslint src` → **পরিষ্কার**।
 * নতুন টেস্ট: `test/paint-variants.test.ts` (১৭), `test/csv-export.test.ts` (১৮), `test/range-measurers.test.ts` (৮), `test/snap-candidates.test.ts` (৯), `test/drawings-tier1.test.ts` (২৬) — **৭৮টি টেস্ট, সব পাস**।
 * পুরো সুট ভাগে ভাগে চালানো হয়েছে (স্যান্ডবক্সে RAM কম, তাই একবারে চালালে ঝুলে যায়) — যে ফাইলগুলো শেষ হয়েছে সবগুলোই পাস।
-* লাইভ ব্রাউজ যাচাই: `audit/probe-tier1-drawings.mjs` → চারটি টুলই প্লটে বসেছে, ০ কনসোল এরর; শিট `audit/r22-tier1-sheet.png`।
+* লাইভ ব্রাউজ যাচাই: `audit/probe-tier1-drawings.mjs` → চারটি টুলই প্লটে বসেছে, ০ কনসোল এরর।
 * ⚠️ `npm run test:browser:ci` এই স্যান্ডবক্সে **ক্র্যাশ করছে** ("Target crashed") — কিন্তু **বেস কমিট `a3e4fd7`-এও ঠিক একইভাবে ক্র্যাশ করে** (যাচাই করেছি), অর্থাৎ এটি মেমোরির অভাবে হচ্ছে, আমাদের পরিবর্তনের দোষ নয়। GitHub Actions-এ পাস করবে বলে আশা করছি; কমিট করলে সেটাই প্রমাণ হবে।
 
 ## ৫. এখন কী ক্লিক করবেন

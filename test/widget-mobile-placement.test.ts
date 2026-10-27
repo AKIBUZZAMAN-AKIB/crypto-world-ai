@@ -62,7 +62,9 @@ describe('mobile placement', () => {
         });
         drawer.open();
         const rows = [...document.querySelectorAll('.vela-md-row .vela-md-row-label')].map((e) => e.textContent);
-        expect(rows).toEqual(['Chart type', 'Layout', 'Replay', 'Data window', 'Tool']);
+        // Manage layouts leads the sheet now — it is TradingView's own door to the
+        // saved library; the primary contributed action still follows Layout.
+        expect(rows).toEqual(['Manage layouts', 'Chart type', 'Layout', 'Replay', 'Data window', 'Tool']);
         drawer.destroy();
     });
 });

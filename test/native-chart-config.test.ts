@@ -119,7 +119,18 @@ describe('defaultChartStyle', () => {
         // resolves light chrome lines instead of the dark constants.
         expect(s.borderColor).toBeNull();
         expect(s.separatorColor).toBeNull();
-        expect(s.crosshair).toEqual({ color: '#9aa0ad', width: 1, style: 'dashed', opacity: 0.4, labelBackground: '#595959' });
+        // R83: the crosshair carries its shape, the two axis chips and magnet mode.
+        expect(s.crosshair).toEqual({
+            color: '#9aa0ad',
+            width: 1,
+            style: 'dashed',
+            opacity: 0.4,
+            labelBackground: '#595959',
+            shape: 'cross',
+            priceLabel: true,
+            timeLabel: true,
+            magnet: 'off',
+        });
         expect(s.candle.borderVisible).toBe(false);
         expect(s.candle.wickVisible).toBe(true);
     });
@@ -132,7 +143,17 @@ describe('NativeRenderer.getConfig — defaults resolve to concrete values', () 
         expect(cfg.layout).toEqual({ background: '#151619', textColor: '#b2b5be', fontFamily: 'sans-serif', fontSize: 11 });
         expect(cfg.grid.vertLines).toEqual({ visible: true, color: '#20222c' });
         expect(cfg.grid.horzLines).toEqual({ visible: true, color: '#20222c' });
-        expect(cfg.crosshair).toEqual({ color: '#9aa0ad', width: 1, style: 'dashed', opacity: 0.4, labelBackground: '#595959' });
+        expect(cfg.crosshair).toEqual({
+            color: '#9aa0ad',
+            width: 1,
+            style: 'dashed',
+            opacity: 0.4,
+            labelBackground: '#595959',
+            shape: 'cross',
+            priceLabel: true,
+            timeLabel: true,
+            magnet: 'off',
+        });
         expect(cfg.priceScale).toEqual({ mode: 'price', log: false, invert: false, borderColor: '#2a2b30', labelsVisible: true, currentPriceLine: true, priceLabel: true, countdown: true, animateLastPrice: false });
         expect(cfg.panes).toEqual({ separatorColor: '#2a2b30' }); // inherits the theme border
         expect(cfg.timeScale).toEqual({ timezone: 'UTC' });

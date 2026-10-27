@@ -69,7 +69,7 @@ try {
         await page.evaluate((s) => window.__ws.cells()[0].setPriceStyle(s), style);
         await page.waitForTimeout(650);
         const accepted = await page.evaluate(() => window.__ws.cells()[0].priceStyle);
-        const shot = await page.screenshot({ path: `audit/r22-style-${style}.png` });
+        const shot = await page.screenshot({ path: `/tmp/vela-probes/r22-style-${style}.png` });
         await page.evaluate((b64) => { window.__lastShot = 'data:image/png;base64,' + b64; }, shot.toString('base64'));
         const sig = await signature(page);
         facts[style] = { accepted, ...sig };

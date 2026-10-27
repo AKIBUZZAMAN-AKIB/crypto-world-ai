@@ -86,6 +86,10 @@ export class DrawingController {
     ) {
         this.enabled = !!renderer.capabilities.userDrawings && !!renderer.userDrawingsPort;
         this.port = this.enabled ? renderer.userDrawingsPort! : null;
+        // One core-history entry ⇒ one unified-history delegate step. Listening to every
+        // drawing event instead made `updateMany`/delete-many produce N undo steps for a
+        // single user action, and each extra step walked too far back in drawing history.
+        this.subs.push(this.history.onPush(() => this.events.emit('drawing:history', undefined)));
         if (this.port) {
             const { definition, visible } = buildToolbar(option);
             this.port.setToolbar(definition);
@@ -486,6 +490,16 @@ export class DrawingController {
     paste(): Drawing[] {
         if (!this.enabled || this.clipboard.length === 0) return [];
         return this.insertClones(this.clipboard);
+    }
+
+    /**
+     * Insert a whole DOCUMENT of drawings as ONE undo step — the seam a drawing-set
+     * template uses. Ids are regenerated (the caller's ids are only placeholders), and
+     * every geometry/style/text/props field the caller already resolved is kept verbatim.
+     */
+    insertDocuments(docs: readonly SerializedDrawing[]): Drawing[] {
+        if (!this.enabled || docs.length === 0) return [];
+        return this.insertClones(docs);
     }
 
     /** The ids currently selected on the chart (empty when nothing is). */

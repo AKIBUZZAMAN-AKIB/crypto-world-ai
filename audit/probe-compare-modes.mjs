@@ -37,7 +37,7 @@ const sheet0 = await page.evaluate(() => ({
   disabled: [...document.querySelectorAll('.vela-cmp-mode')].map((b) => b.disabled),
   removeHidden: document.querySelector('.vela-cmp-remove')?.hidden,
 }));
-await page.screenshot({ path: 'shots/70-compare-sheet.png' });
+await page.screenshot({ path: '/tmp/vela-probes/70-compare-sheet.png' });
 
 // 2) pick a symbol
 await page.locator('.vela-cmp-sym').tap();
@@ -48,19 +48,19 @@ await page.evaluate((own) => {
 }, await page.evaluate(() => window.__ws.active.symbol));
 await page.waitForTimeout(2000);
 const afterPick = await snap();
-await page.screenshot({ path: 'shots/71-compare-percent.png' });
+await page.screenshot({ path: '/tmp/vela-probes/71-compare-percent.png' });
 
 // 3) New price scale
 await page.evaluate(() => document.querySelector('.vela-cmp-mode[data-display="own-scale"]').click());
 await page.waitForTimeout(2000);
 const ownScale = await snap();
-await page.screenshot({ path: 'shots/72-compare-own-scale.png' });
+await page.screenshot({ path: '/tmp/vela-probes/72-compare-own-scale.png' });
 
 // 4) New pane
 await page.evaluate(() => document.querySelector('.vela-cmp-mode[data-display="new-pane"]').click());
 await page.waitForTimeout(2000);
 const newPane = await snap();
-await page.screenshot({ path: 'shots/73-compare-new-pane.png' });
+await page.screenshot({ path: '/tmp/vela-probes/73-compare-new-pane.png' });
 
 // 5) back to Same % scale, then remove
 await page.evaluate(() => document.querySelector('.vela-cmp-mode[data-display="same-percent"]').click());

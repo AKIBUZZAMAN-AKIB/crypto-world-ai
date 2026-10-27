@@ -128,3 +128,29 @@ describe('the pair is a title, not a stop', () => {
         expect(symbol.querySelector('.vela-mb-symbol-text')?.textContent).toBe('ETHUSDT');
     });
 });
+
+describe('undo / redo in the scrolling band', () => {
+    it('sits in the HEAD, before drawings, and starts disabled', () => {
+        const bar = mount({ onUndoClick: () => undefined, onRedoClick: () => undefined });
+        const band = bar.el.querySelector('.vela-mb-scroll')!;
+        const order = kids(band).map(name);
+        expect(order.slice(0, 5)).toEqual(['vela-mb-tf', 'vela-mb-style', 'vela-mb-undo', 'vela-mb-redo', 'vela-mb-drawings']);
+        expect(bar.el.querySelector('.vela-mb-undo')!.getAttribute('aria-disabled')).toBe('true');
+        expect(bar.el.querySelector('.vela-mb-redo')!.getAttribute('aria-disabled')).toBe('true');
+        expect(bar.el.querySelector<HTMLElement>('.vela-mb-undo')!.tabIndex).toBe(-1);
+    });
+
+    it('setHistory lights each stop independently and drops disabled stops from the tab order', () => {
+        const bar = mount({ onUndoClick: () => undefined, onRedoClick: () => undefined });
+        bar.setHistory(true, false);
+        const undo = bar.el.querySelector<HTMLElement>('.vela-mb-undo')!;
+        const redo = bar.el.querySelector<HTMLElement>('.vela-mb-redo')!;
+        expect(undo.getAttribute('aria-disabled')).toBe('false');
+        expect(undo.tabIndex).toBe(0);
+        expect(redo.getAttribute('aria-disabled')).toBe('true');
+        expect(redo.tabIndex).toBe(-1);
+        bar.setHistory(false, true);
+        expect(undo.getAttribute('aria-disabled')).toBe('true');
+        expect(redo.getAttribute('aria-disabled')).toBe('false');
+    });
+});

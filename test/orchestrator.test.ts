@@ -413,6 +413,25 @@ describe('EngineOrchestrator', () => {
         expect(renderer.removed).toHaveLength(0);
     });
 
+    it('keeps setInputs() that lands before the async Pine session starts (templates / defaults)', async () => {
+        const renderer = new FakeRenderer();
+        const engine = new MockEngine();
+        const chart = new Vela({} as unknown as HTMLElement, { live: false, volume: false }, { renderer, engines: [engine], dataFeed: new MockDataFeed() });
+
+        const handle = chart.addIndicator('//@version=5\nindicator("Seeded", overlay=true)\nplot(close)');
+        // No await yet: the engine's session is still starting, so this is exactly the
+        // window in which a built-in template (or "Save as default") applies its overrides.
+        // It must NOT be dropped — the study has to open on these values, not the defaults.
+        handle.setInputs({ Length: 42 });
+
+        await chart.ready();
+        await flush();
+
+        expect(handle.inputValues().Length).toBe(42);
+        // The FIRST computed run already used the seeded value, not the declaration default.
+        expect(engine.runLengths[handle.id]?.[0]).toBe(42);
+    });
+
     it('setTheme re-skins the renderer and emits theme:changed; a same-theme call no-ops', async () => {
         const renderer = new FakeRenderer();
         const chart = new Vela({} as unknown as HTMLElement, { live: false }, { renderer, engines: [], dataFeed: new MockDataFeed() });

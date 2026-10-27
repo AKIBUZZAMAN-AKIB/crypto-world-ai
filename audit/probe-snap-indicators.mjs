@@ -34,7 +34,7 @@ await chevron.click({ force: true });
 await page.waitForTimeout(350);
 const rows1 = await page.locator('.vela-dtb-item[aria-label]').allTextContents();
 console.log('flyout rows:', JSON.stringify(rows1.map((t) => t.trim())));
-await page.screenshot({ path: 'audit/r22-magnet-flyout.png' });
+await page.screenshot({ path: '/tmp/vela-probes/r22-magnet-flyout.png' });
 
 const toggle = page.locator('.vela-dtb-item[aria-label="Snap to indicators"]').first();
 const before = await toggle.getAttribute('data-selected');
@@ -46,7 +46,7 @@ await page.waitForTimeout(300);
 const after = await page.locator('.vela-dtb-item[aria-label="Snap to indicators"]').first().getAttribute('data-selected');
 const modeRows = await page.locator('.vela-dtb-item[aria-label]').allTextContents();
 console.log(`toggle before=${before ?? 'unset'} after=${after ?? 'unset'}`);
-await page.screenshot({ path: 'audit/r22-magnet-on.png' });
+await page.screenshot({ path: '/tmp/vela-probes/r22-magnet-on.png' });
 
 // ── 3. does it actually change the snap? ────────────────────────────────────
 // Read the flag straight off the renderer through the deps the toolbar writes, then

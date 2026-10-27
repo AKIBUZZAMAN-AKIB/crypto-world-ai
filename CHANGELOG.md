@@ -6,6 +6,73 @@ All notable changes to Vela, newest first.
 
 ### Added
 
+- **Indicator templates are their own tab.** TradingView's labelled *Templates* button has
+  no room on a phone topbar, so the indicator sheet grew a labelled **Templates** tab —
+  placed BEFORE the family tabs, where a 390px strip can actually show it. It carries the
+  whole desktop vocabulary: save the current stack (with optional "remember market"),
+  apply to this chart / all charts, rename, export, import, set the default new charts open
+  with, and six read-only built-ins. A tap re-skins the chart; the study search hides on
+  this page because it filters studies, not stacks. `builtinPineIndex()` now also lists
+  Volume and Compare.
+- **Drawing templates are real bundles now.** The saved *look* of one tool still exists,
+  but a new **drawing set** template saves a whole selection or object-tree group: every
+  drawing's time offset and price ratio (not absolute coordinates), style, text, props,
+  visibility, locks and interval bands. Inserting one at the latest bar is ONE undo step,
+  rebuilds the bundle as a group in the object tree, and selects it for an immediate drag.
+  Save from any drawing/group/bulk context menu → **Drawing templates → Save as
+  template…**; insert from the price row even on an empty chart; manage (insert / export /
+  import / delete) from **Manage layouts → Drawings**. The set travels in
+  `WorkspaceState.drawingSetTemplates` and is sanitized on import.
+- **Pine source for every plottable built-in.** 72 classic studies already opened their v6
+  scripts from the legend's `{ }`. Volume and Compare now ship readable Pine v6 sources too
+  (executed by the contract test through the vendored engine), so the picker shows `{ }`
+  on all 74 plottable natives. VPVR — a viewport-dependent volume-profile layer — remains
+  the single deliberate exception, exactly as TradingView's own volume profile has no
+  source code. The engine still uses the core-computed path for the two layer-backed
+  natives, so their columns and second-symbol feed are unchanged.
+- **Layout setup and Manage layouts are literal phone tabs.** The sheet's sticky nav is now
+  three stops — **Layout setup** (grid + presets), **Manage layouts** (saved layouts,
+  autosave, indicator templates, drawing sets), **Sync** — each its own pane. The old
+  full-page *Manage layouts* route and its back button still work for deep links; the
+  More sheet's door opens the Manage tab.
+- **Undo / redo on the phone's own bar.** The two most-tapped verbs of an edit session sat
+  one drawer deep in More; they are now stops in the bar's scrolling band, right after the
+  chart type (a 390px band shows about three stops, so the head of the band is where a
+  button has to live to be seen). Each stop is state-bound — an empty stack dims it and
+  drops it out of the tab order — and the pair dispatches the ACTIVE chart's unified
+  history, the same one the desktop topbar drives.
+- **The phone gets TradingView's CROSSHAIR, all of it.** A long press on the plot no longer
+  ends when the finger lifts: it enters **tracking** — the crosshair and its readout stay,
+  a one-finger drag moves them (the view does not pan), and a single tap anywhere on the
+  chart exits. A pinch is navigation and exits it too. Chart settings gained a **Crosshair**
+  page of its own (it used to hide three rows under *Scales and lines*): **shape** (cross /
+  vertical only / horizontal only / dot), colour, width, line style, opacity, the price and
+  time **axis labels** with their background colour, and **magnet** mode (off / close /
+  nearest OHLC, snapped on screen with a leash that lets go past a third of the pane). A
+  chip follows the line it belongs to, so hiding the horizontal line hides its value chip.
+  Ids: `crosshair.style.shape|color|width|line-style|opacity`,
+  `crosshair.labels.price|time|background`, `crosshair.magnet.snap`; the container carries
+  `data-vela-tracking` while tracking is up.
+- **Object tree on a touch screen: dragging works, and groups NEST.** A phone could not
+  reorder anything — a swipe was either a list scroll or nothing. Now a **hold** picks the
+  row *and* arms the drag (a non-passive `touchmove` keeps the gesture off the scroller, so
+  the row follows the finger), while every draggable row grows a **grip** whose own
+  `touch-action: none` starts a drag with no wait at all; a plain flick still scrolls.
+  Groups learned TradingView's nesting: create a group from a pick that contains other
+  groups, or drop a group **on another group's header** (outlined as you hover) to nest it
+  at any depth; headers indent per level, the eye/padlock/count speak for the whole branch,
+  ungrouping lifts the children one level instead of dissolving them, an emptied container
+  disappears, and **Duplicate group** copies the branch (drawings cloned as one undo step,
+  nesting and names rebuilt). Group rows are pickable in their own right, rename on
+  double-click, and the header carries **Manage layout drawings** — every cell's drawings
+  in one list with show / lock / remove, instead of one chart at a time.
+- **Changing the pair on a phone is a scroll, not a panel visit.** The symbol picker opens
+  as a **bottom sheet** (62% of the screen, the chart still visible above it) with the
+  search row and the asset tabs sticky and the list scrolling under a finger — the field
+  no longer grabs focus, so the keyboard does not cover the list you came to flick. Picking
+  a row still closes on the spot; the desktop keeps the dialog it always had, and the same
+  picker element serves both (the Compare flow's reuse included).
+
 - **Compare in the top toolbar — TradingView's second-series tool, where a desktop can
   reach it.** The compare flow already existed but had exactly one door: the phone's More
   drawer, so on a desktop the feature was invisible. `'compare'` is now a built-in topbar
@@ -117,6 +184,38 @@ All notable changes to Vela, newest first.
   API and drops the UI.
 
 ### Fixed
+
+- **Nested context submenus stay on a phone screen.** A 180px child menu opened beside a
+  180px parent at x=100 has no room on either side; Floating UI flipped it to x=−76, so
+  the object tree's new **Drawing templates → Save / Insert** rows were half off-screen.
+  Submenu surfaces now use fixed positioning, a viewport boundary, `slide`, `overlap` and
+  vertical fallback placements — measured at 390px the child opens at x=110.
+- **Copying a built-in keeps its built-in identity.** Volume and Compare now carry a
+  readable Pine source for `{ }`, but they are still native, layer-backed studies. Grid
+  replication therefore prefers `nativeType` over `source`; otherwise the copies mounted as
+  plain scripts and lost their columns/second-symbol feed (and their ledger identity).
+- **The phone status line reads out O/H/L/C again.** It used to skip straight from "four
+  values + delta" (≈350px, wider than any phone) to "close + delta", so every phone in
+  portrait showed the close alone while the chip had room for the rest. The width ladder
+  now gives up the DELTA before the values: first the absolute change (§ the percent stays,
+  as TradingView's phone layout reads it), then the delta itself rides up onto the symbol
+  line — a rung the chip can take because it is measured, and it descends again the moment
+  the symbol line would ellipsize the venue/timeframe. Result at 360–430px: **O · H · L · C
+  plus the change**, two rows; 320px keeps the close (there is genuinely no room) and a
+  desktop never changes.
+- **Pane controls exist on a phone.** `move up / move down / collapse / maximize` were
+  suppressed by a *mode switch* (`setSuspended(layout === 'mobile')`) — the same
+  mode-not-measurement mistake R59 removed from the legend. Touch now follows the same rule
+  as the mouse: a pane that **measures** room (≥150px of data width and a row of 24px chips
+  under its legend line) keeps its cluster up permanently — no hover to wait for — and a
+  cramped pane shows none of it, its verbs being in the object tree. On the top pane the
+  cluster sits below the status line's chip instead of on top of it.
+- **Auto-scale stops lying.** `autoScale` asked the PRICE pane only, so a pinch that froze
+  a study pane (or a study's own scale column) left the flag reading ON while the visible
+  panes sat on stale windows — and the only thing that looked like a fix was toggling
+  off→on, which clears every window at once. The flag is now true only while **nothing**
+  holds a frozen window, and switching auto back on clears the study scales too (it used to
+  clear panes alone, so those stayed frozen).
 
 - **Six icons were invisible — every button wearing one was blank.** The registry writes
   icons the way HTML likes them: `svg16(body, extra)` puts the icon's own root attributes

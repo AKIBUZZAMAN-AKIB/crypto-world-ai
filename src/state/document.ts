@@ -75,6 +75,8 @@ export interface PanelsState {
     open?: string;
     widths?: Record<string, number>;
     pinned?: string[];
+    /** Mobile bottom-sheet top offsets, as a fraction of the host height (0…0.7). */
+    tops?: Record<string, number>;
 }
 
 /**
@@ -93,6 +95,30 @@ export interface DrawingToolsState {
 
 /** Per-chart (per-cell) state: the market, the display prefs, the content documents,
  *  and the indicator ledger. The widget's whole chart state is ONE of these. */
+/** Runtime flags that the chart treats as user edits but keeps out of cosmetic config. */
+export interface CellRuntimeState {
+    candleVisible?: boolean;
+    autoScale?: boolean;
+}
+
+/** One Object Tree folder. `parent` nests a group inside another group. */
+export interface ObjectGroupState {
+    id: string;
+    name: string;
+    ids: string[];
+    parent?: string;
+}
+
+/** One pane's durable layout — enough to restore order, visibility and scale columns. */
+export interface PaneState {
+    id: string;
+    kind: 'price' | 'study';
+    order: number;
+    collapsed: boolean;
+    maximized: boolean;
+    indicators: Array<{ id: string; ownScale: boolean }>;
+}
+
 export interface CellState {
     symbol?: string;
     /**
@@ -118,8 +144,15 @@ export interface CellState {
     indicatorTitles?: boolean;
     /** Plot values beside the legend titles visibility — a per-chart display pref. */
     indicatorValues?: boolean;
-    /** The renderer's cosmetic config document (`renderer.getConfig()`). */
+    /** The renderer's cosmetic config document (`renderer.getConfig()`). Includes the
+     *  shared candle/indicator visual-order keys. */
     rendererConfig?: unknown;
+    /** Runtime view flags that do not ride `getConfig()` but ARE chart edits. */
+    runtime?: CellRuntimeState;
+    /** The pane stack: order, collapse/maximize and each indicator's pane/scale. */
+    panes?: PaneState[];
+    /** Object Tree groups/folders, including nesting, for this chart. */
+    objectTreeGroups?: ObjectGroupState[];
     /** The user-drawings document (`drawings.toJSON()`). */
     drawings?: unknown;
     /** The indicator ledger: manifest entries + native entries. Either side persists
@@ -207,6 +240,49 @@ export interface AppearanceTemplate {
     config: Record<string, unknown>;
 }
 
+/**
+ * A DRAWING SET template — a real, reusable bundle of drawings, not a tool's saved look.
+ * Geometry is stored RELATIVE: `dt` is milliseconds from the set's left edge, `ratio` is
+ * the price divided by the set's base price. Inserting on another symbol or timeframe
+ * therefore keeps the shape (a breakout pattern, a fib + trendline + note) instead of
+ * pasting the original absolute prices and times.
+ */
+export interface DrawingSetTemplateAnchor {
+    dt: number;
+    ratio: number;
+}
+export interface DrawingSetTemplateDrawing {
+    type: string;
+    paneId: string;
+    anchors: DrawingSetTemplateAnchor[];
+    /** Relative draw-order inside the set; insertion re-bases it above the live stack. */
+    z: number;
+    visible: boolean;
+    locked: boolean;
+    style: Record<string, unknown>;
+    text?: Record<string, unknown>;
+    props?: Record<string, unknown>;
+    showOn?: string[];
+}
+export interface DrawingSetTemplate {
+    version: 1;
+    drawings: DrawingSetTemplateDrawing[];
+    /** The base price the ratios were computed against — kept for export/inspection. */
+    basePrice: number;
+    /** The set's time span in ms; insertion anchors its left edge at `lastBar - spanMs`. */
+    spanMs: number;
+    createdAt: number;
+}
+
+/** Drawing synchronization scope — TradingView's three modes plus an explicit
+ *  per-chart target list for Vela's on-demand layout sync. */
+export type DrawingSyncMode = 'none' | 'layout' | 'global' | 'charts';
+export interface DrawingSyncEntry {
+    mode: DrawingSyncMode;
+    /** Cell ids for `mode: 'charts'`; ignored otherwise. */
+    charts?: string[];
+}
+
 export interface WorkspaceState {
     version: 1;
     /** The layout id — always `'1'` for a widget. Restoring an id that is not
@@ -251,6 +327,8 @@ export interface WorkspaceState {
         defaultTemplate?: string;
         /** APPEARANCE template charts that are NEW open with (chart settings → Templates). */
         defaultAppearance?: string;
+        /** Whether the compact Manage layouts panel currently exposes a sharing link. */
+        sharing?: boolean;
     };
     /**
      * Saved chart TEMPLATES — indicator sets with their settings, no drawings (Vela's
@@ -259,6 +337,14 @@ export interface WorkspaceState {
      * optionally (the symbol/timeframe chips are off by default, as in TradingView).
      */
     templates?: Record<string, ChartTemplate>;
+    /** Saved DRAWING SETS — whole bundles of drawings, with relative geometry. */
+    drawingSetTemplates?: Record<string, DrawingSetTemplate>;
+    /** Per-object drawing sync scope, keyed by the source drawing's id. */
+    drawingSync?: Record<string, DrawingSyncEntry>;
+    /** Default scope for NEW drawings (the object tree's Manage objects button). */
+    drawingSyncDefault?: DrawingSyncMode;
+    /** Source drawing → target cell → the clone's generated id (ids are regenerated on insert). */
+    drawingSyncClones?: Record<string, Record<string, string>>;
     /**
      * INDICATOR defaults, by indicator type id — what "Save as default" in the indicator
      * settings dialog writes and every new instance of that type opens with.
@@ -307,6 +393,8 @@ export interface WorkspaceState {
      *  same shared-preferences channel: a starred study survives a saved layout, an
      *  export and a share link instead of living in one browser's storage. */
     indicatorFavorites?: string[];
+    /** Favorite INDICATOR TEMPLATES — `template:<name>` or `builtin:<id>` keys. */
+    templateFavorites?: string[];
     /** The drawing tools' remembered settings, magnet and stay mode — a SHARED preference. */
     drawingTools?: DrawingToolsState;
     /** The docked side panels: which one is open, and the widths the user dragged. */
@@ -449,6 +537,10 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
         const favs = d.indicatorFavorites.filter((f): f is string => typeof f === 'string');
         if (favs.length > 0) out.indicatorFavorites = favs;
     }
+    if (Array.isArray(d.templateFavorites)) {
+        const favs = d.templateFavorites.filter((f): f is string => typeof f === 'string' && f.length > 0);
+        if (favs.length > 0) out.templateFavorites = [...new Set(favs)];
+    }
     if (Array.isArray(d.timeframeFavorites)) {
         const favs = d.timeframeFavorites.filter((f): f is string => typeof f === 'string');
         if (favs.length > 0) out.timeframeFavorites = favs;
@@ -466,6 +558,13 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
     if (layoutMeta) out.layoutMeta = layoutMeta;
     const templates = sanitizeTemplates(d.templates);
     if (templates) out.templates = templates;
+    const sets = sanitizeDrawingSetTemplates(d.drawingSetTemplates);
+    if (sets) out.drawingSetTemplates = sets;
+    const drawingSync = sanitizeDrawingSync(d.drawingSync);
+    if (drawingSync) out.drawingSync = drawingSync;
+    if (d.drawingSyncDefault === 'none' || d.drawingSyncDefault === 'layout' || d.drawingSyncDefault === 'global') out.drawingSyncDefault = d.drawingSyncDefault;
+    const clones = sanitizeDrawingSyncClones(d.drawingSyncClones);
+    if (clones) out.drawingSyncClones = clones;
     const appearance = sanitizeAppearanceTemplates(d.appearanceTemplates);
     if (appearance) out.appearanceTemplates = appearance;
     const indicatorDefaults = sanitizeIndicatorDefaults(d.indicatorDefaults);
@@ -590,6 +689,7 @@ function sanitizeLayoutPrefs(raw: unknown): WorkspaceState['layoutPrefs'] | null
     if (typeof p.autosave === 'boolean') out.autosave = p.autosave;
     if (typeof p.defaultTemplate === 'string' && p.defaultTemplate.trim()) out.defaultTemplate = p.defaultTemplate.trim().slice(0, 40);
     if (typeof p.defaultAppearance === 'string' && p.defaultAppearance.trim()) out.defaultAppearance = p.defaultAppearance.trim().slice(0, 40);
+    if (typeof p.sharing === 'boolean') out.sharing = p.sharing;
     return Object.keys(out).length > 0 ? out : null;
 }
 
@@ -611,6 +711,103 @@ function sanitizeLayoutMeta(raw: unknown): Record<string, SavedLayoutMeta> | nul
 
 /** Templates: a known body version, an indicator array of the shape a cell persists, and
  *  an optional market. Anything else is dropped (never coerced into a half-template). */
+function finite(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+/** Drawing-set templates are untrusted JSON: bound the sets, the drawings, and every
+ *  numeric field before any of it reaches the drawing store. */
+function sanitizeDrawingSync(raw: unknown): Record<string, DrawingSyncEntry> | null {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const out: Record<string, DrawingSyncEntry> = {};
+    let kept = 0;
+    for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (!id || value == null || typeof value !== 'object' || Array.isArray(value)) continue;
+        const v = value as Record<string, unknown>;
+        const mode = v.mode;
+        if (mode !== 'none' && mode !== 'layout' && mode !== 'global' && mode !== 'charts') continue;
+        const charts = Array.isArray(v.charts) ? (v.charts as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, 32) : [];
+        out[id.slice(0, 64)] = { mode, ...(mode === 'charts' && charts.length > 0 ? { charts } : {}) };
+        kept += 1;
+        if (kept >= 500) break;
+    }
+    return kept > 0 ? out : null;
+}
+
+function sanitizeDrawingSyncClones(raw: unknown): Record<string, Record<string, string>> | null {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const out: Record<string, Record<string, string>> = {};
+    let kept = 0;
+    for (const [source, targets] of Object.entries(raw as Record<string, unknown>)) {
+        if (!source || targets == null || typeof targets !== 'object' || Array.isArray(targets)) continue;
+        const clean: Record<string, string> = {};
+        let n = 0;
+        for (const [cell, clone] of Object.entries(targets as Record<string, unknown>)) {
+            if (!cell || typeof clone !== 'string' || !clone || clone.length > 96) continue;
+            clean[cell.slice(0, 48)] = clone.slice(0, 96);
+            n += 1;
+            if (n >= 64) break;
+        }
+        if (n === 0) continue;
+        out[source.slice(0, 96)] = clean;
+        kept += 1;
+        if (kept >= 500) break;
+    }
+    return kept > 0 ? out : null;
+}
+
+export function sanitizeDrawingSetTemplates(raw: unknown): Record<string, DrawingSetTemplate> | null {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const out: Record<string, DrawingSetTemplate> = {};
+    let kept = 0;
+    for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+        const key = name.trim().slice(0, 40);
+        if (!key || value == null || typeof value !== 'object' || Array.isArray(value)) continue;
+        const t = value as Record<string, unknown>;
+        if (t.version !== 1 || !Array.isArray(t.drawings)) continue;
+        const drawings: DrawingSetTemplateDrawing[] = [];
+        for (const entry of (t.drawings as unknown[]).slice(0, 80)) {
+            if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) continue;
+            const d = entry as Record<string, unknown>;
+            if (typeof d.type !== 'string' || !d.type || typeof d.paneId !== 'string' || !Array.isArray(d.anchors)) continue;
+            const anchors: DrawingSetTemplateAnchor[] = [];
+            for (const a of (d.anchors as unknown[]).slice(0, 24)) {
+                if (a == null || typeof a !== 'object' || Array.isArray(a)) continue;
+                const p = a as Record<string, unknown>;
+                anchors.push({ dt: finite(p.dt, 0), ratio: finite(p.ratio, 1) });
+            }
+            if (anchors.length === 0) continue;
+            const style = d.style != null && typeof d.style === 'object' && !Array.isArray(d.style) ? (d.style as Record<string, unknown>) : {};
+            const text = d.text != null && typeof d.text === 'object' && !Array.isArray(d.text) ? (d.text as Record<string, unknown>) : undefined;
+            const props = d.props != null && typeof d.props === 'object' && !Array.isArray(d.props) ? (d.props as Record<string, unknown>) : undefined;
+            const showOn = Array.isArray(d.showOn) ? (d.showOn as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, 16) : undefined;
+            drawings.push({
+                type: d.type.slice(0, 48),
+                paneId: d.paneId.slice(0, 48),
+                anchors,
+                z: finite(d.z, 0),
+                visible: d.visible !== false,
+                locked: d.locked === true,
+                style,
+                ...(text ? { text } : {}),
+                ...(props ? { props } : {}),
+                ...(showOn && showOn.length > 0 ? { showOn } : {}),
+            });
+        }
+        if (drawings.length === 0) continue;
+        out[key] = {
+            version: 1,
+            drawings,
+            basePrice: finite(t.basePrice, 1),
+            spanMs: Math.max(0, finite(t.spanMs, 0)),
+            createdAt: finite(t.createdAt, 0),
+        };
+        kept += 1;
+        if (kept >= 40) break;
+    }
+    return kept > 0 ? out : null;
+}
+
 function sanitizeTemplates(raw: unknown): Record<string, ChartTemplate> | null {
     if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const out: Record<string, ChartTemplate> = {};
@@ -690,6 +887,50 @@ function sanitizeCell(raw: unknown): CellState | null {
     if (typeof c.indicatorValues === 'boolean') out.indicatorValues = c.indicatorValues;
     if (c.rendererConfig != null && typeof c.rendererConfig === 'object') out.rendererConfig = c.rendererConfig;
     if (c.drawings != null && typeof c.drawings === 'object') out.drawings = c.drawings;
+    if (c.runtime != null && typeof c.runtime === 'object' && !Array.isArray(c.runtime)) {
+        const r = c.runtime as Record<string, unknown>;
+        const runtime: CellRuntimeState = {};
+        if (typeof r.candleVisible === 'boolean') runtime.candleVisible = r.candleVisible;
+        if (typeof r.autoScale === 'boolean') runtime.autoScale = r.autoScale;
+        if (Object.keys(runtime).length > 0) out.runtime = runtime;
+    }
+    if (Array.isArray(c.panes)) {
+        const panes: PaneState[] = [];
+        for (const raw of c.panes as unknown[]) {
+            if (raw == null || typeof raw !== 'object') continue;
+            const p = raw as Record<string, unknown>;
+            if (typeof p.id !== 'string' || p.id.length === 0) continue;
+            if (p.kind !== 'price' && p.kind !== 'study') continue;
+            const indicators: PaneState['indicators'] = [];
+            if (Array.isArray(p.indicators)) {
+                for (const rawInd of p.indicators as unknown[]) {
+                    if (rawInd == null || typeof rawInd !== 'object') continue;
+                    const i = rawInd as Record<string, unknown>;
+                    if (typeof i.id === 'string' && i.id.length > 0) indicators.push({ id: i.id, ownScale: i.ownScale === true });
+                }
+            }
+            panes.push({
+                id: p.id,
+                kind: p.kind,
+                order: typeof p.order === 'number' && Number.isFinite(p.order) ? p.order : panes.length,
+                collapsed: p.collapsed === true,
+                maximized: p.maximized === true,
+                indicators,
+            });
+        }
+        if (panes.length > 0) out.panes = panes;
+    }
+    if (Array.isArray(c.objectTreeGroups)) {
+        const groups: ObjectGroupState[] = [];
+        for (const raw of c.objectTreeGroups as unknown[]) {
+            if (raw == null || typeof raw !== 'object') continue;
+            const g = raw as Record<string, unknown>;
+            if (typeof g.id !== 'string' || typeof g.name !== 'string' || !Array.isArray(g.ids)) continue;
+            const ids = (g.ids as unknown[]).filter((x): x is string => typeof x === 'string');
+            groups.push({ id: g.id, name: g.name, ids, ...(typeof g.parent === 'string' ? { parent: g.parent } : {}) });
+        }
+        out.objectTreeGroups = groups;
+    }
     const ind = c.indicators as Record<string, unknown> | undefined;
     if (ind != null && typeof ind === 'object') {
         // Bare names pass as-is; object entries keep only a string name and plain-object
@@ -776,7 +1017,14 @@ function sanitizePanels(raw: unknown): PanelsState | null {
         const pinned = p.pinned.filter((id): id is string => typeof id === 'string' && id !== '');
         if (pinned.length > 0) out.pinned = [...new Set(pinned)];
     }
-    return out.open || out.widths || out.pinned ? out : null;
+    if (p.tops != null && typeof p.tops === 'object') {
+        const tops: Record<string, number> = {};
+        for (const [id, value] of Object.entries(p.tops as Record<string, unknown>)) {
+            if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1) tops[id] = value;
+        }
+        if (Object.keys(tops).length > 0) out.tops = tops;
+    }
+    return out.open || out.widths || out.pinned || out.tops ? out : null;
 }
 
 function sanitizeTrackSizes(raw: unknown): Record<string, TrackSizes> | null {

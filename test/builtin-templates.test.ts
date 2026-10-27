@@ -54,6 +54,22 @@ describe('the built-in templates', () => {
         expect((displaced.indicators[0] as { inputs?: Record<string, unknown> }).inputs).toMatchObject({ offset: 5 });
     });
 
+    it('mirrors classic overrides onto both key-spaces (Pine variables + core descriptor)', () => {
+        // With a Pine engine the study's inputs are `len`/`ink`; without one they are the
+        // descriptor's `length`/`color`. A built-in is static data applied on either host,
+        // so each override must carry BOTH spellings or the settings silently vanish.
+        const ribbon = BUILTIN_TEMPLATES.find((t) => t.id === 'ma-exp-ribbon')!;
+        for (const entry of ribbon.indicators) {
+            const inputs = (entry as { inputs: Record<string, unknown> }).inputs;
+            expect(inputs.len).toBe(inputs.length);
+            expect(inputs.ink).toBe(inputs.color);
+        }
+        const displaced = BUILTIN_TEMPLATES.find((t) => t.id === 'displaced-ema')!;
+        const d = (displaced.indicators[0] as { inputs: Record<string, unknown> }).inputs;
+        expect(d.len).toBe(d.length);
+        expect(d.offset).toBe(5);
+    });
+
     it('and nothing else is a built-in', () => {
         expect(builtinTemplate('nope')).toBeNull();
         expect(builtinTemplate('oscillators')?.name).toBe('Oscillators');

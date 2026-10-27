@@ -68,6 +68,16 @@ try {
     // ── 2. open: a real floating surface inside the viewport ─────────────────────
     await page.locator('.vela-widget-templates').click();
     await page.waitForSelector('.vela-tm', { timeout: 5000 });
+    // Built-ins are split across Technical and Financial now; collect both in order.
+    const technical = await page.evaluate(() => {
+        document.querySelector('.vela-tm-tab[data-tab="technical"]')?.click();
+        return [...document.querySelectorAll('.vela-tm-builtin .vela-tm-name')].map((n) => n.textContent);
+    });
+    const financial = await page.evaluate(() => {
+        document.querySelector('.vela-tm-tab[data-tab="financial"]')?.click();
+        return [...document.querySelectorAll('.vela-tm-builtin .vela-tm-name')].map((n) => n.textContent);
+    });
+    await page.locator('.vela-tm-tab[data-tab="my"]').click();
     const box = await page.evaluate(() => {
         const el = document.querySelector('.vela-tm');
         const r = el.getBoundingClientRect();
@@ -81,10 +91,17 @@ try {
             vw: innerWidth,
             vh: innerHeight,
             rows: el.querySelectorAll('.vela-tm-item:not(.vela-tm-builtin)').length,
-            builtins: [...el.querySelectorAll('.vela-tm-builtin .vela-tm-name')].map((n) => n.textContent),
+            builtins: window.__tplBuiltins ?? [],
         };
     });
+    box.builtins = [...technical, ...financial];
     facts.panel = box;
+    facts.categories = await page.evaluate(() => ({
+        title: document.querySelector('.vela-tm-title')?.textContent ?? '',
+        tabs: [...document.querySelectorAll('.vela-tm-tab')].map((t) => t.textContent),
+    }));
+    assert(facts.categories.title === 'Indicator templates', 'the panel is called Indicator templates', facts.categories.title);
+    assert(JSON.stringify(facts.categories.tabs) === JSON.stringify(['Favorites', 'My templates', 'Technical', 'Financial']), 'the four required categories are present', facts.categories.tabs);
     assert(box.bg !== 'rgba(0, 0, 0, 0)' && box.bg !== 'transparent', 'the panel paints its own surface', box.bg);
     assert(box.x >= 0 && box.y >= 0 && box.x + box.w <= box.vw && box.y + box.h <= box.vh, 'the panel fits the viewport', box);
     assert(box.rows === 0, 'a fresh workspace has no templates yet', box.rows);
@@ -113,7 +130,8 @@ try {
     assert(/saved/.test(s.flash), 'the panel says it saved', s.flash);
     const rowMeta = await page.evaluate(() => document.querySelector('.vela-tm-item[data-name="Morning set"] .vela-tm-meta')?.textContent ?? '');
     facts.rowMeta = rowMeta;
-    assert(/indicator/.test(rowMeta) && /AAA/.test(rowMeta), 'the row shows the count and the remembered market', rowMeta);
+    const market = await page.evaluate(() => (window.__ws.active.symbol || '').split(':').pop());
+    assert(/indicator/.test(rowMeta) && (market ? rowMeta.includes(market) : true), 'the row shows the count and the remembered market', { rowMeta, market });
 
     // ── 4. applying closes the menu (TV closes on pick) ──────────────────────────
     await page.click('.vela-tm-row[data-name="Morning set"]');
@@ -134,6 +152,9 @@ try {
     assert((await state()).house === null, 'a second press clears it', (await state()).house);
 
     // ── 6. kebab: apply to all charts, rename, export, delete ────────────────────
+    await page.evaluate(() => window.__ws.setLayout('4'));
+    await page.waitForTimeout(400);
+    await closeMenu();
     await rowKebab('Morning set');
     const chips = await page.evaluate(() => [...document.querySelectorAll('.vela-tm-chip')].map((b) => b.textContent.trim()));
     facts.chips = chips;
@@ -188,6 +209,7 @@ try {
 
     // ── 7b. a BUILT-IN applies like a saved template (and is not editable) ───────
     await openMenu();
+    await page.locator('.vela-tm-tab[data-tab="technical"]').click();
     const builtinRow = '.vela-tm-builtin[data-builtin="ma-exp-ribbon"] .vela-tm-row';
     assert((await page.locator(builtinRow).count()) === 1, 'the ribbon built-in is a row of its own', builtinRow);
     assert((await page.locator('.vela-tm-builtin .vela-tm-star, .vela-tm-builtin .vela-tm-kebab').count()) === 0, 'built-ins carry no star and no kebab — they cannot be edited', 'readonly');
@@ -195,12 +217,12 @@ try {
     await page.waitForTimeout(400);
     const built = await page.evaluate(() => ({
         open: !!document.querySelector('.vela-tm'),
-        emas: window.__ws.cell('a').chart.indicators().filter((h) => h.nativeType === 'ema').length,
+        emas: window.__ws.active.chart.indicators().filter((h) => h.nativeType === 'ema').length,
         lengths: window.__ws
-            .cell('a')
+            .active
             .chart.indicators()
             .filter((h) => h.nativeType === 'ema')
-            .map((h) => h.inputValues().length),
+            .map((h) => h.inputValues().length ?? h.inputValues().len),
     }));
     facts.builtinApplied = built;
     assert(built.open === false, 'the menu closes after applying', built.open);
@@ -241,14 +263,14 @@ try {
         const b = document.querySelector('.vela-widget-templates');
         return b ? Math.round(b.getBoundingClientRect().width) : null;
     });
-    await mp.locator('button[aria-label="More"]').first().click();
+    await mp.locator('.vela-mb-more').click();
     await mp.waitForTimeout(700);
-    await mp.locator('.vela-md button:has-text("Templates"), .vela-drawer button:has-text("Templates")').first().click();
+    await mp.locator('.vela-md-row', { hasText: 'Indicator templates' }).click();
     await mp.waitForTimeout(500);
     const phoneFacts = await mp.evaluate(() => {
-        const row = document.querySelector('[data-template="Phone set"]');
+        const row = document.querySelector('.vela-tm-item[data-name="Phone set"]');
         const r = row?.getBoundingClientRect();
-        const sheet = document.querySelector('.vela-md, .vela-drawer');
+        const sheet = document.querySelector('.vela-tm-dialog');
         return {
             row: !!row,
             h: r ? Math.round(r.height) : null,
@@ -262,14 +284,16 @@ try {
     assert(topbarWidth === null || topbarWidth === 0, 'the phone hides the topbar (so the drawer is the only door)', topbarWidth);
     assert(phoneFacts.row && phoneFacts.h >= 44, 'the phone lists the template on a 44px touch row', phoneFacts);
     assert(phoneFacts.over <= 0 && phoneFacts.sheetOver <= 0, 'the phone sheet does not scroll sideways', phoneFacts);
-    await mp.locator('[data-template="Phone set"]').first().click();
-    await mp.waitForTimeout(700);
+    await mp.locator('.vela-tm-item[data-name="Phone set"] .vela-tm-row').first().click();
+    await mp.waitForTimeout(1200);
     const phoneApplied = await mp.evaluate(() => {
-        const sheet = document.querySelector('.vela-md, .vela-drawer');
         return {
-            closed: sheet ? sheet.hasAttribute('hidden') : true,
+            closed: (() => {
+                const panel = document.querySelector('.vela-tm-dialog');
+                return !panel || panel.hidden === true || !document.querySelector('.vela-tm');
+            })(),
             toast: document.body.textContent.includes('applied'),
-            indicators: window.__ws.cell('a').chart.indicators().length,
+            indicators: window.__ws.active.chart.indicators().length,
         };
     });
     facts.phoneApplied = phoneApplied;

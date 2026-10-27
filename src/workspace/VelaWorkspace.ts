@@ -29,6 +29,9 @@ import { Topbar, priceStyleLabel, priceStyleIcon, priceStyleMarkup } from '../wi
 import { Bottombar, RANGE_PRESETS } from '../widget/bottombar';
 import { SecondClock } from '../core/util/wall-clock';
 import { ObjectTree } from '../widget/object-tree';
+import { LayoutManagerPanel } from '../widget/layout-manager-panel';
+import { withFavorite } from '../widget/indicator-templates';
+import { canonicalTicker } from '../widget/symbol-quick-switch';
 import { DataWindow } from '../widget/data-window';
 import { StrategyTester } from '../widget/strategy-tester';
 import { PineEditor } from '../widget/pine-editor';
@@ -42,7 +45,8 @@ import { AlertList } from '../widget/alert-list';
 import { AlertCreateSheet } from '../widget/alert-create';
 import { CompareSheet } from '../widget/compare-sheet';
 import type { CompareDisplay } from '../core/native-indicators/compare';
-import type { IndicatorDefault, SavedPriceAlert } from '../state/document';
+import type { DrawingSetTemplate, DrawingSetTemplateDrawing, DrawingSyncEntry, DrawingSyncMode, IndicatorDefault, SavedPriceAlert } from '../state/document';
+import { sanitizeDrawingSetTemplates } from '../state/document';
 import { BUILTIN_TEMPLATES, builtinTemplate } from '../state/builtin-templates';
 import type { InputValue } from '../core/model/inputs';
 import { advanceAlert, alertRowLabel, alertWatchesSymbol, describeAlert, isMoveCondition, movingFires, nextAlertId, type AlertCondition, type AlertFrequency, type PriceAlert } from './price-alerts';
@@ -124,6 +128,7 @@ const SYNC_ROW_ORDER: ReadonlyArray<readonly [SyncKind, string]> = [
 /** The same labels as a lookup, for the status-line badge's tooltip. */
 const KIND_LABEL = Object.fromEntries(SYNC_ROW_ORDER) as Record<SyncKind, string>;
 import { ChartCell, seedDefaults, cellChartDefaults, type CellSeed, type CellBoot, type PooledCellState, type SettingsTemplatesService, type IndicatorDefaultsService } from './ChartCell';
+import { WidgetHistory } from '../widget/history';
 import { buildContext, type WorkspaceWidgetContext } from './context';
 import { WorkspaceReplay, lastOpenClosedBy } from './WorkspaceReplay';
 import {
@@ -511,8 +516,20 @@ export class VelaWorkspace {
     private styleFavs: string[] = [];
     /** Starred indicator keys (see `IndicatorPicker`): document-backed, like the two above. */
     private indFavs: string[] = [];
+    /** Favorite indicator templates — `template:<name>` / `builtin:<id>` keys. */
+    private templateFavs: string[] = [];
     /** Live subscription to the ACTIVE cell's unified history (rebound on every projection). */
     private historyUnsub: (() => void) | null = null;
+    /** Global snapshot timeline for chart edits with no per-object inverse (settings,
+     *  panes, visual order, templates, layout management, …). Composite undo/redo picks
+     *  the newest entry from this stack and the active cell's fine-grained stack. */
+    private readonly workspaceHistory = new WidgetHistory(undefined, 80);
+    private readonly workspaceHistoryUnsub = this.workspaceHistory.onChange(() => this.syncHistoryButtons());
+    private historyBaseline: string | null = null;
+    private historyBaselineClock = 0;
+    private historyTimer: ReturnType<typeof setTimeout> | null = null;
+    private historyRestoreDepth = 0;
+    private historySuppressUntil = 0;
     /** Favorite drawing tools — a WORKSPACE preference (one star set, every cell). */
     private favs: string[] = [];
     /** Every drawing tool's remembered settings — a SHARED pref, mirrored onto every cell. */
@@ -539,6 +556,14 @@ export class VelaWorkspace {
     private readonly layoutMeta = new Map<string, SavedLayoutMeta>();
     /** Saved chart TEMPLATES — indicator sets, no drawings (see `ChartTemplate`). */
     private readonly templates = new Map<string, ChartTemplate>();
+    /** Saved DRAWING SETS — whole bundles of drawings with relative geometry. */
+    private readonly drawingSets = new Map<string, DrawingSetTemplate>();
+    /** Per-object drawing sync scope; grouped with the state, not with a chart's local history. */
+    private readonly drawingSyncModes = new Map<string, DrawingSyncEntry>();
+    /** Source drawing → target cell → generated clone id (`insertDocuments` mints fresh ids). */
+    private readonly drawingSyncClones = new Map<string, Map<string, string>>();
+    /** Scope assigned to new objects from the object tree's Manage objects button. */
+    private drawingSyncDefault: DrawingSyncMode = 'none';
     /** The shell watchlist — symbols in display order. */
     private watchlist: string[] = [];
     /** Names the USER gave to sync groups, keyed by the stable group id. */
@@ -569,10 +594,11 @@ export class VelaWorkspace {
     /** The saved snapshot opened (or written) last — the picker's active row. */
     private activeSavedLayout: string | null = null;
     /** Autosave + the house templates for new charts (see `WorkspaceState.layoutPrefs`). */
-    private layoutPrefs: { autosave: boolean; defaultTemplate: string | null; defaultAppearance: string | null } = {
+    private layoutPrefs: { autosave: boolean; defaultTemplate: string | null; defaultAppearance: string | null; sharing: boolean } = {
         autosave: false,
         defaultTemplate: null,
         defaultAppearance: null,
+        sharing: false,
     };
     /** CHART-SETTINGS templates: the chart's appearance under a name (TV's Settings →
      *  Templates). The market and the indicators are not part of one. */
@@ -778,6 +804,8 @@ export class VelaWorkspace {
     private tfDrawer: TimeframeDrawer | null = null;
     private drawingsDrawer: DrawingsDrawer | null = null;
     private moreDrawer: MoreDrawer | null = null;
+    /** Compact, NON-MODAL management panel: save/copy/rename/share — never the chart grid. */
+    private layoutManager: LayoutManagerPanel | null = null;
     private timezoneDrawer: TimezoneDrawer | null = null;
     private priceScaleDrawer: PriceScaleDrawer | null = null;
     /** Plot-local y of the last price-axis long-press (targets the pane under the finger). */
@@ -840,8 +868,10 @@ export class VelaWorkspace {
                 void raw.then((r) => {
                     if (this.destroyed || !r) return;
                     const decoded = decodeStateDetailed(r);
-                    if (decoded.state) this.applyState(decoded.state);
-                    else this.rescueUnreadable(r, decoded.reason);
+                    if (decoded.state) {
+                        // Async-storage boot is a programmatic restore, not a user edit.
+                        this.withHistoryRestore(() => this.applyState(decoded.state));
+                    } else this.rescueUnreadable(r, decoded.reason);
                 });
             }
             if (typeof window !== 'undefined') {
@@ -932,6 +962,9 @@ export class VelaWorkspace {
                 }
                 this.active.setSymbol(ticker);
             },
+            // Phone: the picker opens as a bottom sheet over the chart instead of taking the
+            // whole screen — changing the pair is a scroll and a tap, not a panel visit.
+            sheet: () => this.layoutCtl?.current === 'mobile',
             // The watchlist: the trader's shortlist at the top of the picker, a star on
             // every row, and (multi-chart) one tap to put a symbol on EVERY chart.
             watchlist: () => this.watchlist,
@@ -977,6 +1010,23 @@ export class VelaWorkspace {
                       favorites: () => this.indFavs,
                       onFavorite: (key, on) => this.setIndicatorFavorite(key, on),
                       recent: () => recentOf('indicators'),
+                      // The Templates tab — the same store, verbs and built-ins the desktop
+                      // dropdown drives, so a phone (whose topbar is hidden) reaches the whole
+                      // template vocabulary from inside the indicator sheet.
+                      templates: {
+                          rows: () => this.templateList(),
+                          onApply: (name, target) => this.applyTemplate(name, target),
+                          onSave: (name, includeMarket) => this.saveTemplate(name, { includeMarket }),
+                          onRename: (from, to) => this.renameTemplate(from, to),
+                          onDelete: (name) => this.deleteTemplate(name),
+                          onExport: (name) => this.exportTemplate(name),
+                          onImport: (json) => this.importTemplate(json),
+                          defaultName: () => this.defaultTemplate(),
+                          onSetDefault: (name) => this.setDefaultTemplate(name),
+                          chartCount: () => this.cellsById.size,
+                          builtins: () => this.builtinTemplates(),
+                          onApplyBuiltin: (id) => { this.applyBuiltinTemplate(id); },
+                      },
                       onOpenChange: (open) => {
                           // Same rule as the symbol search: the renderer's in-chart dialogs never see
                           // an outside-dismiss from a topbar dialog — close them on every cell.
@@ -1002,9 +1052,11 @@ export class VelaWorkspace {
             // side (list is law) from a default one (an override's `order` may flow).
             composition: opts.topbar,
             onSymbolClick: () => this.symbolPicker.open(),
+            onSymbolStep: (delta) => this.stepQuickSymbol(delta),
+            onOpenLayoutManager: () => this.openLayoutManager(),
             ...(picker ? { onIndicatorsClick: () => picker.open() } : {}),
-            onUndoClick: () => this.active.history.undo(),
-            onRedoClick: () => this.active.history.redo(),
+            onUndoClick: () => this.undoHistory(),
+            onRedoClick: () => this.redoHistory(),
             onScreenshotClick: () => this.downloadScreenshot(),
             onAlertsClick: (anchor) => this.openAlertsMenu(anchor),
             // TradingView's "Compare" tool, in the top toolbar: a second series on the
@@ -1026,6 +1078,7 @@ export class VelaWorkspace {
             // button and no sync switches (see TopbarOptions.layout).
             layout: this.monoLayout ? undefined : {
                 current: this.def.id,
+                layoutGridSetupOnly: true,
                 // The picker composes dynamic layouts on its grid canvas; registered
                 // presets the canvas cannot express (bespoke plugin areas) list as rows.
                 shape: () => layoutShape(this.def),
@@ -1101,6 +1154,8 @@ export class VelaWorkspace {
                 defaultTemplate: () => this.defaultTemplate(),
                 onSetDefaultTemplate: (name) => this.setDefaultTemplate(name),
                 chartCount: () => this.cellsById.size,
+                favoriteTemplates: () => this.templateFavoriteList(),
+                onToggleTemplateFavorite: (key, on) => this.toggleTemplateFavorite(key, on),
             },
             getContext: () => this.context(),
         });
@@ -1144,6 +1199,34 @@ export class VelaWorkspace {
             // The tree's "Source code" entry — the legend chip's twin, and on a phone the
             // route to a study's code (a built-in opens read-only, a script editable).
             onSource: (source, title, readOnly) => this.openEditor(source, title, { readOnly }),
+            // "Manage layout drawings": the tree speaks for the ACTIVE chart, so the header
+            // hands it every live cell — the across-charts list a multi-chart layout needs.
+            layout: () => this.cells().map((c) => ({ label: c.symbol, chart: c.chart })),
+            drawingSets: {
+                list: () => this.drawingSetTemplateList(),
+                save: (name, ids) => this.saveDrawingSetTemplate(name, ids),
+                insert: (name) => this.insertDrawingSetTemplate(name),
+                remove: (name) => { this.deleteDrawingSetTemplate(name); },
+            },
+            drawingSync: {
+                rows: () => this.drawingSyncRows(),
+                charts: () => this.drawingSyncCharts(),
+                mode: (id) => this.drawingSyncMode(id),
+                setMode: (ids, mode, charts) => this.setDrawingSyncMode(ids, mode, charts),
+                defaultMode: () => this.drawingSyncDefault,
+                setDefaultMode: (mode) => this.setDrawingSyncDefault(mode),
+                apply: (ids) => this.applyDrawingSync(ids),
+            },
+            // Candle / indicator z keys live in the renderer's config. `renderer.set()`
+            // doesn't fire a chart event, so the tree explicitly dirties the document
+            // after every visual-order edit (menu or drag) to make autosave pick it up.
+            onStackChanged: () => this.markStateDirty(),
+            onGroupsChanged: () => this.markStateDirty(),
+            historyTransaction: (mutate) => {
+                const cell = this.activeId ? this.cellsById.get(this.activeId) : undefined;
+                if (cell) cell.history.silently(mutate);
+                else mutate();
+            },
         });
         this.dataWindow = new DataWindow(main);
         this.strategyTester = new StrategyTester(main);
@@ -1365,6 +1448,7 @@ export class VelaWorkspace {
                           symbol: '',
                           timeframe: '60',
                           onSymbolClick: () => this.symbolPicker.open(),
+                          onSymbolStep: (delta) => this.stepQuickSymbol(delta),
                           onTimeframeClick: () => this.openTimeframeDrawer(),
                           // Same visibility truth as the desktop bar: composition-hidden
                           // indicators lose their mobile stop too; an override takes it over.
@@ -1398,6 +1482,11 @@ export class VelaWorkspace {
                                     layoutGlyph: () => layoutGlyph(this.def),
                                     onLayoutClick: () => this.openMoreDrawer('layout'),
                                 }),
+                          // Undo / redo on the phone's own bar, right before More —
+                          // the workspace's unified history of the ACTIVE chart (the
+                          // same two verbs the desktop topbar carries).
+                          onUndoClick: () => this.undoHistory(),
+                          onRedoClick: () => this.redoHistory(),
                           onMoreClick: () => this.openMoreDrawer(),
                           onSettingsClick: () => this.active.chart.renderer.openSettings(),
                       })
@@ -1477,6 +1566,8 @@ export class VelaWorkspace {
         // Built. From here a dirty mark means the USER changed something, and a teardown
         // is allowed to flush it; everything above was setup (see {@link booted}).
         this.booted = true;
+        this.resetHistoryBaseline(); // the first capture is the FIRST user edit, not boot
+        this.historySuppressUntil = Date.now() + 100; // async manifest/indicator settle
     }
 
     // ── access ──────────────────────────────────────────────────
@@ -1695,7 +1786,13 @@ export class VelaWorkspace {
     getState(): WorkspaceState {
         const byId = new Map<string, PooledCellState>();
         for (const [id, cs] of this.pool) byId.set(id, cs); // dormant slots
-        for (const [id, cell] of this.cellsById) byId.set(id, cell.dehydrate()); // live slots win
+        for (const [id, cell] of this.cellsById) {
+            const cs = cell.dehydrate();
+            // Object Tree folders live in the panel (keyed by chart instance), but they
+            // are chart content: history and persistence must round-trip them.
+            cs.objectTreeGroups = this.objectTree?.groupsFor(cell.chart) ?? [];
+            byId.set(id, cs); // live slots win
+        }
         // The charts array is ORDERED — position i of the document is slot i on restore.
         const charts: WorkspaceState['charts'] = [];
         for (const id of this.order) {
@@ -1727,6 +1824,7 @@ export class VelaWorkspace {
         if (this.tfFavs.length > 0) state.timeframeFavorites = [...this.tfFavs];
         if (this.styleFavs.length > 0) state.chartTypeFavorites = [...this.styleFavs];
         if (this.indFavs.length > 0) state.indicatorFavorites = [...this.indFavs];
+        if (this.templateFavs.length > 0) state.templateFavorites = [...this.templateFavs];
         const tools = this.drawingToolsState();
         if (tools) state.drawingTools = tools;
         if (this.trackSizes.size > 0) state.trackSizes = Object.fromEntries([...this.trackSizes].map(([k, v]) => [k, { ...v }]));
@@ -1754,11 +1852,12 @@ export class VelaWorkspace {
         if (this.drawingsScope !== 'layout') state.drawingsScope = this.drawingsScope;
         if (this.savedLayouts.size > 0) state.savedLayouts = Object.fromEntries([...this.savedLayouts].map(([k, v]) => [k, v as unknown]));
         if (this.layoutMeta.size > 0) state.layoutMeta = Object.fromEntries([...this.layoutMeta].map(([k, v]) => [k, { ...v }]));
-        if (this.layoutPrefs.autosave || this.layoutPrefs.defaultTemplate || this.layoutPrefs.defaultAppearance) {
+        if (this.layoutPrefs.autosave || this.layoutPrefs.defaultTemplate || this.layoutPrefs.defaultAppearance || this.layoutPrefs.sharing) {
             state.layoutPrefs = {
                 ...(this.layoutPrefs.autosave ? { autosave: true } : {}),
                 ...(this.layoutPrefs.defaultTemplate ? { defaultTemplate: this.layoutPrefs.defaultTemplate } : {}),
                 ...(this.layoutPrefs.defaultAppearance ? { defaultAppearance: this.layoutPrefs.defaultAppearance } : {}),
+                ...(this.layoutPrefs.sharing ? { sharing: true } : {}),
             };
         }
         if (this.appearanceTemplates.size > 0) {
@@ -1772,6 +1871,22 @@ export class VelaWorkspace {
         if (this.templates.size > 0) {
             state.templates = Object.fromEntries(
                 [...this.templates].map(([k, v]) => [k, { ...v, indicators: [...v.indicators] }]),
+            );
+        }
+        if (this.drawingSets.size > 0) {
+            state.drawingSetTemplates = Object.fromEntries(
+                [...this.drawingSets].map(([k, v]) => [k, { ...v, drawings: v.drawings.map((d) => ({ ...d, anchors: d.anchors.map((a) => ({ ...a })) })) }]),
+            );
+        }
+        if (this.drawingSyncModes.size > 0) {
+            state.drawingSync = Object.fromEntries(
+                [...this.drawingSyncModes].map(([k, v]) => [k, { mode: v.mode, ...(v.charts && v.charts.length > 0 ? { charts: [...v.charts] } : {}) }]),
+            );
+        }
+        if (this.drawingSyncDefault !== 'none') state.drawingSyncDefault = this.drawingSyncDefault;
+        if (this.drawingSyncClones.size > 0) {
+            state.drawingSyncClones = Object.fromEntries(
+                [...this.drawingSyncClones].map(([source, targets]) => [source, Object.fromEntries(targets)]),
             );
         }
         if (this.watchlist.length > 0) state.watchlist = [...this.watchlist];
@@ -1819,10 +1934,23 @@ export class VelaWorkspace {
         if (st.templates) {
             for (const [name, template] of Object.entries(st.templates)) this.templates.set(name, template);
         }
+        if (st.drawingSetTemplates) {
+            for (const [name, set] of Object.entries(st.drawingSetTemplates)) this.drawingSets.set(name, set);
+        }
+        if (st.drawingSync) {
+            this.drawingSyncModes.clear();
+            for (const [id, entry] of Object.entries(st.drawingSync)) this.drawingSyncModes.set(id, { ...entry, charts: entry.charts ? [...entry.charts] : undefined });
+        }
+        if (st.drawingSyncDefault) this.drawingSyncDefault = st.drawingSyncDefault;
+        if (st.drawingSyncClones) {
+            this.drawingSyncClones.clear();
+            for (const [source, targets] of Object.entries(st.drawingSyncClones)) this.drawingSyncClones.set(source, new Map(Object.entries(targets)));
+        }
         if (st.indicatorDefaults) {
             this.indicatorDefaults.clear();
             for (const [type, entry] of Object.entries(st.indicatorDefaults)) this.indicatorDefaults.set(type, { ...entry });
         }
+        if (st.templateFavorites) this.templateFavs = [...new Set(st.templateFavorites)];
         if (st.appearanceTemplates) {
             this.appearanceTemplates.clear();
             for (const [name, tpl] of Object.entries(st.appearanceTemplates)) this.appearanceTemplates.set(name, tpl.config);
@@ -1831,6 +1959,7 @@ export class VelaWorkspace {
             this.layoutPrefs.autosave = st.layoutPrefs.autosave === true;
             this.layoutPrefs.defaultTemplate = st.layoutPrefs.defaultTemplate ?? null;
             this.layoutPrefs.defaultAppearance = st.layoutPrefs.defaultAppearance ?? null;
+            this.layoutPrefs.sharing = st.layoutPrefs.sharing === true;
         }
         if (st.watchlist) this.watchlist = [...st.watchlist];
         if (st.groupNames) this.groupNames = { ...st.groupNames };
@@ -1929,6 +2058,15 @@ export class VelaWorkspace {
         return true;
     }
 
+    /** Push each chart's Object Tree folders back into the panel after a state restore. */
+    private restoreObjectTreeGroups(charts: WorkspaceState['charts']): void {
+        for (const { id, objectTreeGroups } of charts) {
+            const cell = this.cellsById.get(id);
+            if (cell) this.objectTree?.setGroupsFor(cell.chart, objectTreeGroups ?? []);
+        }
+        this.objectTree?.refresh();
+    }
+
     applyState(state: unknown): void {
         if (this.destroyed) return;
         const st = sanitizeState(state);
@@ -1951,6 +2089,7 @@ export class VelaWorkspace {
             this.indFavs = [...st.indicatorFavorites];
             this.indicatorPicker?.sync();
         }
+        if (st.templateFavorites) this.templateFavs = [...new Set(st.templateFavorites)];
         // Absent in documents written before the dock existed — those leave the column closed.
         this.dock.applyState(st.panels);
         for (const kind of SYNC_KINDS) this.applySyncSetting(kind, st.sync?.[kind]);
@@ -1985,6 +2124,7 @@ export class VelaWorkspace {
             } finally {
                 this.styleSyncBusy = false;
             }
+            this.restoreObjectTreeGroups(st.charts);
             // AFTER the cells: each restored rendererConfig carries its own zone and the
             // cell mirror adopts it — the document's shell-level field must have the
             // last word when the two disagree (a host editing just `timezone`).
@@ -2030,6 +2170,7 @@ export class VelaWorkspace {
         this.clearMaximized(); // ditto — the rebuilt grid starts unmaximized
         this.applyGrid();
         this.buildCells();
+        this.restoreObjectTreeGroups(st.charts);
         this.syncCellPresentation();
         this.topbar.setLayout(this.def.id);
         const nextActive = st.activeCellId && this.cellsById.has(st.activeCellId) ? st.activeCellId : (this.order[0] ?? null);
@@ -2316,6 +2457,9 @@ export class VelaWorkspace {
     destroy(): void {
         if (this.destroyed) return;
         this.dismissGroupTip(false);
+        if (this.historyTimer != null) clearTimeout(this.historyTimer);
+        this.historyTimer = null;
+        this.workspaceHistoryUnsub();
         this.flushPendingState(); // the user's last edit, before anything is torn down
         this.destroyed = true;
         this.replay.destroy();
@@ -2409,10 +2553,10 @@ export class VelaWorkspace {
         this.syncMobileMaximize(); // the new active cell may hold a maximized pane
         this.mobileBar?.onChart(cell.chart); // its drawings stop mirrors the ACTIVE cell's tool
         this.drawingPill?.onChart(cell.chart); // the pill mirrors the ACTIVE cell's tool state
-        const pushHistory = (): void => this.topbar.setHistoryState(cell.history.canUndo, cell.history.canRedo);
+        const pushHistory = (): void => this.syncHistoryButtons();
         this.historyUnsub?.();
         this.historyUnsub = cell.history.onChange(pushHistory);
-        pushHistory();
+        this.syncHistoryButtons();
         this.objectTree.setSymbol(cell.symbol);
         this.topbar.setCompareSymbol(this.compareLabel());
         this.dock.onChart(cell.chart); // every docked panel follows the active cell
@@ -2496,6 +2640,7 @@ export class VelaWorkspace {
      *  per burst of edits, flushed hard on unload/destroy. */
     private markStateDirty(): void {
         if (this.destroyed || !this.booted) return;
+        if (this.historyRestoreDepth === 0) this.scheduleHistoryCapture();
         this.docRevision += 1;
         this.scheduleAutosave();
         this.scheduleLayoutChip();
@@ -2505,6 +2650,182 @@ export class VelaWorkspace {
             this.events.emit('state:changed', undefined);
             this.persistNow();
         }, 500);
+    }
+
+    // ── composite undo/redo ────────────────────────────────────────────────
+    // Drawing and indicator CRUD already own precise inverse actions. Everything else
+    // (settings, panes, visual order, folders, sync scopes, templates, layout management)
+    // is captured as one coalesced workspace snapshot per user action. `markStateDirty`
+    // is the common signal for all of them; a short debounce collapses event bursts.
+
+    /** Strip fields that change as a side effect of saving/using the UI, not of an edit. */
+    private historySnapshot(): string {
+        const state = this.getState();
+        delete state.recentCommands;
+        delete state.seenTips;
+        delete state.layoutMeta; // autosave rewrites savedAt — never make that an undo step
+        return JSON.stringify(state);
+    }
+
+    private resetHistoryBaseline(): void {
+        if (this.destroyed || !this.booted) return;
+        this.historyBaseline = this.historySnapshot();
+        this.historyBaselineClock = WidgetHistory.clockNow();
+    }
+
+    private scheduleHistoryCapture(): void {
+        if (this.historyTimer != null) clearTimeout(this.historyTimer);
+        this.historyTimer = setTimeout(() => {
+            this.historyTimer = null;
+            this.captureHistoryStep();
+        }, 80);
+    }
+
+    /** Flush a pending capture before the user can press undo immediately after an edit. */
+    private flushHistoryCapture(): void {
+        if (this.historyTimer == null) return;
+        clearTimeout(this.historyTimer);
+        this.historyTimer = null;
+        this.captureHistoryStep();
+    }
+
+    private captureHistoryStep(): void {
+        if (this.destroyed || !this.booted || this.historyRestoreDepth > 0) return;
+        if (Date.now() < this.historySuppressUntil || this.historyBaseline === null) {
+            this.resetHistoryBaseline();
+            return;
+        }
+        // A fine-grained history entry landed in the same burst (drawing/indicator CRUD,
+        // undo or redo). It already owns that change; don't record a duplicate snapshot.
+        if (WidgetHistory.clockNow() !== this.historyBaselineClock) {
+            this.resetHistoryBaseline();
+            return;
+        }
+        const after = this.historySnapshot();
+        const before = this.historyBaseline;
+        if (before === after) return;
+        this.workspaceHistory.push({
+            undo: () => this.restoreHistorySnapshot(before),
+            redo: () => this.restoreHistorySnapshot(after),
+        });
+        this.historyBaseline = after;
+        this.historyBaselineClock = WidgetHistory.clockNow();
+    }
+
+    /** Wrap a programmatic restore so its own events never become new history entries. */
+    private withHistoryRestore(fn: () => void): void {
+        this.historyRestoreDepth += 1;
+        try {
+            fn();
+        } finally {
+            this.historyRestoreDepth -= 1;
+            this.historySuppressUntil = Math.max(this.historySuppressUntil, Date.now() + 150);
+            if (this.historyRestoreDepth === 0) this.resetHistoryBaseline();
+        }
+    }
+
+    /** Side-cars are additive in `applyState`; a history restore must REPLACE them. */
+    private clearHistorySideCars(): void {
+        this.savedLayouts.clear();
+        this.layoutMeta.clear();
+        this.templates.clear();
+        this.drawingSets.clear();
+        this.drawingSyncModes.clear();
+        this.drawingSyncClones.clear();
+        this.appearanceTemplates.clear();
+        this.indicatorDefaults.clear();
+        this.watchlist = [];
+        this.groupNames = {};
+        this.groupMarks = {};
+        this.seenTips.clear();
+        this.recentCommands = [];
+        this.drawingSyncDefault = 'none';
+        this.drawingsScope = 'layout';
+        this.drawingsBySymbol = {};
+        this.activeSavedLayout = null;
+        this.linkGroup = null;
+        this.cursorStyle = 'cross';
+        this.extState = {};
+        this.favs = [];
+        this.tfFavs = [];
+        this.styleFavs = [];
+        this.indFavs = [];
+        this.templateFavs = [];
+        this.toolDefs = {};
+        this.toolTemplates = {};
+        this.globalSnap = 'off';
+        this.globalStay = true;
+        this.layoutPrefs = { autosave: false, defaultTemplate: null, defaultAppearance: null, sharing: false };
+        setMarkOverrides({});
+    }
+
+    private restoreHistorySnapshot(raw: string): void {
+        if (this.destroyed) return;
+        this.withHistoryRestore(() => {
+            try {
+                this.clearHistorySideCars();
+                this.applyState(JSON.parse(raw));
+            } catch (err) {
+                console.warn('[vela] could not restore a history snapshot:', err);
+            }
+        });
+    }
+
+    /** Public composite undo/redo — the same verbs the toolbar, phone bar and keymap use. */
+    undo(): void {
+        this.undoHistory();
+    }
+
+    redo(): void {
+        this.redoHistory();
+    }
+
+    get canUndo(): boolean {
+        return this.historyCanUndo();
+    }
+
+    get canRedo(): boolean {
+        return this.historyCanRedo();
+    }
+
+    private syncHistoryButtons(): void {
+        const cell = this.activeId ? this.cellsById.get(this.activeId)?.history : undefined;
+        const canUndo = (cell?.canUndo ?? false) || this.workspaceHistory.canUndo;
+        const canRedo = (cell?.canRedo ?? false) || this.workspaceHistory.canRedo;
+        this.topbar?.setHistoryState(canUndo, canRedo);
+        this.mobileBar?.setHistory(canUndo, canRedo);
+    }
+
+    private historyCanUndo(): boolean {
+        this.flushHistoryCapture();
+        return (this.activeId ? this.cellsById.get(this.activeId)?.history.canUndo ?? false : false) || this.workspaceHistory.canUndo;
+    }
+
+    private historyCanRedo(): boolean {
+        this.flushHistoryCapture();
+        return (this.activeId ? this.cellsById.get(this.activeId)?.history.canRedo ?? false : false) || this.workspaceHistory.canRedo;
+    }
+
+    private undoHistory(): void {
+        this.flushHistoryCapture();
+        const cell = this.activeId ? this.cellsById.get(this.activeId)?.history : undefined;
+        const global = this.workspaceHistory;
+        this.withHistoryRestore(() => {
+            if (global.canUndo && (!cell?.canUndo || global.nextUndoSeq > cell.nextUndoSeq)) global.undo();
+            else cell?.undo();
+        });
+        this.syncHistoryButtons();
+    }
+
+    private redoHistory(): void {
+        this.flushHistoryCapture();
+        const cell = this.activeId ? this.cellsById.get(this.activeId)?.history : undefined;
+        const global = this.workspaceHistory;
+        this.withHistoryRestore(() => {
+            if (global.canRedo && (!cell?.canRedo || global.nextRedoSeq > cell.nextRedoSeq)) global.redo();
+            else cell?.redo();
+        });
+        this.syncHistoryButtons();
     }
 
     /**
@@ -3105,15 +3426,24 @@ export class VelaWorkspace {
         chart.on('viewport:changed', (range) => this.propagateViewport(cell.id, range));
         // Style sync: any committed config edit (settings dialog, applyConfig) mirrors
         // this cell's style-link slice onto its same-group followers.
-        chart.renderer.onConfigChanged(() => this.propagateStylePrefs(cell.id));
+        chart.renderer.onConfigChanged(() => {
+            this.propagateStylePrefs(cell.id);
+            // Chart settings / appearance templates / stacking all ride getConfig().
+            // A committed config edit is a chart change, so it belongs in history too.
+            this.markStateDirty();
+        });
         // A theme picked in ONE cell (its settings dialog's Canvas → Theme) re-skins the
         // WHOLE workspace — shared chrome plus every other cell.
         chart.on('theme:changed', (t) => this.setTheme(t));
-        // Pane collapse/maximize in the ACTIVE cell (double-tap on mobile, API) —
-        // keep the mobile bar's maximize stop truthful.
+        chart.on('priceStyle:change', () => this.markStateDirty());
+        chart.on('indicator:moved', () => this.markStateDirty());
+        // Pane collapse/maximize/move/remove are chart changes, not merely view state.
+        // Keep the mobile bar's maximize stop truthful and capture the pane snapshot.
         chart.on('pane:changed', () => {
             if (cell.id === this.activeId) this.syncMobileMaximize();
+            this.markStateDirty();
         });
+        chart.on('pane:moved', () => this.markStateDirty());
         // Mobile: long-press an axis strip → timezone / price-scale sheet (desktop keeps
         // the right-click menu). The press's own pointerdown already activated the cell.
         chart.renderer.onAxisLongPress((e) => {
@@ -3261,12 +3591,15 @@ export class VelaWorkspace {
             const cell = this.cellsById.get(id);
             if (!cell) continue;
             try {
-                const copy = handle.source !== undefined
-                    // Keep the source row's NAME on the copies: a grid of "Indicator" rows
-                    // tells the trader nothing about which script it is.
-                    ? cell.chart.addIndicator(handle.source, { inputs, props, title: handle.title })
-                    : handle.nativeType
-                      ? cell.chart.addNativeIndicator(handle.nativeType, { inputs })
+                // A built-in now carries its readable Pine source AND its nativeType.
+                // Native identity wins: copying it as a raw script would lose the study's
+                // built-in ledger/legend/persistence and (for volume) its column layer.
+                const copy = handle.nativeType
+                    ? cell.chart.addNativeIndicator(handle.nativeType, { inputs })
+                    : handle.source !== undefined
+                      // Keep the source row's NAME on the copies: a grid of "Indicator"
+                      // rows tells the trader nothing about which script it is.
+                      ? cell.chart.addIndicator(handle.source, { inputs, props, title: handle.title })
                       : null;
                 if (!copy) continue;
                 if (!handle.visible) copy.setVisible(false);
@@ -3319,10 +3652,10 @@ export class VelaWorkspace {
             const inputs = h.inputValues();
             const props = h.propValues();
             try {
-                const copy = h.source !== undefined
-                    ? target.chart.addIndicator(h.source, { inputs, props })
-                    : h.nativeType
-                      ? target.chart.addNativeIndicator(h.nativeType, { inputs })
+                const copy = h.nativeType
+                    ? target.chart.addNativeIndicator(h.nativeType, { inputs })
+                    : h.source !== undefined
+                      ? target.chart.addIndicator(h.source, { inputs, props })
                       : null;
                 if (copy) {
                     if (!h.visible) copy.setVisible(false);
@@ -3581,6 +3914,91 @@ export class VelaWorkspace {
     }
 
     /** Whether the open layout is saved as the chart changes (TradingView's Autosave). */
+    /** The open saved layout's name — the compact manager's status line. */
+    activeLayoutName(): string | null {
+        return this.activeSavedLayout;
+    }
+
+    /** Sharing is a separate layout preference, not a grid/layout-setup toggle. */
+    layoutSharingEnabled(): boolean {
+        return this.layoutPrefs.sharing;
+    }
+
+    setLayoutSharing(on: boolean): void {
+        if (this.layoutPrefs.sharing === on) return;
+        this.layoutPrefs.sharing = on;
+        this.markStateDirty();
+        this.events.emit('layout:prefs', undefined);
+        this.syncLayoutChip();
+    }
+
+    /** Make a copy of the OPEN layout and open the copy; with none open, name the current
+     *  chart as a fresh layout first. TradingView's "Make a copy" never overwrites. */
+    makeLayoutCopy(): string | null {
+        const current = this.activeSavedLayout;
+        if (current) {
+            const copy = this.duplicateLayout(current);
+            if (copy) this.openLayout(copy);
+            return copy;
+        }
+        let name = 'Layout copy';
+        for (let n = 2; this.savedLayouts.has(name); n += 1) name = `Layout copy ${n}`;
+        this.saveLayout(name);
+        return name;
+    }
+
+    /** Rename the OPEN layout, or save an unnamed chart under the typed name. */
+    renameActiveLayout(to: string): boolean {
+        const name = to.trim();
+        if (!name) return false;
+        if (!this.activeSavedLayout) {
+            if (this.savedLayouts.has(name)) return false;
+            this.saveLayout(name);
+            return true;
+        }
+        return this.renameLayout(this.activeSavedLayout, name);
+    }
+
+    /** The current workspace URL — exposed to the compact manager only while sharing is on. */
+    async currentShareLink(): Promise<string> {
+        return this.shareLink();
+    }
+
+    async copyCurrentShareLink(): Promise<string | null> {
+        if (!this.layoutPrefs.sharing) return null;
+        return this.copyShareLink();
+    }
+
+    async openWorkspaceLink(url: string): Promise<boolean> {
+        if (!url.trim()) return false;
+        return this.applyShareLink(url.trim());
+    }
+
+    /** Open the separate, compact Manage layouts panel. */
+    openLayoutManager(): void {
+        this.layoutManager ??= new LayoutManagerPanel({
+            host: this.root,
+            activeName: () => this.activeLayoutName(),
+            autosave: () => this.autosaveEnabled(),
+            onToggleAutosave: (on) => this.setAutosave(on),
+            onMakeCopy: () => this.makeLayoutCopy(),
+            onRename: (name) => this.renameActiveLayout(name),
+            sharing: () => this.layoutSharingEnabled(),
+            onToggleSharing: (on) => this.setLayoutSharing(on),
+            shareUrl: () => this.currentShareLink(),
+            onCopyLink: () => this.copyCurrentShareLink(),
+            onOpenLink: (url) => this.openWorkspaceLink(url),
+        });
+        this.layoutManager.open();
+    }
+
+    /** The separate Indicator templates panel: topbar dropdown on desktop, compact
+     *  dialog on phone (the More drawer's own row is the door there). */
+    openIndicatorTemplates(): void {
+        if (this.layoutCtl.current === 'mobile') this.topbar.openTemplatesDialog(this.root);
+        else this.topbar.openTemplatesMenu();
+    }
+
     autosaveEnabled(): boolean {
         return this.layoutPrefs.autosave;
     }
@@ -3684,6 +4102,7 @@ export class VelaWorkspace {
         this.markStateDirty();
         this.events.emit('layout:prefs', undefined);
         this.toast(next ? `New charts will start with “${next}”` : 'New charts start with no template', 'info');
+        this.indicatorPicker?.sync();
     }
 
     /**
@@ -3907,6 +4326,23 @@ export class VelaWorkspace {
         }));
     }
 
+    /** Favorite keys for the separate Indicator templates panel's Favorites tab. */
+    templateFavoriteList(): string[] {
+        return [...this.templateFavs];
+    }
+
+    /** Pin/unpin a saved template (`template:<name>`) or built-in (`builtin:<id>`). */
+    toggleTemplateFavorite(key: string, on?: boolean): boolean {
+        const clean = key.trim();
+        if (!clean) return false;
+        const next = withFavorite(this.templateFavs, clean, on ?? !this.templateFavs.includes(clean));
+        if (next.join('\u0000') === this.templateFavs.join('\u0000')) return false;
+        this.templateFavs = next;
+        this.markStateDirty();
+        this.topbar.refreshTemplatesMenu();
+        return true;
+    }
+
     /**
      * Capture the ACTIVE chart's indicator set as `name` (replacing a same-named
      * template — TradingView asks "replace?", the caller owns that prompt).
@@ -3914,6 +4350,270 @@ export class VelaWorkspace {
      * switches the chart's market; leave it off for a market-agnostic setup.
      */
     /** Every saved drawing template as a flat list (tool key + label, name, swatch color). */
+    // ── DRAWING SET templates ───────────────────────────────────────────────────
+    /**
+     * A real template is a BUNDLE of drawings, not just a tool's saved look. Saving a
+     * selection (a group, or a multi-pick) captures every drawing's geometry relative to
+     * the set's own left edge and base price, so inserting it on another symbol keeps the
+     * shape instead of carrying BTC's absolute prices onto a stock chart.
+     */
+    drawingSetTemplateList(): Array<{ name: string; count: number; createdAt: number }> {
+        return [...this.drawingSets].map(([name, t]) => ({ name, count: t.drawings.length, createdAt: t.createdAt }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    saveDrawingSetTemplate(name: string, ids: readonly string[]): boolean {
+        const key = name.trim().slice(0, 40);
+        const chart = this.active?.chart;
+        if (!key || !chart || ids.length === 0) return false;
+        const picked = new Set(ids);
+        const docs = chart.drawings.all().filter((d) => picked.has(d.id) && d.anchors.length > 0 && getDrawingType(d.type));
+        if (docs.length === 0) return false;
+        const times = docs.flatMap((d) => d.anchors.map((a) => a.time));
+        const origin = Math.min(...times);
+        const end = Math.max(...times);
+        const first = docs[0]!.anchors[0]!;
+        const basePrice = Number.isFinite(first.price) && first.price !== 0 ? first.price : 1;
+        const zs = docs.map((d) => d.zIndex);
+        const baseZ = Math.min(...zs);
+        const drawings: DrawingSetTemplateDrawing[] = docs.map((d) => ({
+            type: d.type,
+            paneId: d.paneId,
+            anchors: d.anchors.map((a) => ({ dt: a.time - origin, ratio: a.price / basePrice })),
+            z: d.zIndex - baseZ,
+            visible: d.visible,
+            locked: d.locked,
+            style: { ...d.style },
+            ...(d.text ? { text: { ...d.text } } : {}),
+            ...(d.props ? { props: { ...d.props } } : {}),
+            ...(d.showOn ? { showOn: [...d.showOn] } : {}),
+        }));
+        this.drawingSets.set(key, { version: 1, drawings, basePrice, spanMs: Math.max(0, end - origin), createdAt: Date.now() });
+        this.markStateDirty();
+        this.toast(`Drawing template “${key}” saved (${drawings.length} drawing${drawings.length === 1 ? '' : 's'})`, 'success');
+        this.moreDrawer?.refreshLibrary();
+        return true;
+    }
+
+    /** Insert a saved set at the latest bar, as ONE undo step, then group + select it. */
+    insertDrawingSetTemplate(name: string): number {
+        const chart = this.active?.chart;
+        const tpl = this.drawingSets.get(name);
+        if (!chart || !tpl) return 0;
+        const last = chart.lastBar;
+        const left = (last?.time ?? Date.now()) - tpl.spanMs;
+        const price = last?.close ?? tpl.basePrice;
+        const paneIds = new Set(chart.panes.list().map((p) => p.id));
+        const live = chart.drawings.all();
+        const topZ = live.reduce((max, d) => Math.max(max, d.zIndex), 0) + 1;
+        const now = Date.now();
+        const docs = tpl.drawings.map((d, i) => ({
+            id: `tpl-${name}-${i}`,
+            type: d.type as SerializedDrawing['type'],
+            paneId: paneIds.has(d.paneId) ? d.paneId : 'price',
+            anchors: d.anchors.map((a) => ({ time: left + a.dt, price: price * a.ratio })),
+            style: { ...d.style } as unknown as SerializedDrawing['style'],
+            ...(d.text ? { text: { ...d.text } as unknown as SerializedDrawing['text'] } : {}),
+            ...(d.props ? { props: { ...d.props } } : {}),
+            ...(d.showOn ? { showOn: [...d.showOn] } : {}),
+            visible: d.visible,
+            locked: d.locked,
+            zIndex: topZ + d.z,
+            createdAt: now,
+        }));
+        const ids = chart.drawings.insertDocuments(docs);
+        if (ids.length > 0) {
+            this.objectTree.groupInsertedDrawings(name, ids);
+            this.markStateDirty();
+            this.toast(`“${name}” inserted — ${ids.length} drawing${ids.length === 1 ? '' : 's'}`, 'success');
+            this.moreDrawer?.refreshLibrary();
+        }
+        return ids.length;
+    }
+
+    // ── Drawing objects: groups, sync modes, and on-demand layout sync ───────────
+
+    private syncCloneId(cellId: string, sourceId: string): string {
+        return `sync-${cellId}-${sourceId}`;
+    }
+
+    /** Rows for the object tree's Manage objects dialog. Clones are hidden. */
+    drawingSyncRows(): Array<{ id: string; label: string; mode: DrawingSyncMode; charts: string[] }> {
+        const chart = this.active?.chart;
+        if (!chart) return [];
+        return chart.drawings.all()
+            .filter((d) => !d.id.startsWith('sync-'))
+            .map((d) => {
+                const type = getDrawingType(d.type as DrawingTypeKey);
+                const entry = this.drawingSyncModes.get(d.id) ?? { mode: this.drawingSyncDefault };
+                return {
+                    id: d.id,
+                    label: type?.label ?? String(d.type),
+                    mode: entry.mode,
+                    charts: entry.charts ? [...entry.charts] : [],
+                };
+            });
+    }
+
+    /** Every cell that can be a specific sync target. */
+    drawingSyncCharts(): Array<{ id: string; label: string; symbol: string; active: boolean }> {
+        return this.cells().map((cell) => ({
+            id: cell.id,
+            label: `${cell.symbol}${cell.id === this.activeId ? ' — active' : ''}`,
+            symbol: cell.symbol,
+            active: cell.id === this.activeId,
+        }));
+    }
+
+    drawingSyncMode(id: string): DrawingSyncMode {
+        return this.drawingSyncModes.get(id)?.mode ?? this.drawingSyncDefault;
+    }
+
+    setDrawingSyncDefault(mode: DrawingSyncMode): void {
+        if (mode === 'charts') return;
+        this.drawingSyncDefault = mode;
+        this.markStateDirty();
+        this.objectTree.refresh();
+    }
+
+    /** Set the scope for one object, a whole group, or a bulk pick; applying it also
+     *  refreshes clones on demand (Task 6). */
+    setDrawingSyncMode(ids: readonly string[], mode: DrawingSyncMode, charts?: readonly string[]): void {
+        if (mode === 'charts' && (!charts || charts.length === 0)) mode = 'none';
+        for (const id of ids) {
+            this.drawingSyncModes.set(id, { mode, ...(mode === 'charts' ? { charts: [...(charts ?? [])] } : {}) });
+        }
+        if (ids.length > 0) {
+            this.applyDrawingSync(ids);
+            this.markStateDirty();
+            this.objectTree.refresh();
+        }
+    }
+
+    private drawingSyncTargets(entry: DrawingSyncEntry, activeId: string, activeSymbol: string): ChartCell[] {
+        const cells = this.cells().filter((cell) => cell.id !== activeId);
+        if (entry.mode === 'charts') {
+            const ids = new Set(entry.charts ?? []);
+            return cells.filter((cell) => ids.has(cell.id));
+        }
+        // Layout/global sync is meaningful only for the same symbol — TradingView's rule.
+        return cells.filter((cell) => cell.symbol === activeSymbol);
+    }
+
+    private removeSyncClones(sourceId: string, keep: ReadonlySet<string>): void {
+        const clones = this.drawingSyncClones.get(sourceId) ?? new Map<string, string>();
+        for (const cell of this.cells()) {
+            if (keep.has(cell.id)) continue;
+            const cloneId = clones.get(cell.id);
+            if (cloneId && cell.chart.drawings.all().some((d) => d.id === cloneId)) {
+                // A sync clone is a mirror, not a user edit on the target chart.
+                cell.history.silently(() => cell.chart.drawings.removeMany([cloneId]));
+            }
+            clones.delete(cell.id);
+        }
+        if (clones.size === 0) this.drawingSyncClones.delete(sourceId);
+        else this.drawingSyncClones.set(sourceId, clones);
+    }
+
+    /** Push the current source drawings to their targets. Call on demand, not on every edit. */
+    applyDrawingSync(ids?: readonly string[]): number {
+        const active = this.active;
+        if (!active) return 0;
+        const sources = new Map(active.chart.drawings.all().map((d) => [d.id, d]));
+        const sourceIds = ids && ids.length > 0
+            ? [...ids].filter((id) => sources.has(id) && !id.startsWith('sync-'))
+            : [...this.drawingSyncModes.keys()].filter((id) => sources.has(id) && !id.startsWith('sync-'));
+        let updated = 0;
+        for (const sourceId of sourceIds) {
+            const source = sources.get(sourceId);
+            if (!source) continue;
+            const entry = this.drawingSyncModes.get(sourceId) ?? { mode: this.drawingSyncDefault };
+            if (entry.mode === 'none') {
+                this.removeSyncClones(sourceId, new Set());
+                continue;
+            }
+            const targets = this.drawingSyncTargets(entry, active.id, active.symbol);
+            const keep = new Set(targets.map((cell) => cell.id));
+            this.removeSyncClones(sourceId, keep);
+            const doc = source;
+            const clones = this.drawingSyncClones.get(sourceId) ?? new Map<string, string>();
+            for (const cell of targets) {
+                const oldId = clones.get(cell.id);
+                if (oldId && cell.chart.drawings.all().some((d) => d.id === oldId)) {
+                    cell.history.silently(() => cell.chart.drawings.removeMany([oldId]));
+                }
+                // The source owns the history entry; target cells only receive a mirror.
+                cell.history.silently(() => {
+                    const inserted = cell.chart.drawings.insertDocuments([{
+                    ...doc,
+                    anchors: doc.anchors.map((a) => ({ ...a })),
+                    style: { ...doc.style },
+                    id: this.syncCloneId(cell.id, sourceId),
+                    paneId: 'price',
+                    createdAt: Date.now(),
+                }]);
+                if (inserted[0]) clones.set(cell.id, inserted[0]);
+                else clones.delete(cell.id);
+                updated += 1;
+                });
+            }
+            if (clones.size > 0) this.drawingSyncClones.set(sourceId, clones);
+            else this.drawingSyncClones.delete(sourceId);
+        }
+        if (updated > 0) {
+            this.markStateDirty();
+            this.objectTree.refresh();
+        }
+        return updated;
+    }
+
+    deleteDrawingSetTemplate(name: string): boolean {
+        const ok = this.drawingSets.delete(name);
+        if (ok) {
+            this.markStateDirty();
+            this.moreDrawer?.refreshLibrary();
+        }
+        return ok;
+    }
+
+    renameDrawingSetTemplate(from: string, to: string): boolean {
+        const key = to.trim().slice(0, 40);
+        const tpl = this.drawingSets.get(from);
+        if (!key || !tpl || (key !== from && this.drawingSets.has(key))) return false;
+        this.drawingSets.delete(from);
+        this.drawingSets.set(key, tpl);
+        this.markStateDirty();
+        this.moreDrawer?.refreshLibrary();
+        return true;
+    }
+
+    exportDrawingSetTemplate(name: string): string | null {
+        const tpl = this.drawingSets.get(name);
+        if (!tpl) return null;
+        return JSON.stringify({ app: 'vela', kind: 'drawing-set-template', version: 1, name, template: tpl }, null, 2);
+    }
+
+    importDrawingSetTemplate(json: string): string | null {
+        try {
+            const raw = JSON.parse(json) as unknown;
+            if (raw == null || typeof raw !== 'object') return null;
+            const doc = raw as Record<string, unknown>;
+            if (doc.app !== 'vela' || doc.kind !== 'drawing-set-template' || typeof doc.name !== 'string') return null;
+            const clean = sanitizeDrawingSetTemplates({ [doc.name]: doc.template });
+            const entry = clean ? Object.entries(clean)[0] : null;
+            if (!entry) return null;
+            const [name, tpl] = entry;
+            let key = name.slice(0, 40);
+            for (let n = 2; this.drawingSets.has(key); n += 1) key = `${name.slice(0, 36)} ${n}`;
+            this.drawingSets.set(key, tpl);
+            this.markStateDirty();
+            this.moreDrawer?.refreshLibrary();
+            return key;
+        } catch {
+            return null;
+        }
+    }
+
     drawingTemplateList(): Array<{ tool: string; toolLabel: string; name: string; color?: string; settings: unknown }> {
         const out: Array<{ tool: string; toolLabel: string; name: string; color?: string; settings: unknown }> = [];
         const map = this.active?.chart.drawings.toolTemplates() ?? {};
@@ -3986,8 +4686,14 @@ export class VelaWorkspace {
     }
 
     /** TradingView's six BUILT-IN templates, read-only and always available. */
-    builtinTemplates(): Array<{ id: string; name: string; description: string; count: number }> {
-        return BUILTIN_TEMPLATES.map((t) => ({ id: t.id, name: t.name, description: t.description, count: t.indicators.length }));
+    builtinTemplates(): Array<{ id: string; name: string; description: string; count: number; category: 'Technical' | 'Financial' }> {
+        return BUILTIN_TEMPLATES.map((t) => ({
+            id: t.id,
+            name: t.name,
+            description: t.description,
+            count: t.indicators.length,
+            category: /volume|flow/i.test(`${t.id} ${t.name}`) ? 'Financial' : 'Technical',
+        }));
     }
 
     /** Apply one built-in — the same REPLACE contract a saved template has. */
@@ -4026,6 +4732,7 @@ export class VelaWorkspace {
         this.templates.set(key, template);
         this.markStateDirty();
         this.toast(`Template “${key}” saved (${template.indicators.length} indicator${template.indicators.length === 1 ? '' : 's'})`, 'success');
+        this.indicatorPicker?.sync();
         return true;
     }
 
@@ -4066,6 +4773,7 @@ export class VelaWorkspace {
             this.events.emit('layout:prefs', undefined);
         }
         this.markStateDirty();
+        this.indicatorPicker?.sync();
         return true;
     }
 
@@ -4083,6 +4791,7 @@ export class VelaWorkspace {
             this.events.emit('layout:prefs', undefined);
         }
         this.markStateDirty();
+        this.indicatorPicker?.sync();
         return true;
     }
 
@@ -4113,6 +4822,7 @@ export class VelaWorkspace {
         this.templates.set(name, template);
         this.markStateDirty();
         this.toast(`Template “${name}” imported`, 'success');
+        this.indicatorPicker?.sync();
         return name;
     }
 
@@ -4258,6 +4968,49 @@ export class VelaWorkspace {
     }
 
     // ── watchlist + batch symbols ────────────────────────────────────────────────────
+    /** Symbols the quick wheel walks: the saved watchlist, or the provider's first symbols
+     *  when no watchlist exists. Always contains the ACTIVE symbol, so a scan can start
+     *  from the chart the user is already on. */
+    quickSymbolList(): string[] {
+        const out: string[] = [];
+        const push = (symbol: string) => {
+            const s = String(symbol || '').trim();
+            if (!s) return;
+            const key = canonicalTicker(s);
+            if (key && !out.some((x) => canonicalTicker(x) === key)) out.push(s);
+        };
+        for (const symbol of this.watchlist) push(symbol);
+        if (out.length < 2) {
+            for (const d of this.feed.symbols().slice(0, 32)) {
+                // A GROUP row is not a loadable chart; its default member is.
+                if (d.group && !d.default) continue;
+                const venue = d.prefix ?? d.provider;
+                push(venue ? `${venue}:${d.ticker}` : d.ticker);
+            }
+        }
+        const current = this.active?.symbol;
+        if (current) {
+            const i = out.findIndex((s) => canonicalTicker(s) === canonicalTicker(current));
+            if (i < 0) out.unshift(current);
+        }
+        return out;
+    }
+
+    /** Watchlist-style next/previous symbol WITHOUT opening the picker. */
+    stepQuickSymbol(delta: number): string | null {
+        const chart = this.active;
+        if (!chart || !Number.isFinite(delta) || delta === 0) return null;
+        const list = this.quickSymbolList();
+        if (list.length < 2) return null;
+        const current = canonicalTicker(chart.symbol);
+        let index = list.findIndex((s) => canonicalTicker(s) === current);
+        if (index < 0) index = 0;
+        const step = Math.sign(delta);
+        const next = list[(index + step + list.length) % list.length]!;
+        chart.setSymbol(next);
+        return next;
+    }
+
     /** The watchlist, in display order. */
     watchlistSymbols(): string[] {
         return [...this.watchlist];
@@ -5269,18 +6022,21 @@ export class VelaWorkspace {
         else this.topbar?.openLayoutPicker(cellId);
     }
 
-    private openMoreDrawer(view: 'main' | 'layout' = 'main', focus?: 'sync', cellId?: string): void {
+    private openMoreDrawer(view: 'main' | 'layout' = 'main', focus?: 'manage' | 'sync', cellId?: string): void {
         // The drawer is the mobile counterpart of the topbar's tools — composition-
         // hidden entries lose their drawer rows too (handlers omitted ⇒ rows omitted).
         const has = (id: string): boolean => topbarHas(this.topbarComp, id);
         this.moreDrawer ??= new MoreDrawer({
             host: this.root,
-            ...(has('undo-redo') ? { onUndo: () => this.active.history.undo(), onRedo: () => this.active.history.redo() } : {}),
+            onOpenLayoutManager: () => this.openLayoutManager(),
+            onOpenIndicatorTemplates: () => this.openIndicatorTemplates(),
+            indicatorTemplateCount: () => this.templateList().length,
+            ...(has('undo-redo') ? { onUndo: () => this.undoHistory(), onRedo: () => this.redoHistory() } : {}),
             ...(has('screenshot')
                 ? { onScreenshot: this.screenshotOverride ? () => this.runOverride(this.screenshotOverride!) : () => this.downloadScreenshot() }
                 : {}),
-            canUndo: () => this.active.history.canUndo,
-            canRedo: () => this.active.history.canRedo,
+            canUndo: () => this.historyCanUndo(),
+            canRedo: () => this.historyCanRedo(),
             priceStyles: () => priceStyleIds().map((id) => ({ id, label: priceStyleLabel(id), icon: priceStyleIcon(id) })),
             priceStyle: () => this.active.priceStyle,
             onPriceStyle: (id) => this.active.setPriceStyle(id),
@@ -5412,6 +6168,14 @@ export class VelaWorkspace {
             onApplyDrawingTemplate: (tool, name) => this.useDrawingTemplate(tool, name),
             onDeleteDrawingTemplate: (tool, name) => this.deleteDrawingTemplate(tool, name),
             onExportDrawingTemplate: (tool, name) => this.exportDrawingTemplate(tool, name),
+            // Real drawing SETS: whole bundles saved from the object tree, with relative
+            // geometry. The library inserts/export/import/deletes them beside the saved
+            // per-tool looks — both kinds of "drawing template" stay available.
+            drawingSetTemplates: () => this.drawingSetTemplateList(),
+            onInsertDrawingSetTemplate: (name) => this.insertDrawingSetTemplate(name),
+            onDeleteDrawingSetTemplate: (name) => { this.deleteDrawingSetTemplate(name); },
+            onExportDrawingSetTemplate: (name) => this.exportDrawingSetTemplate(name),
+            onImportDrawingSetTemplate: (json) => this.importDrawingSetTemplate(json),
             onOpenChange: (open) => {
                 this.trackDialog(open);
                 this.mobileBar?.setExpanded('more', open);
@@ -6476,8 +7240,8 @@ export class VelaWorkspace {
             category: 'Chart',
             run: () => this.tfQuick.open(),
         });
-        this.keymap.register({ id: 'history.undo', keys: ['mod+z'], label: 'Undo (active chart)', category: 'Edit', run: () => this.active.history.undo() });
-        this.keymap.register({ id: 'history.redo', keys: ['mod+y', 'mod+shift+z'], label: 'Redo (active chart)', category: 'Edit', run: () => this.active.history.redo() });
+        this.keymap.register({ id: 'history.undo', keys: ['mod+z'], label: 'Undo (active chart)', category: 'Edit', run: () => this.undoHistory() });
+        this.keymap.register({ id: 'history.redo', keys: ['mod+y', 'mod+shift+z'], label: 'Redo (active chart)', category: 'Edit', run: () => this.redoHistory() });
         this.keymap.register({ id: 'view.zoom-in', keys: 'mod+arrowup', label: 'Zoom in', category: 'Chart', run: () => this.glider.zoom(ZOOM_IN) });
         this.keymap.register({ id: 'view.zoom-out', keys: 'mod+arrowdown', label: 'Zoom out', category: 'Chart', run: () => this.glider.zoom(ZOOM_OUT) });
         // Pan keys mirror a drag exactly (same clamp, same easing) — see Vela.panBy.

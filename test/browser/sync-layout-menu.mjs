@@ -74,7 +74,7 @@ try {
         return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), bg, vw: innerWidth, vh: innerHeight, rows: el.querySelectorAll('.vela-lm-row').length };
     });
     assert(box.x >= 0 && box.y >= 0 && box.x + box.w <= box.vw && box.y + box.h <= box.vh, 'the panel fits on screen', box);
-    assert(box.rows === 5, 'five verbs, as TradingView lists them', box.rows);
+    assert(box.rows === 6, 'five TradingView verbs plus the moved import control', box.rows);
     // An opaque surface: a menu you can read the chart through is not a menu.
     assert(!/rgba\(0, 0, 0, 0\)|transparent/.test(box.bg), 'the panel paints its own surface', box.bg);
     facts.panel = box;

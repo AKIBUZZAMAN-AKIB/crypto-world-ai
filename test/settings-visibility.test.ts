@@ -161,7 +161,8 @@ describe('settingsIdCatalog', () => {
 
     it('built-in ids are unique and rows nest under their tab', () => {
         expect(new Set(BUILTIN_SETTINGS_IDS).size).toBe(BUILTIN_SETTINGS_IDS.length);
-        const tabs = ['symbol', 'scales', 'canvas'];
+        // `crosshair` is its own page since R83 (it used to nest under `scales`).
+        const tabs = ['symbol', 'crosshair', 'scales', 'canvas'];
         for (const id of BUILTIN_SETTINGS_IDS) {
             expect(tabs.some((t) => id === t || id.startsWith(`${t}.`))).toBe(true);
         }

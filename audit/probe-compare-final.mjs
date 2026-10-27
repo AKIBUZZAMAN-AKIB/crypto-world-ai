@@ -27,7 +27,7 @@ for (const mode of ['same-percent', 'own-scale', 'new-pane']) {
     return { pane: mine.paneId, ownScale: mine.paneId === 'price' ? chart.panes.list()[0].indicators.find((i) => i.id === mine.id)?.ownScale : null, scaleMode: chart.renderer.get('scaleMode'), plotted: vals, panes: chart.panes.list().length };
   }, mode);
   await dismissTip();
-  await p.screenshot({ path: `shots/8${Object.keys(out).indexOf(mode)}-compare-${mode}.png`, clip: { x: 0, y: 40, width: 640, height: 440 } });
+  await p.screenshot({ path: `/tmp/vela-probes/8${Object.keys(out).indexOf(mode)}-compare-${mode}.png`, clip: { x: 0, y: 40, width: 640, height: 440 } });
 }
 console.log(JSON.stringify({ out, errors: errors.slice(0, 3) }, null, 1));
 await b.close();

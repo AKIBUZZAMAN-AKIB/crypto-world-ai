@@ -7,11 +7,15 @@ import type { PaneInfo } from '../core/options';
 import type { SerializedDrawing } from '../core/drawings/Drawing';
 import { getDrawingType } from '../core/drawings/registry';
 
-/** A user-made bundle of drawings that hide, lock, delete and move as one. */
+/** A user-made bundle of drawings that hide, lock, delete and move as one. Groups NEST:
+ *  `parent` names the group this one sits inside (any depth, like TradingView's object tree),
+ *  while `ids` holds only this group's own drawings — membership stays exclusive, so a drawing
+ *  is never listed twice. A group with children and no drawings of its own is legal. */
 export interface DrawGroup {
     id: string;
     name: string;
     ids: string[];
+    parent?: string;
 }
 
 /** The candles. */
@@ -38,7 +42,7 @@ export type TreeRow = PriceRow | IndicatorRow;
  *  block surfacing at its front-most member's slot with the members nested inside. */
 export type DrawUnit =
     | { kind: 'draw'; drawing: SerializedDrawing }
-    | { kind: 'group'; group: DrawGroup; members: SerializedDrawing[] };
+    | { kind: 'group'; group: DrawGroup; members: SerializedDrawing[]; children: DrawUnit[] };
 
 /** One entry in a pane's rendered stack: a drawing unit, or a series row. */
 export type TreeItem = { kind: 'unit'; unit: DrawUnit } | { kind: 'row'; row: TreeRow };
@@ -194,36 +198,74 @@ export function tokensEqual(a: readonly StackToken[], b: readonly StackToken[]):
     return a.length === b.length && a.every((t, i) => sameToken(t, b[i]!));
 }
 
+/** The four TradingView Visual Order commands. Front/back go to an edge; the other two move
+ *  a selection one level through the front-first stack. */
+export type VisualOrderMove = 'front' | 'back' | 'forward' | 'backward';
+
+/**
+ * Move one object, a group, or a multi-selection as ONE contiguous run. The returned stack
+ * is front-first; a group keeps its own internal order and receives consecutive z keys when
+ * it is written. This is the menu twin of dragging a row in the object tree.
+ */
+export function reorderTokens(tokens: readonly StackToken[], dragged: readonly StackToken[], move: VisualOrderMove): StackToken[] {
+    // Derive the picked run from the pane itself: duplicate picks and ids from another pane
+    // disappear, and the members keep the only order the renderer already paints.
+    const picked = tokens.filter((t) => dragged.some((d) => sameToken(d, t)));
+    if (picked.length === 0) return [...tokens];
+    const indices = tokens.flatMap((t, i) => (picked.some((p) => sameToken(p, t)) ? [i] : []));
+    const first = Math.min(...indices);
+    const last = Math.max(...indices);
+    const at =
+        move === 'front'
+            ? 0
+            : move === 'back'
+              ? tokens.length
+              : move === 'forward'
+                ? first - 1
+                : last + 2;
+    return placeTokens(tokens, picked, Math.max(0, Math.min(at, tokens.length)));
+}
+
+/** The extremes of a pane's stacking — still useful to hosts that expose raw z keys. Zero is
+ *  always in range so an empty stack has bounds. `extra` folds in drawing keys. */
+export function zStackBounds(zOrder: ReadonlyArray<{ id: string; z: number }>, candleZ: number, extra: readonly number[] = []): { top: number; bottom: number } {
+    const zs = [...zOrder.map((e) => e.z), ...extra];
+    return { top: Math.max(candleZ, 0, ...zs), bottom: Math.min(candleZ, 0, ...zs) };
+}
+
 /**
  * z keys for a FRONT-FIRST token stack — the front-most token takes the highest key, so one
  * write renormalizes the whole pane into contiguous, tie-free values. `candleZ` is null when
  * the candles aren't in the stack (a study pane); `series` feeds `seriesOrder`, `drawings`
  * feeds `zIndex` patches.
+ *
+ * On a renderer without a shared drawing/series z space the two layers are numbered
+ * independently: drawing order cannot accidentally rewrite the series' order, while each
+ * layer still gets tie-free keys. Native renderers use `interleave = true` (one list).
  */
-export function stackWrites(tokens: readonly StackToken[]): {
+export function stackWrites(tokens: readonly StackToken[], interleave = true): {
     candleZ: number | null;
     series: Array<{ id: string; z: number }>;
     drawings: Array<{ id: string; z: number }>;
 } {
-    const n = tokens.length;
     let candleZ: number | null = null;
     const series: Array<{ id: string; z: number }> = [];
     const drawings: Array<{ id: string; z: number }> = [];
-    tokens.forEach((t, i) => {
-        const z = n - i;
+    const write = (t: StackToken, z: number): void => {
         if (t.kind === 'price') candleZ = z;
         else if (t.kind === 'indicator') series.push({ id: t.id, z });
         else drawings.push({ id: t.id, z });
-    });
+    };
+    if (interleave) {
+        const n = tokens.length;
+        tokens.forEach((t, i) => write(t, n - i));
+    } else {
+        const seriesTokens = tokens.filter((t) => t.kind !== 'drawing');
+        const drawingTokens = tokens.filter((t) => t.kind === 'drawing');
+        seriesTokens.forEach((t, i) => write(t, seriesTokens.length - i));
+        drawingTokens.forEach((t, i) => write(t, drawingTokens.length - i));
+    }
     return { candleZ, series, drawings };
-}
-
-/** The extremes of a pane's stacking — what "bring to front" and "send to back" have to
- *  beat. `extra` folds in the drawings' z keys when they share the space. Zero is always
- *  in range so an empty stack still has bounds. */
-export function zStackBounds(zOrder: ReadonlyArray<{ id: string; z: number }>, candleZ: number, extra: readonly number[] = []): { top: number; bottom: number } {
-    const zs = [...zOrder.map((e) => e.z), ...extra];
-    return { top: Math.max(candleZ, 0, ...zs), bottom: Math.min(candleZ, 0, ...zs) };
 }
 
 /**
@@ -238,6 +280,85 @@ export function paneDrawings(drawings: readonly SerializedDrawing[], paneId: str
 /** The group a drawing belongs to, or null. */
 export function groupOf(groups: readonly DrawGroup[], drawingId: string): DrawGroup | null {
     return groups.find((g) => g.ids.includes(drawingId)) ?? null;
+}
+
+/** A group by id, or null. */
+export function groupById(groups: readonly DrawGroup[], id: string): DrawGroup | null {
+    return groups.find((g) => g.id === id) ?? null;
+}
+
+/** The groups nested directly inside `parentId` (a missing parent reads as top level). */
+export function childGroups(groups: readonly DrawGroup[], parentId: string | undefined): DrawGroup[] {
+    return groups.filter((g) => (g.parent ?? undefined) === parentId);
+}
+
+/** A group plus every group nested under it, parents before their children. */
+export function subtreeGroupIds(groups: readonly DrawGroup[], id: string): string[] {
+    const out: string[] = [];
+    const walk = (gid: string): void => {
+        if (out.includes(gid)) return;
+        out.push(gid);
+        for (const c of childGroups(groups, gid)) walk(c.id);
+    };
+    walk(id);
+    return out;
+}
+
+/** True when `id` is `maybeAncestor` or sits anywhere inside it — the guard that stops a drag
+ *  from nesting a group inside itself (which would detach the whole branch from the tree). */
+export function groupWithin(groups: readonly DrawGroup[], id: string, maybeAncestor: string): boolean {
+    let at: DrawGroup | null = groupById(groups, id);
+    for (let guard = 0; at !== null && guard <= groups.length; guard += 1) {
+        if (at.id === maybeAncestor) return true;
+        at = at.parent === undefined ? null : groupById(groups, at.parent);
+    }
+    return false;
+}
+
+/** Every drawing a group owns: its own, plus everything nested under it. */
+export function groupDrawingIds(groups: readonly DrawGroup[], id: string): string[] {
+    const out: string[] = [];
+    for (const gid of subtreeGroupIds(groups, id)) {
+        const g = groupById(groups, gid);
+        if (g) for (const d of g.ids) if (!out.includes(d)) out.push(d);
+    }
+    return out;
+}
+
+/** How deep a group sits: 0 for a top-level group. */
+export function groupDepth(groups: readonly DrawGroup[], id: string): number {
+    let depth = 0;
+    let at: DrawGroup | null = groupById(groups, id);
+    while (at?.parent !== undefined && depth <= groups.length) {
+        at = groupById(groups, at.parent);
+        depth += 1;
+    }
+    return depth;
+}
+
+/** Move (or un-nest, with `null`) a group. Refuses a move into its own subtree. */
+export function setGroupParent(groups: readonly DrawGroup[], id: string, parent: string | null): DrawGroup[] {
+    if (parent !== null && groupWithin(groups, parent, id)) return [...groups];
+    if (!groups.some((g) => g.id === id)) return [...groups];
+    if (parent !== null && !groups.some((g) => g.id === parent)) return [...groups];
+    return groups.map((g) => {
+        if (g.id !== id) return g;
+        const { parent: _drop, ...rest } = g;
+        return parent === null ? rest : { ...rest, parent };
+    });
+}
+
+/** Dissolve ONE group: its drawings become loose and its child groups move up a level. */
+export function liftGroup(groups: readonly DrawGroup[], id: string): DrawGroup[] {
+    const g = groupById(groups, id);
+    if (!g) return [...groups];
+    return groups
+        .filter((x) => x.id !== id)
+        .map((x) => {
+            if ((x.parent ?? undefined) !== id) return x;
+            const { parent: _drop, ...rest } = x;
+            return g.parent === undefined ? rest : { ...rest, parent: g.parent };
+        });
 }
 
 /**
@@ -275,9 +396,24 @@ function withMembers(groups: readonly DrawGroup[], keep: (id: string) => boolean
     return groups.map((g) => ({ ...g, ids: g.ids.filter(keep) })).filter((g) => g.ids.length > 0);
 }
 
-/** Drop members that no longer exist, and the groups left empty by that. */
+/** Drop members that no longer exist, then any group left with neither a drawing nor a nested
+ *  group — an empty group is not a container you can find again, so it disappears (the rule
+ *  TradingView's object tree follows), and a branch that lost its last leaf goes with it. */
 export function pruneGroups(groups: readonly DrawGroup[], live: ReadonlySet<string>): DrawGroup[] {
-    return withMembers(groups, (id) => live.has(id));
+    // Members first, but WITHOUT the empty-group sweep `withMembers` does: a group that only
+    // holds nested groups is empty of drawings and still very much alive.
+    const kept = groups.map((g) => ({ ...g, ids: g.ids.filter((id) => live.has(id)) }));
+    // A parent that no longer exists reads as top level rather than orphaning the branch.
+    const ids = new Set(kept.map((g) => g.id));
+    const rooted: DrawGroup[] = kept.map((g) => (g.parent !== undefined && !ids.has(g.parent) ? (({ parent: _d, ...rest }) => rest)(g) : g));
+    let current = rooted;
+    for (let guard = 0; guard <= rooted.length; guard += 1) {
+        const hasChild = new Set(current.map((g) => g.parent).filter((x): x is string => x !== undefined));
+        const next = current.filter((g) => g.ids.length > 0 || hasChild.has(g.id));
+        if (next.length === current.length) break;
+        current = next;
+    }
+    return current;
 }
 
 /** Take drawings out of whatever group they were in. */
@@ -302,15 +438,48 @@ export function assignToGroup(groups: readonly DrawGroup[], groupId: string, ids
  * part of its group's block at the front-most member's slot, so a group never scatters.
  */
 export function drawingUnits(paneDraws: readonly SerializedDrawing[], groups: readonly DrawGroup[]): DrawUnit[] {
+    const inPane = new Set(paneDraws.map((d) => d.id));
+    // Only groups with a drawing on THIS pane take part, recursively: a group whose members
+    // all live in another pane must not leave an empty block behind.
+    const relevant = (g: DrawGroup): boolean =>
+        g.ids.some((id) => inPane.has(id)) || childGroups(groups, g.id).some((c) => relevant(c));
+    const build = (g: DrawGroup): DrawUnit => {
+        const members = paneDraws.filter((x) => g.ids.includes(x.id));
+        const children = childGroups(groups, g.id)
+            .filter((c) => relevant(c))
+            .map((c) => build(c))
+            .sort((a, b) => unitSlot(a) - unitSlot(b));
+        return { kind: 'group', group: g, members, children };
+    };
+    // Children read in paint order (front-most first) — measured by the front-most drawing each
+    // subtree owns, so a nested group surfaces where its contents do.
+    const unitSlot = (u: DrawUnit): number => {
+        if (u.kind === 'draw') return paneDraws.findIndex((d) => d.id === u.drawing.id);
+        const slots = [...u.members.map((m) => paneDraws.findIndex((d) => d.id === m.id)), ...u.children.map(unitSlot)];
+        const live = slots.filter((n) => n >= 0);
+        return live.length > 0 ? Math.min(...live) : Number.MAX_SAFE_INTEGER;
+    };
+    // A drawing's block surfaces at its OUTERMOST group, so a nested branch never scatters.
+    const rootOf = (d: SerializedDrawing): DrawGroup | null => {
+        let at = groupOf(groups, d.id);
+        if (!at) return null;
+        for (let guard = 0; at.parent !== undefined && guard <= groups.length; guard += 1) {
+            const up = groupById(groups, at.parent);
+            if (!up) break;
+            at = up;
+        }
+        return at;
+    };
     const units: DrawUnit[] = [];
     const seen = new Set<string>();
     for (const d of paneDraws) {
         if (seen.has(d.id)) continue;
-        const g = groupOf(groups, d.id);
-        if (g) {
-            const members = paneDraws.filter((x) => g.ids.includes(x.id));
-            for (const m of members) seen.add(m.id);
-            units.push({ kind: 'group', group: g, members });
+        const root = rootOf(d);
+        if (root && relevant(root)) {
+            const unit = build(root);
+            const ids = groupDrawingIds(groups, root.id);
+            for (const id of ids) if (inPane.has(id)) seen.add(id);
+            units.push(unit);
         } else {
             seen.add(d.id);
             units.push({ kind: 'draw', drawing: d });
@@ -323,7 +492,8 @@ export function drawingUnits(paneDraws: readonly SerializedDrawing[], groups: re
  *  bundle whose members straddle a series still reads as one block. */
 function unitZ(u: DrawUnit): number {
     if (u.kind === 'draw') return u.drawing.zIndex;
-    return u.members[0]?.zIndex ?? 0;
+    const zs = [...u.members.map((m) => m.zIndex), ...u.children.map(unitZ)];
+    return zs.length > 0 ? Math.max(...zs) : 0;
 }
 
 /**

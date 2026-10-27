@@ -3,7 +3,7 @@
 // meta — and the right-click menu's rows. Pure functions over plain objects, node env;
 // the real overlay and menu are proven in the browser.
 import { describe, it, expect } from 'vitest';
-import { segmentVisibility, statuslineMenuItems, readoutCells, type StatuslinePart } from '../src/widget/statusline-model';
+import { segmentVisibility, statuslineMenuItems, readoutCells, STATUSLINE_LADDER, type StatuslinePart } from '../src/widget/statusline-model';
 import { fmtChangePct } from '../src/widget/format';
 
 const allOn: Record<StatuslinePart, boolean> = { logo: true, name: true, market: true, ohlc: true, change: true };
@@ -51,6 +51,40 @@ describe('segmentVisibility', () => {
         expect(seg.change).toBe(true);
         expect(seg.eye).toBe(false);
         expect(segmentVisibility({ ...allOn, ohlc: false }, false).ohlc).toBe(false);
+    });
+});
+
+describe('STATUSLINE_LADDER', () => {
+    it('never trades O/H/L away while the delta still has room to give', () => {
+        // The phone bug this ladder answers: every rung below the widest one used to shed
+        // the four values straight to the close. Ground is given up in this order — the
+        // readout moves under the symbol line, the delta loses its absolute half, the
+        // whole delta moves up to the symbol line — and only then do O/H/L go.
+        const firstNarrow = STATUSLINE_LADDER.findIndex((r) => r.level !== 'full');
+        expect(firstNarrow).toBeGreaterThan(0);
+        for (const rung of STATUSLINE_LADDER.slice(0, firstNarrow)) {
+            expect(readoutCells(rung.level, 'ohlc').map((c) => c.label)).toEqual(['O', 'H', 'L', 'C']);
+        }
+        // …and the shed only ever happens after BOTH delta rungs ran out of room.
+        expect(STATUSLINE_LADDER.some((r) => r.level === 'full' && r.changeSlot === 'identity')).toBe(true);
+        expect(STATUSLINE_LADDER.some((r) => r.level === 'full' && r.change === 'pct')).toBe(true);
+    });
+
+    it('starts one-line and ends with the close alone, widest first', () => {
+        const first = STATUSLINE_LADDER[0];
+        const last = STATUSLINE_LADDER[STATUSLINE_LADDER.length - 1]!;
+        expect(first).toEqual({ stacked: false, level: 'full', change: 'both', changeSlot: 'values' });
+        expect(last.stacked).toBe(true);
+        expect(readoutCells(last.level, 'ohlc')).toEqual([{ key: 'close', label: '' }]);
+        // Stacked rungs never come back to the one-line shape.
+        const firstStacked = STATUSLINE_LADDER.findIndex((r) => r.stacked);
+        expect(STATUSLINE_LADDER.slice(firstStacked).every((r) => r.stacked)).toBe(true);
+    });
+
+    it('the delta only ever rides the symbol line once the values row is full', () => {
+        for (const rung of STATUSLINE_LADDER) {
+            if (rung.changeSlot === 'identity') expect([rung.stacked, rung.level]).toEqual([true, 'full']);
+        }
     });
 });
 

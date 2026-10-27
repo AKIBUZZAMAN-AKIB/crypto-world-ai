@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 const URL = process.env.URL ?? 'http://127.0.0.1:5190/workspace.html';
-const OUT = 'audit';
+const OUT = '/tmp/vela-probes';
 mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch({ args: ['--no-sandbox'] });

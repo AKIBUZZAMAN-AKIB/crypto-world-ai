@@ -201,8 +201,11 @@ duplicating them.
 dialog's **Symbol** tab looks (candle body, border and wick colors, the bar, line,
 area and baseline styles, bar spacing, the animation switches and the watermark
 toggles), its **Canvas** tab (background and text, grid, pane separators, margins),
-its **Scales and lines** tab (price-scale mode, last-price line and labels, crosshair
-style), its **Status line** tab (segment toggles, indicator titles and values), and
+its **Scales and lines** tab (price-scale mode, last-price line and labels), its
+**Crosshair** tab (shape — cross / vertical only / horizontal only / dot — colour,
+width, line style, opacity, the price and time axis labels with their background, and
+magnet mode: off, snap to the close, or snap to the nearest of O/H/L/C), its
+**Status line** tab (segment toggles, indicator titles and values), and
 the session shading colors. A candle-based chart type registered by a plugin shares
 the candle colors it stores; its own settings section stays per cell, because those
 settings can depend on the cell's market. Editing any of them on one cell applies
@@ -592,7 +595,20 @@ they work from the very first keystroke, before any click.
   single row under the pointer, and a phone starts a pick with a **long-press** (a plain tap
   stays a tap; the next tap extends it).
   Drawings inside a group travel together: the group hides, locks, deletes and drags as one
-  block; groups live for as long as the chart and are not persisted. Kept in sync with the
+  block; groups live for as long as the chart and are not persisted. Groups **nest**, as they
+  do in TradingView's tree: a pick that holds group headers plus drawings groups them into one
+  parent, and dragging a group **onto another group's header** nests it there at any depth
+  (the header outlines in the accent while the drop would nest). Headers indent one step per
+  level, their eye/padlock/count speak for the whole branch, **Ungroup** lifts the children a
+  level instead of dissolving them, **Duplicate group** copies a branch whole (its drawings
+  come back as one undo step, its nesting and names rebuilt), and a group left empty by a
+  removal or an undo disappears with its branch. Double-clicking a header renames it.
+  On a touch screen the tree drags too: **hold** a row to pick it and keep the finger moving
+  to drag it (the gesture is held off the list's scroller, so the row follows the finger
+  instead of scrolling), or start on the row's **grip** — shown where there is no pointer —
+  to drag with no wait; a plain flick still scrolls the list. The panel header carries
+  **Manage layout drawings** on a multi-chart layout: every cell's drawings in one list,
+  with show / lock / remove per row, so nothing has to be done one chart at a time. Kept in sync with the
   chart's events — a selection made on the chart (Ctrl/Cmd-click, a marquee) lights up every
   row it covers, and a pick made in the panel selects the same drawings on the chart.
 - **Data window** — the other docked panel: the date and time of the bar under the crosshair,
@@ -633,7 +649,11 @@ they work from the very first keystroke, before any click.
 - **Context menus** — right-click the chart body for reset view, removing all drawings or all
   indicators, and the settings dialog; the price axis for that pane's own scale (autoscale,
   invert, regular/percent/indexed/logarithmic, and the label and level toggles); the time axis
-  for the display timezone. Every pane's price scale has its own menu, so a study pane's scale
+  for the display timezone. On a touch screen a **long press** on the plot enters the
+  crosshair and keeps it there — the finger's lift does not end the readout, dragging moves
+  the crosshair instead of panning, and a single tap exits (a pinch exits too, because two
+  fingers are navigation); a long press on either axis opens that axis' sheet instead. Every
+  pane's price scale has its own menu, so a study pane's scale
   is independent of the main one. Each menu's settings entry opens the settings dialog on the
   tab that belongs to it — Canvas from the chart body, Scales and lines from either axis.
   Rows a plugin adds sort in with the built-in ones: by default after the built-in actions and
@@ -1006,8 +1026,12 @@ What changes on mobile:
   name** on the left (the pin that says which cell your next tap acts on; tapping it
   opens the full-screen symbol search) and, on the right, the **three-dots sheet** and
   **chart settings**. Everything between them scrolls sideways in one band, in the order
-  a trade is set up: **interval → chart type → drawings → fullscreen → indicators →
-  the script editor**. The interval button is a bottom sheet with the date-range presets
+  a trade is set up: **interval → chart type → undo / redo → drawings → fullscreen →
+  indicators → the script editor**. Undo and redo sit near the head of the band because
+  the band is only ~3½ stops wide on a 390px phone: a stop parked at its tail lives its
+  whole life scrolled out of sight. Both stops are state-bound — an empty history dims
+  them and takes them out of the tab order — and they dispatch the **active chart's**
+  unified history (the same one the desktop topbar drives). The interval button is a bottom sheet with the date-range presets
   on top and the timeframe grid below; drawings is a sheet with a search bar, the tool
   groups as scrollable tabs and favorite stars; the editor (when a scripting engine is
   configured) rises as a draggable bottom sheet (see
@@ -1017,8 +1041,8 @@ What changes on mobile:
   type, the side panels, time zone, alerts, contributed topbar actions, an entry per
   **hidden chart** (`ws.hiddenChartList()` — the charts a smaller layout set aside; tapping
   one puts it in the active pane and parks the chart it replaced, `ws.showHiddenChart(id)`
-  from code), and — multi-chart grids only — a **Layout** entry with the same
-  tap-to-apply grid canvas as the desktop dropdown, the sync switches below it.
+  from code), and — multi-chart grids only — a **Layout** entry that opens three tabs:
+  the tap-to-apply grid canvas, the saved-layout library, and the sync switches.
 - **The docked drawing toolbar hides.** Picking a tool from the drawings sheet arms it
   and shows a floating pill over the chart — the armed tool's icon, the magnet cycle,
   stay-in-drawing-mode, the eraser, and ✕ to disarm. Favorites keep working (stars in
@@ -1043,6 +1067,37 @@ What changes on mobile:
   on a phone it is a sheet over the chart, and this is its one-tap door (TradingView keeps
   its Pine Editor just as close on mobile). The dock's generic panel toggles do not repeat
   it.
+- **Pane controls are measured, not switched off.** `move up / move down / collapse /
+  maximize` used to be suppressed outright by the mobile mode flag. They now follow the
+  desktop rule on every device: a pane that can hold a row of 24px chips under its legend
+  line (≥150px of data width) keeps the cluster up *permanently*, because a touch screen
+  has no hover to reveal it — and the pane at the plot's top drops it below the status
+  line's chip rather than on top of it. A pane without that room shows nothing; every one
+  of its verbs is in the object tree, one tap away.
+- **The status line keeps O/H/L/C on a phone.** The width ladder gives up the bar delta
+  before it gives up a value: the absolute change first (the percent stays, as
+  TradingView's phone layout reads it), then the delta moves up onto the symbol line so the
+  four values keep a row of their own. 360–430px therefore read out **O H L C + change** on
+  two lines; only a truly cramped chip (≈320px) falls back to the close.
+- **Layout setup and Manage layouts are separate tabs.** The More sheet's *Layout* door
+  opens a sticky three-stop nav — **Layout setup** (grid + presets), **Manage layouts**
+  (saved layouts, autosave, indicator templates, drawing sets), **Sync** — and each stop
+  is its own pane, so the library no longer buries every other row. The standalone
+  *Manage layouts* page and its back button remain for deep links.
+- **Indicator templates have their own tab.** The indicator sheet's **Templates** stop sits
+  before the family tabs (visible at 390px) and carries save / apply to this chart / apply
+  to all charts / rename / export / import / set default, plus six read-only built-ins.
+  The study search hides there, because it filters studies, not stacks.
+- **Drawing templates come in two kinds.** A tool's saved *look* is still on the floating
+  toolbar and in a drawing's settings; a **drawing set** is a whole reusable bundle saved
+  from the object tree (selection, group or bulk menu → **Drawing templates → Save as
+  template…**). Geometry is stored as time offsets and price ratios, so a breakout pattern
+  keeps its shape on another symbol; insertion is one undo step and lands as a group in
+  the tree. **Manage layouts → Drawings** lists sets first (insert / export / import /
+  delete), then the per-tool looks.
+- **Every plottable built-in has Pine source.** The legend's `{ }` opens v6 scripts for all
+  72 classic studies plus **Volume** and **Compare**; VPVR (visible-range volume profile)
+  is the one intentional exception, matching TradingView.
 - **Touch gestures**: one-finger pan (with the usual fling), two-finger pinch zoom
   anchored between the fingers, and a **long-press** that inspects with the crosshair —
   the view stays put while the finger drives the readout; lifting clears it. A
@@ -1051,6 +1106,33 @@ What changes on mobile:
   plot it maximizes the tapped pane (price or indicator) — a second double-tap
   restores the split. The price/time axis strips still drag-rescale, and the button
   that jumps back to the most recent bar stays visible whenever the chart has data.
+
+### Why these doors are separate
+
+TradingView's own vocabulary is the reason the phone sheet does not merge them: a
+**layout** is the whole saved workspace (symbol, interval, indicators, drawings, colors),
+opened from **Manage layouts**, while **Layout setup** is the multi-chart grid and its sync
+switches [1](https://www.tradingview.com/support/solutions/43000746975-tradingview-layouts-a-quick-guide/).
+An **indicator template** is only the applied studies with their inputs and styles — never
+drawings or the theme — and it replaces the chart's current stack when applied
+[1](https://www.tradingview.com/charting-library-docs/latest/saving_loading/)
+[2](https://www.tradingview.com/support/solutions/43000543048-what-are-indicator-templates/).
+A **drawing template** is officially one tool's saved properties; TradingView's
+object-tree groups are the unit that travels together (one group per pane, sequential
+z-order, never empty) [1](https://www.tradingview.com/charting-library-docs/latest/ui_elements/drawings/drawings-api/).
+Vela keeps that distinction, then adds **drawing sets** — a selected group saved with
+relative geometry — as the reusable pattern the name promises. Applying one study set to
+every chart follows TradingView's own *Apply these Indicators to Entire Layout* rule
+[18](https://www.tradingview.com/blog/en/apply-all-technical-analysis-tools-to-all-charts-in-the-workspace-19368/).
+
+Built-in source is not universal on the reference either: TradingView says Volume Profiles
+and Chart Patterns are not Pine, so their `{ }` source is unavailable
+[1](https://www.tradingview.com/support/solutions/43000481659-i-want-to-see-the-source-code-of-a-built-in-script/).
+Vela goes further — every plottable built-in, including Volume and Compare, now opens a
+readable v6 script; only the viewport-dependent VPVR layer keeps no source. Undo/redo and
+fullscreen are header tools on the reference, so the phone bar keeps them in its scrolling
+band rather than one drawer deep [3](https://www.tradingview.com/charting-library-docs/latest/customization/Featuresets/)
+[13](https://www.tradingview.com/charting-library-docs/latest/releases/release-notes/).
 
 Embedders need nothing special: the mode also reaches the renderer's own chrome, and a
 chart in a phone-sized *container on a desktop page* gets the same treatment — the

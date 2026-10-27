@@ -19,7 +19,7 @@ const picker = await page.evaluate(() => ({
   title: document.querySelector('[data-part="title"], .vela-dialog-title')?.textContent ?? null,
   rows: [...document.querySelectorAll('.vela-sp-row')].slice(0, 4).map((r) => r.textContent?.trim().slice(0, 24)),
 }));
-await page.screenshot({ path: 'shots/61-compare-picker.png' });
+await page.screenshot({ path: '/tmp/vela-probes/61-compare-picker.png' });
 // pick the first row that is not the chart's own symbol
 await page.evaluate((own) => {
   const rows = [...document.querySelectorAll('.vela-sp-row')];
@@ -36,6 +36,6 @@ const after = await page.evaluate(() => {
     toast: document.querySelector('.vela-toast')?.textContent ?? null,
   };
 });
-await page.screenshot({ path: 'shots/62-compare-pane.png' });
+await page.screenshot({ path: '/tmp/vela-probes/62-compare-pane.png' });
 console.log(JSON.stringify({ symbol, hasCompare, picker, after, errors: errors.slice(0, 4) }, null, 1));
 await browser.close();

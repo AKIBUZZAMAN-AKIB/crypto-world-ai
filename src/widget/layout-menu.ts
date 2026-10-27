@@ -152,6 +152,20 @@ export const LAYOUT_MENU_CSS = `
     text-transform: uppercase;
     color: var(--vela-fg-faint);
 }
+.vela-lm-filter {
+    box-sizing: border-box;
+    width: calc(100% - 12px);
+    height: 30px;
+    margin: 0 6px 4px;
+    padding: 0 9px;
+    border: 1px solid var(--vela-border-strong);
+    border-radius: 7px;
+    background: var(--vela-surface);
+    color: var(--vela-fg-bright);
+    font: inherit;
+    font-size: 12px;
+}
+.vela-lm-filter:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: -1px; }
 
 /* Autosave: a real switch row, with the sentence TV keeps in its settings behind it. */
 .vela-lm-switch {
@@ -326,6 +340,8 @@ export interface LayoutMenuModel {
     onShareLayout?: (name: string) => Promise<string | null>;
     onExportLayout?: (name: string) => string | null;
     onExportData?: (scope: 'visible' | 'all', timeFormat: 'iso' | 'unix') => { rows: number; filename: string } | null;
+    /** Restore a saved-layout JSON file — the grid setup panel no longer owns file verbs. */
+    onImportLayout?: (json: string) => string | null;
     onCopyLink?: () => Promise<string | null>;
 }
 
@@ -615,6 +631,9 @@ export class LayoutMenu {
                 this.render();
             }),
         );
+        if (this.opts.layout.onImportLayout) {
+            actions.appendChild(row('upload', 'Import layout file…', '', () => this.pickImportFile()));
+        }
         card.appendChild(actions);
 
         // ── autosave ──
@@ -655,6 +674,29 @@ export class LayoutMenu {
             empty.textContent = 'No saved layouts yet. Save this one and it waits here — charts, indicators and drawings together.';
             card.appendChild(empty);
         } else {
+            // The grid panel used to carry the saved-layout list. Keep its long-list
+            // search here so moving the list did not lose a control.
+            if (rows.length >= 8) {
+                const filter = this.doc.createElement('input');
+                filter.type = 'text';
+                filter.className = 'vela-lm-filter';
+                filter.placeholder = `Filter ${rows.length} layouts…`;
+                filter.setAttribute('aria-label', 'Filter saved layouts');
+                filter.addEventListener('input', () => {
+                    const q = filter.value.trim().toLowerCase();
+                    for (const el of card.querySelectorAll<HTMLElement>('.vela-lm-srow')) {
+                        el.hidden = q !== '' && !(el.dataset.name ?? '').toLowerCase().includes(q);
+                    }
+                });
+                filter.addEventListener('keydown', (e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Escape') {
+                        filter.value = '';
+                        filter.dispatchEvent(new Event('input'));
+                    }
+                });
+                card.appendChild(filter);
+            }
             for (const r of rows) card.appendChild(this.savedRow(r));
         }
 
@@ -696,10 +738,9 @@ export class LayoutMenu {
             main.appendChild(check);
         }
         main.addEventListener('click', () => {
-            if (r.active) {
-                this.close();
-                return;
-            }
+            // Even the OPEN layout is a snapshot: clicking its name must restore it after
+            // the live chart drifted (the old grid picker did exactly that). A no-op here
+            // silently dropped "open this layout" for the active row.
             this.opts.layout.onOpenLayout?.(r.name);
             this.opts.onChange?.();
             this.close();
@@ -824,6 +865,31 @@ export class LayoutMenu {
                 this.opts.onChange?.();
                 this.render();
             });
+    }
+
+    /** Open the OS file chooser for a saved-layout JSON file. */
+    private pickImportFile(): void {
+        const input = this.doc.createElement('input');
+        input.type = 'file';
+        input.className = 'vela-lm-file';
+        input.accept = 'application/json,.json,.vela';
+        input.style.display = 'none';
+        input.setAttribute('aria-label', 'Import layout file');
+        input.addEventListener('change', () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            void file.text().then((text) => {
+                const name = this.opts.layout.onImportLayout?.(text) ?? null;
+                this.flash = name
+                    ? { text: `Imported ${name}`, tone: 'ok' }
+                    : { text: 'That file is not a layout snapshot' };
+                this.opts.onChange?.();
+                this.render();
+                input.remove();
+            });
+        });
+        this.doc.body.appendChild(input);
+        input.click();
     }
 
     /**

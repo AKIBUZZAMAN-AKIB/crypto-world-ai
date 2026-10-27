@@ -242,7 +242,7 @@ describe('touch crosshair', () => {
         expect(deps.onPointerMove).toHaveBeenCalledWith(300, 90);
     });
 
-    it('a long press enters inspect mode: the crosshair follows the finger, the view stays put', () => {
+    it('a long press enters TRACKING: the crosshair follows the finger and survives the lift', () => {
         vi.useFakeTimers();
         try {
             const { deps, el } = touchHarness();
@@ -256,7 +256,9 @@ describe('touch crosshair', () => {
             expect(deps.onPointerMove).toHaveBeenCalledWith(420, 110);
             expect(deps.apply).not.toHaveBeenCalled();
             el.fire('pointerup', { ...base, clientX: 420, clientY: 110, timeStamp: 500 });
-            expect(deps.onPointerMove).toHaveBeenLastCalledWith(null, null); // lifting ends the readout
+            // R83: lifting does NOT end the readout — tracking stays up until a tap exits
+            // (test/input-tracking.test.ts owns that contract).
+            expect(deps.onPointerMove).not.toHaveBeenCalledWith(null, null);
         } finally {
             vi.useRealTimers();
         }
