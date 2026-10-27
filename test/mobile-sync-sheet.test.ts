@@ -409,10 +409,10 @@ describe('the kebab drawer’s Sync view', () => {
         drawer.destroy();
     });
 
-    it('the first screen carries the whole library: autosave, the open strip, the star', () => {
+    it('the first screen carries the saved-layout library: autosave, the open strip, the expander', () => {
         const host = document.createElement('div');
         document.body.append(host);
-        const house: Array<string | null> = [];
+        const opened: string[] = [];
         const drawer = new MoreDrawer({
             host,
             canUndo: () => false,
@@ -423,6 +423,9 @@ describe('the kebab drawer’s Sync view', () => {
             panels: () => [],
             onTogglePanel: () => {},
             actions: () => [],
+            // R86 Task 11: indicator templates are a SEPARATE panel, opened from the
+            // main More screen — never a tab inside Manage layouts.
+            onOpenIndicatorTemplates: () => { opened.push('templates'); },
             layout: {
                 shape: () => ({ rows: 1, cols: 2 }),
                 presets: () => [],
@@ -438,10 +441,6 @@ describe('the kebab drawer’s Sync view', () => {
                 onSaveChanges: () => {},
                 autosave: () => false,
                 onToggleAutosave: () => {},
-                templates: () => [{ name: 'Trend', count: 1 }],
-                onSaveTemplate: () => true,
-                onSetDefaultTemplate: (n) => house.push(n),
-                defaultTemplate: () => null,
             },
         });
         drawer.open('layout', { focus: 'manage' });
@@ -454,15 +453,17 @@ describe('the kebab drawer’s Sync view', () => {
         expect(more.textContent).toContain('Show all 4 layouts');
         more.click();
         expect(document.querySelectorAll('.vela-md-lrow')).toHaveLength(4);
-        // The other half of the library is a TOGGLE stop, not another heading below.
-        (document.querySelector<HTMLElement>('.vela-md-segbtn[data-tab="templates"]')!).click();
-        expect(document.querySelectorAll('.vela-md-lrow')).toHaveLength(1);
-        expect(document.querySelector('.vela-md-ltext b')?.textContent).toBe('Trend');
-        // The house template is a star on this screen too.
-        const star = document.querySelector<HTMLElement>('.vela-md-star')!;
-        expect(star.getAttribute('aria-pressed')).toBe('false');
-        star.click();
-        expect(house).toEqual(['Trend']);
+        // R86 Task 11: there is NO templates tab and NO default star in Manage layouts
+        // any more — indicator templates (and "set as default") live in their OWN panel.
+        expect(document.querySelector('.vela-md-segbtn[data-tab="templates"]')).toBeNull();
+        expect(document.querySelector('.vela-md-star')).toBeNull();
+        // The layout library still owns saved layouts + autosave; templates are reached
+        // through the main More screen's dedicated door, not a tab of this sheet.
+        drawer.open('main');
+        const door = [...host.querySelectorAll<HTMLElement>('.vela-md-row')].find((r) => r.textContent?.includes('Indicator templates'));
+        expect(door, 'the main More screen still offers the separate Indicator templates panel').toBeTruthy();
+        door!.click();
+        expect(opened).toEqual(['templates']);
         drawer.destroy();
     });
 

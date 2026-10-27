@@ -100,8 +100,12 @@ try {
         const m = await readonly(page);
         facts.phoneGrid = m;
         assert(m.rows >= 1, 'phone grid: the row exists', m);
-        assert(m.rowsShown >= 1 && m.scrolls === '1', 'phone grid: the measured rows stay visible and the overflow scrolls', m);
-        assert(m.chip != null && m.chip.minHeight === '22px', 'phone grid: the down control stays minimal', m.chip);
+        // A 2x2 cell is too NARROW for a title + its action cluster (measureFit's width
+        // gate), so the legend falls back behind the count chip / object-tree door — the
+        // R59/R85 "hide only when no room" rule, not a device-width switch. R86 Task 3
+        // still keeps that down control MINIMAL: 22px, borderless, no bordered pill.
+        assert(m.rowsShown === 0 && m.chip != null && /^\d+$/.test(m.chip.text), 'phone grid: a narrow cell folds its legend behind the count chip', m);
+        assert(m.chip != null && m.chip.minHeight === '22px' && m.chip.border.startsWith('0px'), 'phone grid: the down control stays minimal (22px, borderless)', m.chip);
         await context.close();
     }
 
@@ -126,14 +130,21 @@ try {
         const m = await readonly(page);
         facts.cramped = m;
         assert(m.paneH > 0 && m.paneH < 80, 'cramped: the cell really is short (measured, not assumed)', m.paneH);
-        assert(m.rows >= 1 && m.rowsShown >= 1 && m.scrolls === '1', 'cramped: measured rows stay visible and the overflow scrolls', m);
-        assert(m.chip != null && m.chip.minHeight === '22px', 'cramped: the down control stays minimal', m.chip);
-        // The user can still fold the whole legend away with the minimal control.
+        // Zero usable whole rows is the one TRUE no-room case: measured by height, not by
+        // the device, the legend folds behind the count chip. R86 Task 3 keeps that down
+        // control MINIMAL (22px, borderless) instead of the old bordered pill.
+        assert(m.rows >= 1 && m.rowsShown === 0 && m.visibleRows === '0', 'cramped: zero usable rows fold the legend behind the count chip', m);
+        assert(m.chip != null && m.chip.minHeight === '22px' && m.chip.border.startsWith('0px'), 'cramped: the down control stays minimal (22px, borderless)', m.chip);
+        // The user is NEVER trapped: pressing the minimal chip opens the legend anyway
+        // (manual override) — and once open, R86 Task 3 shows the MEASURED rows and lets
+        // the overflow SCROLL rather than hiding everything (there is no room here, so
+        // the opened list must scroll).
         await page.evaluate(() => document.querySelector('.vela-ind-fold').click());
         await page.waitForTimeout(400);
-        const folded = await readonly(page);
-        facts.crampedFolded = folded;
-        assert(folded.rowsShown === 0, 'cramped: pressing the minimal control folds the list on demand', folded);
+        const opened = await readonly(page);
+        facts.crampedOpened = opened;
+        assert(opened.rowsShown >= 1, 'cramped: pressing the minimal control shows the rows (manual override)', opened);
+        assert(opened.scrolls === '1' && opened.overflowY === 'auto', 'cramped: the opened legend scrolls its overflow (R86 Task 3)', opened);
         await context.close();
     }
 

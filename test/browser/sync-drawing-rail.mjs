@@ -88,10 +88,19 @@ try {
     assert(facts.glyphAbovePill.stable && facts.glyphAbovePill.differs, 'the glyph paints ABOVE its pill (hiding it changes the pixels)', facts.glyphAbovePill);
     await page.locator('.vela-dtb-icon').first().hover();
     await page.waitForTimeout(200);
-    const tint = await page.evaluate(() => getComputedStyle(document.querySelector('.vela-dtb-icon .vela-dtb-hit')).backgroundColor);
+    // R77: the hit square is the button's own ::before pseudo, NOT a `.vela-dtb-hit`
+    // element. Reading a removed element hands `null` to getComputedStyle and aborts the
+    // whole check — measure the painted pill the same way the hover check above does.
+    const tint = await page.evaluate(() => getComputedStyle(document.querySelector('.vela-dtb-icon'), '::before').backgroundColor);
     assert(tint !== 'rgba(0, 0, 0, 0)', 'hovering the icon still tints its hit square', { tint });
 
     // 3. Reveal + flyout on a REAL pointer: hover the cell, click the caret.
+    // The previous step left the pointer ON the first icon; by design
+    // `.vela-dtb-icon:hover~.vela-dtb-arrow` reveals that first cell's caret, so reading
+    // its opacity while still hovering measures a HOVERED cell, not an unhovered one.
+    // Park the pointer off the rail first so "unhovered" actually means unhovered.
+    await page.mouse.move(1, 1);
+    await page.waitForTimeout(120);
     const cell = page.locator('.vela-dtb-cell').nth(2);
     const restOpacity = await page.evaluate(() => getComputedStyle(document.querySelector('.vela-dtb-cell .vela-dtb-arrow')).opacity);
     assert(restOpacity === '0', 'an unhovered cell hides its caret', { restOpacity });

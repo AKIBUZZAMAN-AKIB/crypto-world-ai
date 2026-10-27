@@ -85,9 +85,20 @@ try {
         // scripting engine (this workspace passes `onEditor` only then), and the actions
         // host always closes the band; so compare the required spine, and require the
         // editor — when present — to sit exactly between indicators and the actions host.
+        // R85: undo/redo are state-bound stops in the HEAD of the scrolling band, one
+        // stop off the chart type (before drawings) — see mobile-bar-anatomy.test.ts.
+        // The workspace wires them, so they are part of the required spine here.
         const spine = m.stops.filter((c) => c !== 'vela-mb-actions');
         const hasEditor = spine.includes('vela-mb-editor');
-        const wanted = ['vela-mb-tf', 'vela-mb-style', 'vela-mb-drawings', 'vela-mb-maximize', 'vela-mb-indicators', ...(hasEditor ? ['vela-mb-editor'] : [])];
+        const hasUndo = spine.includes('vela-mb-undo');
+        const hasRedo = spine.includes('vela-mb-redo');
+        const wanted = [
+            'vela-mb-tf', 'vela-mb-style',
+            ...(hasUndo ? ['vela-mb-undo'] : []),
+            ...(hasRedo ? ['vela-mb-redo'] : []),
+            'vela-mb-drawings', 'vela-mb-maximize', 'vela-mb-indicators',
+            ...(hasEditor ? ['vela-mb-editor'] : []),
+        ];
         assert(JSON.stringify(spine) === JSON.stringify(wanted), `${width}: tools in reading order`, m.stops);
         assert(m.stops[m.stops.length - 1] === 'vela-mb-actions', `${width}: the band ends with the host's own actions`, m.stops);
         // The page never pans.

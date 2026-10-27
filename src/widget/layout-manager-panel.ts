@@ -6,6 +6,7 @@
 
 import { Dialog } from '../ui/components/dialog';
 import { injectStyles } from '../ui/styles';
+import { BEARISH } from '../core/palette';
 
 const STYLE_ID = 'vela-layout-manager-styles';
 const CSS = `
@@ -26,7 +27,7 @@ const CSS = `
 .vela-lm-input { flex: 1; min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--vela-border-strong); border-radius: var(--vela-radius-sm, 6px); background: var(--vela-surface); color: var(--vela-fg-bright); font: inherit; font-size: 12px; text-overflow: ellipsis; }
 .vela-lm-status { min-height: 16px; padding: 2px 0 0; font-size: 11px; color: var(--vela-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vela-lm-status[data-tone='ok'] { color: var(--vela-up, var(--vela-accent)); }
-.vela-lm-status[data-tone='bad'] { color: var(--vela-down, #f7525f); }
+.vela-lm-status[data-tone='bad'] { color: var(--vela-down, ${BEARISH}); }
 .vela-lm-section { margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--vela-border-strong); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--vela-fg-muted); }
 /* The kit's mobile rule makes EVERY dialog fullscreen. This panel is deliberately the
    exception: a small centred card, with the chart still visible around it. */

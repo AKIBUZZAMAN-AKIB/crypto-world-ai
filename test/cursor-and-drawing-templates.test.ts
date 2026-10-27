@@ -278,9 +278,13 @@ describe('the More sheet', () => {
         );
         // The library no longer lives on the first screen: it has its own TAB
         // (TradingView's Manage layouts), which is where the Drawings stop lives.
+        // R86 Task 11: chart/indicator TEMPLATES left Manage layouts for their own
+        // separate Indicator templates panel, so the toggle is now a two-stop
+        // [Layouts, Drawing templates] — drawing templates are the only templates
+        // still owned by Manage layouts.
         md.open('layout', { focus: 'manage' });
         const tabs = [...host.querySelectorAll<HTMLButtonElement>('.vela-md-segbtn')].map((b) => b.textContent);
-        expect(tabs).toEqual(['Layouts', 'Templates', 'Drawings']);
+        expect(tabs).toEqual(['Layouts', 'Drawing templates']);
         host.querySelector<HTMLButtonElement>('.vela-md-segbtn[data-tab="drawings"]')!.click();
         const row = host.querySelector<HTMLElement>('[data-drawing-template]')!;
         expect(row.textContent).toContain('Ichimoku pink');
