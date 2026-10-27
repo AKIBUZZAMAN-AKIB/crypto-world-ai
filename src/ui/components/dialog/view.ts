@@ -12,6 +12,10 @@ import { holdForExit, type SurfaceExit } from '../../surface-exit';
 
 export interface DialogOptions extends DialogControllerOptions {
     title?: string;
+    /** R87 premium header: a small uppercase eyebrow above the title. */
+    kicker?: string;
+    /** R87 premium header: a registered icon name for the accent tile beside the title. */
+    headerIcon?: string;
     content?: Node | ((body: HTMLElement) => void);
     host?: HTMLElement;
     /** Drag the dialog by its header (the reference dialogs move; search stays fixed). */
@@ -95,14 +99,31 @@ export class Dialog {
             header.addEventListener('pointerup', () => (dragging = false));
         }
         if (opts.headerStart) header.appendChild(opts.headerStart);
+        // R87: an accent icon tile + eyebrow + title = one premium header vocabulary
+        // shared by every dialog-based panel. Both additions are opt-in and pure chrome.
+        if (opts.headerIcon) {
+            const mark = doc.createElement('span');
+            mark.className = 'vela-prem-tile';
+            mark.appendChild(iconEl(opts.headerIcon, doc));
+            header.appendChild(mark);
+        }
+        const titleWrap = doc.createElement('div');
+        titleWrap.className = 'vela-dialog-titlewrap';
+        if (opts.kicker) {
+            const kicker = doc.createElement('span');
+            kicker.className = 'vela-dialog-kicker';
+            kicker.textContent = opts.kicker;
+            titleWrap.appendChild(kicker);
+        }
         const title = doc.createElement('div');
         title.className = 'vela-dialog-title';
         title.textContent = opts.title ?? '';
         this.titleEl = title;
+        titleWrap.appendChild(title);
         const close = doc.createElement('button');
         close.className = 'vela-dialog-close';
         close.appendChild(iconEl('close', doc));
-        header.append(title, close);
+        header.append(titleWrap, close);
 
         this.body = doc.createElement('div');
         this.body.className = 'vela-dialog-body';

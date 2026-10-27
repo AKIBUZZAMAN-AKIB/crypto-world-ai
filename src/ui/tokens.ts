@@ -8,6 +8,7 @@
 import type { VelaTheme } from '../core/options';
 import { STATIC_TOKENS, themeTokens } from '../core/tokens';
 import { injectStyles } from './styles';
+import { installPremiumStyles } from './premium';
 
 const STATIC_ID = 'vela-ui-tokens';
 
@@ -67,7 +68,11 @@ export function floatingLayerHost(from: HTMLElement, fallback?: HTMLElement): HT
 
 /** Mark an element as a kit host: static token sheet + the `.vela-ui` class. */
 export function ensureUIHost(el: HTMLElement, theme?: VelaTheme): void {
-    injectStyles(STATIC_ID, STATIC_CSS, el.getRootNode() as Document | ShadowRoot);
+    const root = el.getRootNode() as Document | ShadowRoot;
+    injectStyles(STATIC_ID, STATIC_CSS, root);
+    // R87: every floating layer / standalone widget root opts into the premium surface
+    // language here, so a `Vela` used without `VelaWorkspace` still gets premium panels.
+    installPremiumStyles(root);
     el.classList.add('vela-ui');
     if (theme) applyThemeTokens(el, theme);
 }

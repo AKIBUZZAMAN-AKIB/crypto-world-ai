@@ -53,7 +53,9 @@ export const DIALOG_CSS = `
     border-bottom: 1px solid var(--vela-border);
     user-select: none;
 }
-.vela-dialog-title { flex: 1; font-size: 17px; font-weight: 600; letter-spacing: 0.2px; color: var(--vela-fg-bright); }
+.vela-dialog-titlewrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.vela-dialog-kicker { font-size: 9.5px; font-weight: 750; letter-spacing: 0.14em; text-transform: uppercase; color: var(--vela-fg-muted); }
+.vela-dialog-title { font-size: 17px; font-weight: 600; letter-spacing: 0.2px; color: var(--vela-fg-bright); }
 .vela-dialog-close {
     all: unset;
     cursor: pointer;

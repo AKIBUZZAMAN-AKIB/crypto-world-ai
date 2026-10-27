@@ -490,6 +490,7 @@ export class LayoutMenu {
         mark.appendChild(iconEl('layout', this.doc));
         const id = this.doc.createElement('div');
         id.className = 'vela-lm-id';
+        id.setAttribute('data-kicker', 'Workspace'); // R87 premium eyebrow (see ui/premium.ts)
         const title = this.doc.createElement('b');
         title.className = 'vela-lm-title';
         title.textContent = name ?? 'Untitled layout';

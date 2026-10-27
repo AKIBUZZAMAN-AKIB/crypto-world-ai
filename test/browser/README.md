@@ -52,6 +52,7 @@ Environment knobs:
 | `sync-desktop-layout-split.mjs` | desktop Layout setup keeps only grid/sync controls; Manage layouts is a separate compact popover |
 | `sync-panel-movement.mjs` | desktop panels resize/maximize; phone panels become draggable bottom sheets with up/down and maximize |
 | `sync-indicator-templates-separation.mjs` | separate Indicator templates panel has Favorites / My templates / Technical / Financial; Manage layouts and Layout setup stay template-free |
+| `sync-premium-panels.mjs` | R87: premium design-token layer resolves on floating hosts; kicker/icon-tile headers on the main dialogs; the phone Layout sheet has NO tab bar — Layout setup, Chart syncing, Manage layouts and Indicator templates are each their own dedicated door opening one titled pane |
 
 `playground/offline.html` feeds every cell the SAME synthetic bars over a provider that
 resolves any ticker, so instants, click times and visible ranges mean the same thing on

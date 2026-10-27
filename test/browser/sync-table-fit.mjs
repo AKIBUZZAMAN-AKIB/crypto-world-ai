@@ -80,9 +80,9 @@ for (const vp of [{ width: 390, height: 844 }, { width: 320, height: 568 }]) {
     try {
         await page.locator('.vela-mb-more').tap();
         await page.waitForTimeout(400);
-        await page.evaluate(() => [...document.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.trim().startsWith('Layout'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-        await page.waitForTimeout(400);
-        await page.evaluate(() => [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent === 'Sync')?.click());
+        // R87: "Chart syncing" is its own door now (the old Sync TAB inside the Layout
+        // sheet is gone). Open the door directly to reach the phone matrix.
+        await page.evaluate(() => [...document.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.trim().startsWith('Chart syncing'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
         await page.waitForTimeout(400);
         const m = await page.evaluate(() => {
             const wrap = document.querySelector('.vela-md-matrixwrap[data-shell="phone"]');

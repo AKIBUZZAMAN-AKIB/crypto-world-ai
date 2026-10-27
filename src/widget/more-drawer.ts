@@ -58,8 +58,8 @@ const CSS = `
 @media (pointer: coarse) {
     .vela-md-share { height: 44px; padding: 0 14px; font-size: 13.5px; }
     /* The sheet's tab bar is navigation, not a caption: a thumb needs the full 44.
-       Scoped to .vela-md-nav so it beats the later base rule regardless of source order. */
-    .vela-md-nav .vela-md-navbtn { min-height: 44px; }
+       Scoped to the pane back button so it beats the later base rule regardless of source order. */
+    .vela-md-paneback { min-height: 44px; min-width: 44px; justify-content: center; }
 }
 .vela-md-actions {
     display: flex;
@@ -309,67 +309,60 @@ const CSS = `
 .vela-md-hero-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .vela-md-hero-text b { font-size: 14px; font-weight: 600; color: var(--vela-fg-bright); }
 .vela-md-hero-text small { font-size: 11.5px; color: var(--vela-fg-muted); }
-.vela-md-nav {
+/* R87 — the pane header replaces the old three-tab nav. One job, one titled pane:
+   a back button, an accent icon tile, a kicker, a title and a short description. */
+.vela-md-panehead {
     position: sticky;
     top: 0;
     z-index: 2;
     display: flex;
     align-items: center;
-    gap: 4px;
-    margin: 0 0 6px;
-    padding: 6px 0;
+    gap: 12px;
+    margin: 0 0 12px;
+    padding: 10px 4px 12px;
     background: var(--vela-surface-elev);
     border-bottom: 1px solid var(--vela-border);
 }
-/* The two tabs share one track — an inactive tab must read as a tab, not as a label. */
-.vela-md-navtrack {
-    flex: 1 1 auto;
-    display: flex;
-    gap: 2px;
-    min-width: 0;
-    padding: 3px;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--vela-fg) 8%, transparent);
-}
-.vela-md-navback {
-    all: unset;
-    flex: none;
-    width: 40px;
-    min-height: 32px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    color: var(--vela-fg-muted);
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-}
-.vela-md-navback:active { background: var(--vela-hover); }
-.vela-md-navback .vela-icon { font-size: 16px; width: 16px; height: 16px; }
-.vela-md-navbtn {
+/* Override the full-width standalone back bar: inside the pane header it is a compact
+   square thumb target with just the chevron (the pane title names the destination). */
+.vela-md-paneback {
     all: unset;
     box-sizing: border-box;
-    flex: 1 1 0;
-    min-height: 32px;
+    flex: none;
+    width: 40px;
+    min-height: 40px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 8px;
-    font-size: 12.5px;
-    font-weight: 600;
+    border: 1px solid var(--vela-border);
+    border-radius: 10px;
     color: var(--vela-fg-muted);
+    background: var(--vela-surface-elev);
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
-.vela-md-navtrack[data-stops='3'] .vela-md-navbtn { font-size: 11.5px; padding: 0 4px; white-space: nowrap; }
-.vela-md-navtrack[data-stops='3'] { gap: 1px; }
-.vela-md-navbtn[data-active] {
-    background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 22%, transparent);
-    color: var(--vela-fg-bright);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 55%, transparent);
+.vela-md-paneback .vela-icon { font-size: 16px; width: 16px; height: 16px; }
+.vela-md-paneback:active { background: var(--vela-hover); }
+.vela-md-paneback { font-size: 0; } /* the "More" text is for screen-readers/label only */
+.vela-md-paneback:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-accent)); outline-offset: -2px; }
+.vela-md-panemark {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--vela-accent) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--vela-accent) 45%, transparent);
+    color: var(--vela-accent);
 }
+.vela-md-panemark .vela-icon { font-size: 17px; width: 17px; height: 17px; }
+.vela-md-paneid { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vela-md-panekicker { font-size: 9.5px; font-weight: 750; letter-spacing: 0.14em; text-transform: uppercase; color: var(--vela-fg-muted); }
+.vela-md-panetitle { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; color: var(--vela-fg-bright); }
+.vela-md-panehint { font-size: 11px; color: var(--vela-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* [hidden] must WIN over the section's own display — a plain [hidden] loses to
-   any class that sets display, and both tabs would show at once. */
+   any class that sets display, and two panes would show at once. */
 .vela-md-sec { display: block; min-width: 0; }
 .vela-md-sec[hidden] { display: none !important; }
 
@@ -394,86 +387,6 @@ const CSS = `
     line-height: 1.35;
     color: var(--vela-fg-muted);
 }
-/* ── Layout setup: the hero card + the sticky two-stop nav ─────────────────────── */
-.vela-md-hero {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 2px 0 10px;
-    padding: 10px 12px;
-    border: 1px solid var(--vela-border);
-    border-radius: 12px;
-    background: var(--vela-surface-elev);
-}
-.vela-md-hero-glyph { flex: none; width: 34px; height: 26px; color: var(--vela-fg-bright); }
-.vela-md-hero-glyph svg { display: block; width: 100%; height: 100%; }
-.vela-md-hero-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.vela-md-hero-text b { font-size: 14px; font-weight: 600; color: var(--vela-fg-bright); }
-.vela-md-hero-text small { font-size: 11.5px; color: var(--vela-fg-muted); }
-.vela-md-nav {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin: 0 0 6px;
-    padding: 6px 0;
-    background: var(--vela-surface-elev);
-    border-bottom: 1px solid var(--vela-border);
-}
-/* The two tabs share one track — an inactive tab must read as a tab, not as a label. */
-.vela-md-navtrack {
-    flex: 1 1 auto;
-    display: flex;
-    gap: 2px;
-    min-width: 0;
-    padding: 3px;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--vela-fg) 8%, transparent);
-}
-.vela-md-navback {
-    all: unset;
-    flex: none;
-    width: 40px;
-    min-height: 32px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    color: var(--vela-fg-muted);
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-}
-.vela-md-navback:active { background: var(--vela-hover); }
-.vela-md-navback .vela-icon { font-size: 16px; width: 16px; height: 16px; }
-.vela-md-navbtn {
-    all: unset;
-    box-sizing: border-box;
-    flex: 1 1 0;
-    min-height: 32px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 8px;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--vela-fg-muted);
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-}
-.vela-md-navtrack[data-stops='3'] .vela-md-navbtn { font-size: 11.5px; padding: 0 4px; white-space: nowrap; }
-.vela-md-navtrack[data-stops='3'] { gap: 1px; }
-.vela-md-navbtn[data-active] {
-    background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 22%, transparent);
-    color: var(--vela-fg-bright);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 55%, transparent);
-}
-/* [hidden] must WIN over the section's own display — a plain [hidden] loses to
-   any class that sets display, and both tabs would show at once. */
-.vela-md-sec { display: block; min-width: 0; }
-.vela-md-sec[hidden] { display: none !important; }
-
 /* ── Chart syncing: links (switches) then charts (expanding rows) ───────────── */
 .vela-md-sublabel {
     padding: 10px 2px 4px;
@@ -1189,6 +1102,11 @@ export class MoreDrawer {
         this.view = view;
         this.focus = opts.focus;
         this.focusCell = opts.cell;
+        // R87: a door decides which single pane the Layout sheet shows. `this.tab` is
+        // that pane's memory across in-place re-renders (a sync toggle repaints without
+        // re-passing `focus`), so a door open must write it — otherwise opening Layout
+        // setup right after Chart syncing would still land on the Sync pane.
+        if (view === 'layout') this.tab = opts.focus ?? 'layouts';
         this.render();
     }
 
@@ -1196,8 +1114,8 @@ export class MoreDrawer {
         const doc = this.drawer.body.ownerDocument;
         this.drawer.body.replaceChildren();
 
-        // The layout sheet carries its own back button INSIDE its sticky nav (a header
-        // that scrolls away leaves the sheet looking like a dead end).
+        // The R87 Layout sheet carries its own back button in the sticky pane header,
+        // so skip it here to avoid a duplicate. Other sub-views get the full-width bar.
         if (this.view !== 'main' && this.view !== 'layout') {
             const back = doc.createElement('button');
             back.className = 'vela-md-back';
@@ -1446,7 +1364,15 @@ export class MoreDrawer {
         if (this.opts.layout) {
             const shape = this.opts.layout.shape();
             const value = shape ? `${shape.cols} × ${shape.rows}` : this.opts.layout.presets().find((p) => p.checked)?.label;
-            list.appendChild(this.row(doc, 'Layout', { icon: 'layout', glyph: this.opts.layout.glyph?.(), value, chevron: true, onClick: () => this.show('layout') }));
+            // R87: one job — one door. "Layout setup" is the grid; "Chart syncing" is the
+            // links; "Manage layouts" and "Indicator templates" are their own panels.
+            // They used to be three TABS in one sheet; each now gets a titled pane of its
+            // own, opened directly from here.
+            list.appendChild(this.row(doc, 'Layout setup', { icon: 'layout', glyph: this.opts.layout.glyph?.(), value, chevron: true, onClick: () => this.show('layout', { focus: undefined }) }));
+        }
+        if (this.opts.layout?.syncs) {
+            const on = this.opts.layout.syncs().filter((s) => s.checked).length;
+            list.appendChild(this.row(doc, 'Chart syncing', { icon: 'link', value: on > 0 ? `${on} linked` : undefined, chevron: true, onClick: () => this.show('layout', { focus: 'sync' }) }));
         }
         // HIDDEN CHARTS, one tap from the stop whose badge counts them. The list is the
         // non-destructive half of the subject (the layout pane keeps the destructive
@@ -1690,68 +1616,46 @@ export class MoreDrawer {
         }
         list.append(hero);
 
-        // ── sticky nav ─────────────────────────────────────────────────────────
-        const nav = doc.createElement('div');
-        nav.className = 'vela-md-nav';
-        nav.setAttribute('role', 'tablist');
-        const navButtons: HTMLElement[] = [];
-        const navBack = doc.createElement('button');
-        navBack.type = 'button';
-        navBack.className = 'vela-md-navback';
-        navBack.setAttribute('aria-label', 'Back to menu');
-        navBack.appendChild(iconEl('chevron-left', doc));
-        navBack.addEventListener('click', () => this.show('main'));
-        nav.append(navBack);
-        const navTrack = doc.createElement('div');
-        navTrack.className = 'vela-md-navtrack';
-        nav.append(navTrack);
-        // REAL tabs, not scroll anchors: TV's layout popover has a layouts column and a
-        // sync column side by side; a phone gets the same two panes one at a time. Two
-        // scroll stops in one long sheet read as "one page with a jump menu" — and the
-        // jump menu was the only thing making the sheet feel long.
-        const goTo = (key: 'layouts' | 'manage' | 'sync'): void => {
-            for (const b of navButtons) {
-                const on = b.dataset.tab === key;
-                b.toggleAttribute('data-active', on);
-                b.setAttribute('aria-selected', String(on));
-                // Roving tabindex, the ARIA tabs pattern: one tab stop, arrows move.
-                b.tabIndex = on ? 0 : -1;
-            }
-            layoutsSec.hidden = key !== 'layouts';
-            manageSec.hidden = key !== 'manage';
-            syncSec.hidden = key !== 'sync';
-            this.tab = key;
-            // A tab is a fresh page, not a scroll position shared with the other one.
-            this.drawer.body.scrollTop = 0;
-        };
-        navTrack.dataset.stops = '3';
-        const stops: Array<['layouts' | 'manage' | 'sync', string]> = [
-            ['layouts', 'Layout setup'],
-            ['manage', 'Manage layouts'],
-            ['sync', 'Sync'],
-        ];
-        for (const [key, label] of stops) {
-            const b = doc.createElement('button');
-            b.type = 'button';
-            b.className = 'vela-md-navbtn';
-            b.dataset.tab = key;
-            b.setAttribute('role', 'tab');
-            b.setAttribute('aria-controls', `vela-md-pane-${key}`);
-            b.textContent = label;
-            b.addEventListener('click', () => goTo(key));
-            b.addEventListener('keydown', (e) => {
-                if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-                e.preventDefault();
-                const at = stops.findIndex(([k]) => k === key);
-                const step = e.key === 'ArrowRight' ? 1 : -1;
-                const next = stops[(at + step + stops.length) % stops.length]?.[0] ?? 'layouts';
-                goTo(next);
-                navButtons.find((x) => x.dataset.tab === next)?.focus();
-            });
-            navTrack.append(b);
-            navButtons.push(b);
-        }
-        list.append(nav);
+        // ── premium pane header — ONE dedicated panel per door (R87) ───────────
+        // The old three-stop TAB bar folded "Layout setup", "Manage layouts" and
+        // "Sync" into a single sheet. Each job now has its OWN door in the main menu,
+        // so the sheet opens on ONE titled pane with a back button — no tab strip to
+        // hunt through, no ambiguity about where a control lives. Every control is
+        // unchanged and still reachable; only its home got clearer.
+        const activePane: 'layouts' | 'manage' | 'sync' =
+            focus === 'sync' ? 'sync' : focus === 'manage' ? 'manage' : (this.tab ?? 'layouts');
+        const paneMeta = activePane === 'sync'
+            ? { kicker: 'Multi-chart', title: 'Chart syncing', sub: 'What follows, and which charts follow whom', icon: 'link' }
+            : activePane === 'manage'
+                ? { kicker: 'Library', title: 'Manage layouts', sub: 'Saved layouts and drawing templates', icon: 'layout' }
+                : { kicker: 'Workspace', title: 'Layout setup', sub: 'Choose a chart grid and a preset', icon: 'layout' };
+        const paneHead = doc.createElement('div');
+        paneHead.className = 'vela-md-panehead';
+        paneHead.dataset.pane = activePane;
+        const paneBack = doc.createElement('button');
+        paneBack.type = 'button';
+        paneBack.className = 'vela-md-back vela-md-paneback';
+        paneBack.setAttribute('aria-label', 'Back to menu');
+        paneBack.appendChild(iconEl('chevron-left', doc));
+        paneBack.appendChild(doc.createTextNode('More'));
+        paneBack.addEventListener('click', () => this.show('main'));
+        const paneMark = doc.createElement('span');
+        paneMark.className = 'vela-md-panemark';
+        paneMark.appendChild(iconEl(paneMeta.icon, doc));
+        const paneId = doc.createElement('div');
+        paneId.className = 'vela-md-paneid';
+        const paneKicker = doc.createElement('span');
+        paneKicker.className = 'vela-md-panekicker';
+        paneKicker.textContent = paneMeta.kicker;
+        const paneTitle = doc.createElement('b');
+        paneTitle.className = 'vela-md-panetitle';
+        paneTitle.textContent = paneMeta.title;
+        const paneHint = doc.createElement('small');
+        paneHint.className = 'vela-md-panehint';
+        paneHint.textContent = paneMeta.sub;
+        paneId.append(paneKicker, paneTitle, paneHint);
+        paneHead.append(paneBack, paneMark, paneId);
+        list.prepend(paneHead);
 
         // ── layouts ────────────────────────────────────────────────────────────
         const layoutsSec = doc.createElement('section');
@@ -2113,7 +2017,12 @@ export class MoreDrawer {
         repaint = refresh;
         // A plain open lands on Layout setup; "Chart syncing" opens on Sync, and the
         // Manage-layouts door opens on its own tab.
-        goTo(focus ?? this.tab ?? 'layouts');
+        // Exactly ONE pane is visible: the door that opened the sheet decided it.
+        layoutsSec.hidden = activePane !== 'layouts';
+        manageSec.hidden = activePane !== 'manage';
+        syncSec.hidden = activePane !== 'sync';
+        this.tab = activePane;
+        this.drawer.body.scrollTop = 0;
         // Opened from a chart's own marks badge: unfold THAT chart's links and bring the
         // row into view, so the tap lands on a chip instead of on a list to hunt through.
         if (focusCell) matrix?.focus(focusCell);

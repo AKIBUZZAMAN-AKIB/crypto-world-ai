@@ -86,6 +86,8 @@ export class LayoutManagerPanel {
         if (!this.dialog) {
             this.dialog = new Dialog({
                 title: 'Manage layouts',
+                kicker: 'Workspace',
+                headerIcon: 'layout',
                 host: this.opts.host,
                 className: 'vela-lm-dialog',
                 modal: false,

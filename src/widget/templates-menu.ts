@@ -425,6 +425,8 @@ export class TemplatesMenu {
         this.beginOpen();
         const dialog = new Dialog({
             title: 'Indicator templates',
+            kicker: 'Library',
+            headerIcon: 'templates',
             host,
             className: 'vela-tm-dialog',
             modal: false,
@@ -495,6 +497,7 @@ export class TemplatesMenu {
         mark.appendChild(iconEl('templates', d));
         const headId = d.createElement('div');
         headId.className = 'vela-tm-headid';
+        headId.setAttribute('data-kicker', 'Library'); // R87 premium eyebrow (see ui/premium.ts)
         const title = d.createElement('b');
         title.className = 'vela-tm-title';
         title.textContent = 'Indicator templates';

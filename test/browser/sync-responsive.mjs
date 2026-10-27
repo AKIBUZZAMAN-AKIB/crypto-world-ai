@@ -34,9 +34,9 @@ try {
             if (shell === 'phone') {
                 await page.evaluate(() => document.querySelector('.vela-mb-more')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
                 await page.waitForTimeout(400);
-                await page.evaluate(() => [...document.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.trim().startsWith('Layout'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-                await page.waitForTimeout(400);
-                await page.evaluate(() => [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent === 'Sync')?.click());
+                // R87: Chart syncing is its OWN door now (the old "Sync" TAB inside the
+                // Layout sheet is gone). Open the door directly to reach the matrix.
+                await page.evaluate(() => [...document.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.trim().startsWith('Chart syncing'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
             } else {
                 await page.click('button[aria-label^="Layout —"]');
             }
@@ -76,9 +76,8 @@ try {
         try {
             await page.locator('.vela-mb-more').tap();
             await page.waitForTimeout(350);
-            await page.evaluate(() => [...document.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.trim().startsWith('Layout'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-            await page.waitForTimeout(350);
-            await page.evaluate(() => [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent === 'Sync')?.click());
+            // R87: "Chart syncing" is its own door (the old Sync TAB is gone).
+            await page.evaluate(() => [...document.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.trim().startsWith('Chart syncing'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
             await page.waitForTimeout(400);
             const m = await page.evaluate(() => {
                 const coarse = matchMedia('(pointer: coarse)').matches;

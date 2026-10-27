@@ -147,45 +147,55 @@ describe('the kebab drawer’s Sync view', () => {
         return { drawer, state, cycles, all, toggles };
     };
 
-    it('the main list has ONE layout entry — sync is a tab inside it, not a second row', () => {
+    it('R87: each layout job is its OWN door — no tab bar anywhere', () => {
         const { drawer } = setup();
         drawer.open();
         const labels = [...document.querySelectorAll('.vela-md-row .vela-md-row-label')].map((r) => r.textContent);
-        expect(labels).toContain('Layout');
-        expect(labels).not.toContain('Sync');
-        (document.querySelectorAll<HTMLElement>('.vela-md-row')[labels.indexOf('Layout')] as HTMLElement).click();
-        const tabs = [...document.querySelectorAll<HTMLElement>('.vela-md-navbtn')];
-        // TradingView's two destinations are literal TABS on a phone: the grid is
-        // "Layout setup" and the saved library is "Manage layouts".
-        expect(tabs.map((t) => t.textContent)).toEqual(['Layout setup', 'Manage layouts', 'Sync']);
+        // One door per job: grid setup, chart syncing, the saved library, templates.
+        expect(labels).toContain('Layout setup');
+        expect(labels).toContain('Chart syncing');
+        expect(labels).toContain('Manage layouts');
+        expect(labels).not.toContain('Sync'); // the old tab label is gone
+        // Opening the Layout setup door shows ONE titled pane, not a tab strip.
+        (document.querySelectorAll<HTMLElement>('.vela-md-row')[labels.indexOf('Layout setup')] as HTMLElement).click();
+        expect(document.querySelectorAll('.vela-md-navbtn')).toHaveLength(0);
+        const head = document.querySelector<HTMLElement>('.vela-md-panehead')!;
+        expect(head).not.toBeNull();
+        expect(head.dataset.pane).toBe('layouts');
+        expect(head.querySelector('.vela-md-panetitle')?.textContent).toBe('Layout setup');
+        expect(head.querySelector('.vela-md-panemark .vela-icon')).not.toBeNull();
+        expect(head.querySelector('.vela-md-paneback')).not.toBeNull();
         drawer.destroy();
     });
 
-    it('the two tabs swap panes — one sheet, never both at once', () => {
+    it('R87: each door opens a single titled pane; only that pane is visible', () => {
         const { drawer } = setup();
+
+        // Layout setup door → the grid pane.
         drawer.open('layout');
-        const secs = [...document.querySelectorAll<HTMLElement>('.vela-md-sec')];
+        let secs = [...document.querySelectorAll<HTMLElement>('.vela-md-sec')];
         expect(secs.length).toBe(3);
-        // Layout setup is the landing tab; Manage and Sync are their own panes.
         expect(secs[0]!.hidden).toBe(false);
         expect(secs[1]!.hidden).toBe(true);
         expect(secs[2]!.hidden).toBe(true);
-        const [layoutTab, manageTab, syncTab] = [...document.querySelectorAll<HTMLElement>('.vela-md-navbtn')];
-        expect(layoutTab!.getAttribute('aria-selected')).toBe('true');
-        manageTab!.click();
-        expect(secs[0]!.hidden).toBe(true);
-        expect(secs[1]!.hidden).toBe(false);
-        expect(secs[2]!.hidden).toBe(true);
-        syncTab!.click();
+        expect(document.querySelector<HTMLElement>('.vela-md-panehead')!.dataset.pane).toBe('layouts');
+
+        // Chart syncing door → the sync pane, with its own title and kicker.
+        drawer.open('layout', { focus: 'sync' });
+        secs = [...document.querySelectorAll<HTMLElement>('.vela-md-sec')];
         expect(secs[0]!.hidden).toBe(true);
         expect(secs[1]!.hidden).toBe(true);
         expect(secs[2]!.hidden).toBe(false);
-        expect(syncTab!.getAttribute('aria-selected')).toBe('true');
-        expect(syncTab!.hasAttribute('data-active')).toBe(true);
-        layoutTab!.click();
-        expect(secs[0]!.hidden).toBe(false);
-        expect(secs[1]!.hidden).toBe(true);
-        expect(secs[2]!.hidden).toBe(true);
+        let head = document.querySelector<HTMLElement>('.vela-md-panehead')!;
+        expect(head.dataset.pane).toBe('sync');
+        expect(head.querySelector('.vela-md-panetitle')?.textContent).toBe('Chart syncing');
+
+        // Manage layouts door → the library pane, again one title, no tabs.
+        drawer.open('layout', { focus: 'manage' });
+        head = document.querySelector<HTMLElement>('.vela-md-panehead')!;
+        expect(head.dataset.pane).toBe('manage');
+        expect(head.querySelector('.vela-md-panetitle')?.textContent).toBe('Manage layouts');
+        expect(document.querySelectorAll('.vela-md-navbtn')).toHaveLength(0);
         drawer.destroy();
     });
 

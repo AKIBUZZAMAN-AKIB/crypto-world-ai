@@ -83,6 +83,31 @@ const CSS = `
     row-gap: 8px;
 }
 .vela-lp-cols > .vela-lp-vsep { display: none; }
+/* R87 premium pane header for the setup-only desktop panel. */
+.vela-lp-panehead {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 12px 10px;
+    margin: -2px -2px 10px;
+    border-bottom: 1px solid var(--vela-border);
+}
+.vela-lp-panemark {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--vela-accent) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--vela-accent) 45%, transparent);
+    color: var(--vela-accent);
+}
+.vela-lp-panemark .vela-icon { font-size: 17px; width: 17px; height: 17px; }
+.vela-lp-paneid { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vela-lp-panekicker { font-size: 9.5px; font-weight: 750; letter-spacing: 0.14em; text-transform: uppercase; color: var(--vela-fg-muted); }
+.vela-lp-panetitle { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; color: var(--vela-fg-bright); }
+.vela-lp-panehint { font-size: 11px; color: var(--vela-fg-muted); }
 .vela-lp-heading {
     display: flex;
     align-items: center;
@@ -801,6 +826,31 @@ export class LayoutPicker {
         panel.addEventListener('keydown', this.onPanelKeydown);
         this.layer.appendChild(panel);
         this.panel = panel;
+
+        // R87 premium header — the setup-only panel had no title at all, just column
+        // captions. A titled pane (icon tile + kicker + title + subtitle) matches the
+        // phone Layout setup door and tells the trader what this surface is for.
+        if (this.opts.setupOnly) {
+            const head = doc.createElement('div');
+            head.className = 'vela-lp-panehead';
+            const mark = doc.createElement('span');
+            mark.className = 'vela-lp-panemark';
+            mark.appendChild(iconEl('layout', doc));
+            const id = doc.createElement('div');
+            id.className = 'vela-lp-paneid';
+            const kicker = doc.createElement('span');
+            kicker.className = 'vela-lp-panekicker';
+            kicker.textContent = 'Workspace';
+            const title = doc.createElement('b');
+            title.className = 'vela-lp-panetitle';
+            title.textContent = 'Layout setup';
+            const sub = doc.createElement('small');
+            sub.className = 'vela-lp-panehint';
+            sub.textContent = 'Choose a chart grid and sync settings';
+            id.append(kicker, title, sub);
+            head.append(mark, id);
+            panel.appendChild(head);
+        }
 
         const cols = doc.createElement('div');
         cols.className = 'vela-lp-cols';

@@ -16,6 +16,7 @@ import { TypedEventBus } from '../core/events/EventBus';
 import { MultiProviderFeed } from '../data/MultiProviderFeed';
 import { sharedBarStore } from '../data/BarStore';
 import { ensureUIHost, injectStyles, registerIcon, svg16 } from '../ui';
+import { installPremiumStyles } from '../ui/premium';
 import { installSmoothScrolling } from '../ui/scrolling';
 import { isEditableTarget, KeymapManager } from '../ui/keymap';
 import { Menu, type MenuItemDescriptor } from '../ui/components/menu';
@@ -924,6 +925,10 @@ export class VelaWorkspace {
 
         const doc = hostEl.ownerDocument;
         injectStyles(STYLE_ID, CSS, doc);
+        // R87 premium surfaces: one shared design language for every floating panel.
+        // It is injected after the workspace sheet and wins by the `html.vela-premium`
+        // scope (specificity), not by source order — panel sheets inject later still lose.
+        installPremiumStyles(doc);
         // One global rule for the CSS half of `prefers-reduced-motion` (the canvas half
         // lives in NativeRenderer). Scoped to the library's roots, injected once.
         injectStyles('vela-reduced-motion', REDUCED_MOTION_CSS, doc);

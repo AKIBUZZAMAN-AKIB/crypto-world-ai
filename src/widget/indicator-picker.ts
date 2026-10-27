@@ -362,6 +362,8 @@ export class IndicatorPicker {
         this.offFavorite = opts.favorites ? () => undefined : onFavoritesChange(() => this.sync());
         this.dialog = new Dialog({
             title: 'Indicators',
+            kicker: 'Studies',
+            headerIcon: 'indicators',
             host: opts.host,
             draggable: true,
             closeOnInteractOutside: true,

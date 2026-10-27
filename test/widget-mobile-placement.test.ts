@@ -44,7 +44,7 @@ describe('mobile placement', () => {
         expect(stops).toEqual(['On bar']);
     });
 
-    it('the menu lists primary actions right after Layout, the others at the end', () => {
+    it('R87: each layout job has its own door — primary actions follow Chart syncing', () => {
         const host = document.createElement('div');
         document.body.appendChild(host);
         const drawer = new MoreDrawer({
@@ -58,13 +58,14 @@ describe('mobile placement', () => {
             onTogglePanel: () => {},
             primaryActions: () => [{ label: 'Replay', icon: 'replay', run: () => {} }],
             actions: () => [{ label: 'Tool', run: () => {} }],
-            layout: { shape: () => ({ rows: 2, cols: 2 }), presets: () => [], onSelectGrid: () => {}, onSelectPreset: () => {} },
+            // syncs present ⇒ the Chart syncing door is offered.
+            layout: { shape: () => ({ rows: 2, cols: 2 }), presets: () => [], onSelectGrid: () => {}, onSelectPreset: () => {}, syncs: () => [] },
         });
         drawer.open();
         const rows = [...document.querySelectorAll('.vela-md-row .vela-md-row-label')].map((e) => e.textContent);
-        // Manage layouts leads the sheet now — it is TradingView's own door to the
-        // saved library; the primary contributed action still follows Layout.
-        expect(rows).toEqual(['Manage layouts', 'Chart type', 'Layout', 'Replay', 'Data window', 'Tool']);
+        // Manage layouts leads; Layout setup and Chart syncing are separate doors now
+        // (the old single "Layout" row with three internal tabs is gone).
+        expect(rows).toEqual(['Manage layouts', 'Chart type', 'Layout setup', 'Chart syncing', 'Replay', 'Data window', 'Tool']);
         drawer.destroy();
     });
 });
