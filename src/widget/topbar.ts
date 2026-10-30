@@ -14,6 +14,7 @@ import { resolveTopbarComposition, topbarHas, TOPBAR_BUILTIN_IDS, type ResolvedT
 import { BUILTIN_PRICE_STYLES, priceStyleIds } from '../renderers/native/core/chartConfig';
 import { favoriteTimeframeChips, timeframeLabel } from './timeframe';
 import { parseSymbol } from '../data/ProviderRegistry';
+import type { WorkspaceToolPanel } from './workspace-tool-panel';
 
 import { installSymbolQuickSwitch, type SymbolQuickSwitchHandle } from './symbol-quick-switch';
 // The component owns its stylesheet (id-guarded, injected at construction) so EVERY
@@ -140,7 +141,7 @@ const CSS = `
 }
 .vela-widget-tool:hover:not(:disabled) { background: var(--vela-hover); color: var(--vela-fg-bright); }
 .vela-widget-tool:disabled { opacity: 0.35; cursor: default; }
-.vela-widget-tool[data-active='1'] { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-widget-tool[data-active='1'] { background: var(--vela-hover); color: var(--vela-accent-ink, var(--vela-accent)); }
 .vela-widget-action {
     all: unset;
     display: inline-flex;
@@ -189,8 +190,8 @@ const CSS = `
     background: var(--vela-accent);
 }
 .vela-layout-dot[hidden] { display: none !important; }
-.vela-widget-layoutsave[data-dirty='1'] { color: var(--vela-accent); }
-.vela-widget-layoutsave[data-dirty='1']:hover:not(:disabled) { background: var(--vela-hover); color: var(--vela-accent); }
+.vela-widget-layoutsave[data-dirty='1'] { color: var(--vela-accent-ink, var(--vela-accent)); }
+.vela-widget-layoutsave[data-dirty='1']:hover:not(:disabled) { background: var(--vela-hover); color: var(--vela-accent-ink, var(--vela-accent)); }
 /* Narrow DESKTOP widows: the glyphs stay, the word beside the Indicators glyph goes —
    chrome that would otherwise squeeze the layout name down to its caret. */
 @media (max-width: 900px) {
@@ -201,11 +202,13 @@ const CSS = `
    Indicators button's twin — same height, same padding, its own caret. It is NOT the
    32px icon tile the right-hand cluster uses. */
 .vela-widget-templates { width: auto; font-size: 13px; }
+.vela-widget-indicators[data-panel-open='1'], .vela-widget-templates[data-panel-open='1'],
+.vela-widget-symbol[data-panel-open='1'], .vela-widget-compare[data-panel-open='1'] { background: var(--vela-hover-strong); color: var(--vela-accent-ink, var(--vela-accent)); }
 .vela-widget-tplcaret { display: inline-flex; align-items: center; margin-left: -2px; opacity: 0.8; }
 .vela-widget-tplcaret .vela-icon, .vela-widget-templates > .vela-icon { width: 14px; height: 14px; }
 /* Compare is a STATE while a second series is on the chart: the glyph takes the accent
    (the tooltip names the symbol), so the toolbar reads like the chart it describes. */
-.vela-widget-compare[data-active='1'] { color: var(--vela-accent); background: var(--vela-hover); }
+.vela-widget-compare[data-active='1'] { color: var(--vela-accent-ink, var(--vela-accent)); background: var(--vela-hover); }
 @media (max-width: 900px) {
     /* Glyph only: the fixed 32px tile, exactly like the icon tools around it. */
     .vela-widget-templates .vela-widget-btnlabel { display: none; }
@@ -214,63 +217,41 @@ const CSS = `
 }
 /* The chip and its save button travel as one slot: no hairline between them. */
 .vela-widget-layoutgroup { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; flex: 0 1 auto; min-width: 0; }
-/* ── WHEN THE CHROME IS WIDER THAN THE WINDOW ─────────────────────────────────
-   A desktop window is not always a wide one: favourite intervals, a long layout
-   name and the docked-panel toggles add up, and the bar used to push its last
-   tools (and the page) off the right edge with nothing to grab. The bar is now
-   ONE scrollable strip — it never wraps and never widens the page — with the
-   pair pinned at the start and the tools pinned at the end, so identity and the
-   actions stay on screen while the middle slides under them. Drag it, wheel it,
-   or Tab into it; the pinned ends read as layers, not as a cut. */
+/* The pair stays fixed; every other control, including the right-hand actions,
+   belongs to one horizontal strip. Nothing wraps or is squeezed out on a small
+   desktop or a landscape phone. Wheel, touch and drag all reach the whole strip. */
 .vela-widget-topbar {
     overflow-x: auto;
     overflow-y: hidden;
     overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+    scroll-padding-inline-start: var(--vela-topbar-symbol-width, 0px);
     scrollbar-width: none;
     -ms-overflow-style: none;
 }
 .vela-widget-topbar::-webkit-scrollbar { width: 0; height: 0; }
 .vela-widget-topbar[data-scroll='1'] { cursor: grab; }
 .vela-widget-topbar[data-dragging='1'] { cursor: grabbing; -webkit-user-select: none; user-select: none; }
-.vela-widget-symbol { position: sticky; left: 0; z-index: 3; margin-right: 8px; }
-/* A tool scrolled into view (by Tab or by the browser) stops clear of the pinned cluster —
-   the strip publishes that width as it measures (see syncOverflow). */
-.vela-widget-topbar > :not(.vela-topbar-right) { scroll-margin-inline-end: var(--vela-topbar-pin-end, 0px); }
-/* The reserved end room (see syncOverflow): never a control, never announced. */
-.vela-topbar-endpad { flex: 0 0 auto; align-self: stretch; width: 0; }
-.vela-topbar-right { position: sticky; right: 0; z-index: 3; }
-/* The pinned ends are opaque over the strip, and their own hover fill is mixed
-   onto that same surface so a translucent hover token can never show content
-   through them. */
-.vela-widget-symbol, .vela-topbar-right { background: var(--vela-bg); }
+.vela-widget-topbar > * { flex-shrink: 0; }
+.vela-widget-symbol { position: sticky; left: var(--vela-space-2, 8px); z-index: 3; margin-right: 8px; background: var(--vela-bg); }
+.vela-topbar-right { position: static; flex: 0 0 auto; }
 .vela-widget-symbol:hover, .vela-widget-symbol:focus-visible {
     background: linear-gradient(var(--vela-hover), var(--vela-hover)), var(--vela-bg);
 }
-/* A soft edge on the side content slides under — off at the ends of the run. */
-.vela-widget-symbol::after, .vela-topbar-right::before {
+.vela-widget-symbol::after {
     content: '';
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 16px;
+    left: 100%;
+    width: 26px;
     pointer-events: none;
     opacity: 0;
     transition: opacity 120ms linear;
-}
-.vela-widget-symbol::after {
-    left: 100%;
-    /* Solid for the first third, then a 24px dissolve — a chip sliding past reads as
-       passing BEHIND the pair, never as a cut beside its last letter. */
-    width: 26px;
     background: linear-gradient(to right, var(--vela-bg) 34%, transparent);
 }
-.vela-topbar-right::before {
-    right: 100%;
-    width: 26px;
-    background: linear-gradient(to left, var(--vela-bg) 34%, transparent);
-}
-.vela-widget-topbar[data-edge-start='1'] .vela-widget-symbol::after,
-.vela-widget-topbar[data-edge-end='1'] .vela-topbar-right::before { opacity: 1; }
+.vela-widget-topbar[data-edge-start='1'] .vela-widget-symbol::after { opacity: 1; }
 `;
 
 const BUILTIN_STYLE_LABELS: Record<string, string> = {
@@ -319,9 +300,10 @@ export interface TopbarOptions {
     onSymbolClick?: () => void;
     /** Watchlist-style wheel/drag: +1 = next symbol, -1 = previous. No picker panel opens. */
     onSymbolStep?: (delta: number) => void;
-    /** Fallback door when the composition hides the layout-name chip but the grid panel
-     *  still needs to reach the separate Manage layouts panel. */
-    onOpenLayoutManager?: () => void;
+    /** Open the compact layout-management menu from the grid setup door. */
+    onOpenLayoutManager?: (anchor?: HTMLElement | null) => void;
+    /** The workspace can replace the legacy picker with its docked setup pane. */
+    onOpenLayoutSetup?: (keyboard: boolean) => void;
     timeframe: string;
     timeframes: readonly string[];
     /** Favorite timeframes — duration-sorted quick-switch chips, stars in the
@@ -459,6 +441,8 @@ export interface TopbarOptions {
     onRedoClick?: () => void;
     onScreenshotClick?: () => void;
     onAlertsClick?: (anchor: HTMLElement) => void;
+    /** Put the default Alerts slot next to the symbol; explicit compositions stay verbatim. */
+    prioritizeAlerts?: boolean;
     /**
      * Compare — TradingView's second-series control in the top toolbar. `symbol()` reads
      * the ACTIVE chart's comparison (null when it compares nothing); clicking opens the
@@ -503,6 +487,8 @@ export class Topbar {
     private templatesBtn: HTMLButtonElement | null = null;
     /** Compare — the second-series tool (lights up while a chart compares). */
     private compareBtn!: HTMLButtonElement;
+    private compareTip: Tooltip | null = null;
+    private layoutNameTip: Tooltip | null = null;
     private templatesMenu: TemplatesMenu | null = null;
     private layoutsGroup: HTMLElement | null = null;
     private readonly tfMenu: Menu;
@@ -555,14 +541,6 @@ export class Topbar {
      *  overflow state is re-measured without waiting for a window resize. */
     private overflowRo: ResizeObserver | null = null;
     private overflowMo: MutationObserver | null = null;
-    /** The pinned right cluster — its width is the room the strip must leave at its end so
-     *  a tool can always be scrolled clear of it (see {@link syncOverflow}). */
-    private rightCluster: HTMLElement | null = null;
-    /** The spacer reserved at the strip's end, in px (0 when it does not scroll) — see
-     *  {@link syncOverflow}. */
-    private endPad = 0;
-    /** The spacer element itself (before the pinned cluster). */
-    private endPadEl: HTMLElement | null = null;
     /** An in-flight drag-scroll of the strip (pointer id, origin x, origin scrollLeft). */
     private drag: { id: number; x: number; start: number; moved: boolean } | null = null;
 
@@ -577,20 +555,10 @@ export class Topbar {
      */
     private syncOverflow(): void {
         const el = this.el;
-        // The pinned tools sit ON the strip, so content sliding under them is unreachable:
-        // scrolling to the very end would still leave the last tool beneath the cluster.
-        // The strip therefore reserves that width at its own end (only while it actually
-        // scrolls), which is what makes "scroll through the bar" mean "every tool can be
-        // reached". `endPad` is what we applied last time, so the natural width is the
-        // scrollWidth minus it — the decision never feeds on its own padding.
-        const natural = el.scrollWidth - this.endPad;
-        const crowded = natural - el.clientWidth > 1;
-        const want = crowded && this.rightCluster ? Math.round(this.rightCluster.offsetWidth + 8) : 0;
-        if (want !== this.endPad && this.endPadEl) {
-            this.endPad = want;
-            this.endPadEl.style.width = want ? `${want}px` : '0';
-            el.style.setProperty('--vela-topbar-pin-end', `${want}px`);
-        }
+        // Only the symbol is pinned. Keep keyboard-focused controls clear of that
+        // sticky region without reserving space for a second pinned cluster.
+        const symbolWidth = this.symbolEl.isConnected ? Math.round(this.symbolEl.offsetWidth + 8) : 0;
+        el.style.setProperty('--vela-topbar-symbol-width', `${symbolWidth}px`);
         const max = el.scrollWidth - el.clientWidth;
         const scrollable = max > 1;
         el.dataset.scroll = scrollable ? '1' : '0';
@@ -602,6 +570,10 @@ export class Topbar {
 
     /** A wheel over the bar moves the STRIP (a toolbar's natural axis), not the page. */
     private readonly onBarWheel = (e: WheelEvent): void => {
+        // The symbol has its own watchlist wheel gesture. Never let the same notch
+        // also scroll the strip, even when the quick-switch handler prevented it.
+        const target = e.target as Element | null;
+        if (e.defaultPrevented || target?.closest('.vela-widget-symbol')) return;
         const el = this.el;
         if (el.scrollWidth - el.clientWidth <= 1) return;
         const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
@@ -619,7 +591,7 @@ export class Topbar {
         const el = this.el;
         if (el.scrollWidth - el.clientWidth <= 1) return;
         const target = e.target as HTMLElement | null;
-        if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+        if (target?.closest('input, textarea, select, [contenteditable="true"], .vela-widget-symbol')) return;
         this.drag = { id: e.pointerId, x: e.clientX, start: el.scrollLeft, moved: false };
         // NO pointer capture yet: capturing on the press retargets the pointerup to the
         // strip, and the click that follows is then dispatched to the strip instead of the
@@ -682,8 +654,8 @@ export class Topbar {
         } catch {
             return;
         }
-        // Tab into a control the strip has slid past and it comes back into view, clear of
-        // the pinned cluster (scroll-margin-inline-end, see the stylesheet).
+        // Tab into a control the strip has slid past and bring it clear of the pinned
+        // symbol (scroll-padding-inline-start, see the stylesheet).
         t.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     };
 
@@ -738,6 +710,8 @@ export class Topbar {
             indLabel.className = 'vela-widget-btnlabel';
             indLabel.textContent = 'Indicators';
             indicatorsBtn.append(iconEl('indicators', doc), indLabel);
+            indicatorsBtn.setAttribute('aria-label', 'Indicators');
+            this.tooltips.push(new Tooltip(indicatorsBtn, { content: 'Indicators', host }));
             indicatorsBtn.addEventListener('click', opts.onIndicatorsClick);
         }
         // TradingView keeps its chart templates in a dropdown IMMEDIATELY beside the
@@ -760,7 +734,7 @@ export class Topbar {
             // "Templates" option that was on screen all along. Same narrow-desktop rule —
             // the glyph keeps the door, the word goes first.
             btn.setAttribute('aria-label', 'Indicator templates');
-            btn.title = 'Indicator templates';
+            this.tooltips.push(new Tooltip(btn, { content: 'Indicator templates', host }));
             const tplLabel = doc.createElement('span');
             tplLabel.className = 'vela-widget-btnlabel';
             tplLabel.textContent = 'Templates';
@@ -826,10 +800,10 @@ export class Topbar {
         // Compare sits beside Replay in TradingView's right cluster. It is a STATE, not
         // just a verb: the glyph lights up while the active chart carries a second series,
         // so the toolbar says what the chart is doing.
-        this.compareBtn =
-            vis('compare') && opts.compare
-                ? tool('vela-widget-compare', 'bands', 'Compare symbol', opts.compare.onClick)
-                : doc.createElement('button');
+        if (vis('compare') && opts.compare) {
+            this.compareBtn = tool('vela-widget-compare', 'bands', 'Compare symbol', opts.compare.onClick);
+            this.compareTip = this.tooltips[this.tooltips.length - 1] ?? null;
+        } else this.compareBtn = doc.createElement('button');
         this.setCompareSymbol(vis('compare') && opts.compare ? opts.compare.symbol() : null);
         this.alertsBtn = vis('alerts') ? tool('vela-widget-alerts', 'bell', 'Alerts') : doc.createElement('button');
         this.alertsBtn.style.position = 'relative';
@@ -859,7 +833,7 @@ export class Topbar {
             const chip = doc.createElement('button');
             chip.type = 'button';
             chip.className = 'vela-widget-tool vela-widget-layoutname';
-            chip.setAttribute('aria-haspopup', 'dialog');
+            chip.setAttribute('aria-haspopup', opts.onOpenLayoutManager ? 'menu' : 'dialog');
             chip.setAttribute('aria-expanded', 'false');
             this.layoutsNameEl = doc.createElement('span');
             this.layoutsNameEl.className = 'vela-widget-layoutname-text';
@@ -869,17 +843,23 @@ export class Topbar {
             this.layoutsDot.setAttribute('aria-hidden', 'true');
             chip.append(this.layoutsNameEl, this.layoutsDot, iconEl('chevron-down', doc));
             this.layoutsChip = chip;
+            this.layoutNameTip = new Tooltip(chip, { content: 'Layout — untitled', host });
+            this.tooltips.push(this.layoutNameTip);
             this.layoutMenu = new LayoutMenu({
                 layout,
                 onChange: () => this.setLayoutState(),
                 onOpenChange: (open) => chip.setAttribute('aria-expanded', String(open)),
             });
-            chip.addEventListener('click', () => this.layoutMenu?.open(chip));
+            chip.addEventListener('click', () => {
+                if (this.opts.onOpenLayoutManager) this.opts.onOpenLayoutManager(chip);
+                else this.layoutMenu?.open(chip);
+            });
             const save = this.toolButton('vela-widget-layoutsave', 'save', 'Save layout — Ctrl+S', () => {
                 // Untitled: there is nothing to overwrite, so the menu's naming flow is the
                 // only honest destination (the button must never mint a name on its own).
                 if (layout.activeLayout?.() === null || layout.activeLayout === undefined) {
-                    this.layoutMenu?.open(chip);
+                    if (this.opts.onOpenLayoutManager) this.opts.onOpenLayoutManager(chip);
+                    else this.layoutMenu?.open(chip);
                     return;
                 }
                 layout.onSaveChanges?.();
@@ -997,16 +977,15 @@ export class Topbar {
         };
         const right = doc.createElement('span');
         right.className = 'vela-topbar-right';
-        right.append(...sideEls(this.comp.right, false));
-        this.rightCluster = right;
-        // Room at the end of the strip, kept between the last middle tool and the pinned
-        // cluster: without it the scroll range ends exactly at the pinned edge, so the last
-        // tool can never be brought out from under the cluster (see syncOverflow).
-        const endPad = doc.createElement('span');
-        endPad.className = 'vela-topbar-endpad';
-        endPad.setAttribute('aria-hidden', 'true');
-        this.endPadEl = endPad;
-        this.el.append(...sideEls(this.comp.left, true), endPad, right);
+        // The workspace's default bell must be reachable even in a narrow landscape
+        // toolbar. Only the symbol is sticky; the bell remains part of the scroll strip.
+        // A host-declared side is a public ordering contract, so never reorder it.
+        const earlyAlerts = opts.prioritizeAlerts && opts.composition?.left === undefined && opts.composition?.right === undefined
+            && this.comp.left.includes('symbol') && this.comp.right.includes('alerts');
+        const leftEntries = earlyAlerts ? this.comp.left.flatMap((id) => id === 'symbol' ? [id, 'alerts'] : [id]) : this.comp.left;
+        const rightEntries = earlyAlerts ? this.comp.right.filter((id) => id !== 'alerts') : this.comp.right;
+        right.append(...sideEls(rightEntries, false));
+        this.el.append(...sideEls(leftEntries, true), right);
         host.appendChild(this.el);
         this.renderTfChips();
         // Snap after layout; RO catches later reflows (symbol / timeframe length).
@@ -1014,8 +993,8 @@ export class Topbar {
         this.hairlineRo = new ResizeObserver(this.onHairlineSync);
         this.hairlineRo.observe(this.el);
         doc.defaultView?.addEventListener('resize', this.onHairlineSync);
-        // Overflow plumbing: the strip scrolls (wheel / drag / keys) and keeps its ends
-        // pinned, so a narrow desktop window never loses a tool off the right edge.
+        // Overflow plumbing: wheel / drag / keys scroll everything except the symbol,
+        // so a narrow desktop window or a landscape phone never loses a tool.
         this.el.addEventListener('scroll', this.onBarScroll, { passive: true });
         this.el.addEventListener('wheel', this.onBarWheel, { passive: false });
         this.el.addEventListener('pointerdown', this.onBarPointerDown);
@@ -1035,11 +1014,19 @@ export class Topbar {
         if (this.layoutButton && opts.layout) {
             this.tooltips.push(new Tooltip(this.layoutButton, { content: 'Layout', triggerId: 'vela-topbar-layout', host }));
             const layout = opts.layout;
-            this.layoutPicker = new LayoutPicker({
+            if (opts.onOpenLayoutSetup) {
+                this.layoutButton.setAttribute('aria-expanded', 'false');
+                this.layoutButton.addEventListener('click', (event) => opts.onOpenLayoutSetup?.(event.detail === 0));
+            } else {
+                this.layoutPicker = new LayoutPicker({
                 trigger: this.layoutButton,
                 host,
                 ...(layout.layoutGridSetupOnly ? { setupOnly: true } : {}),
-                onOpenManager: (door) => this.openLayoutMenu(door),
+                onOpenManager: (door) => {
+                    if (!this.opts.onOpenLayoutManager) { this.openLayoutMenu(door); return; }
+                    this.layoutPicker?.close();
+                    this.opts.onOpenLayoutManager(this.layoutButton ?? door);
+                },
                 shape: () => layout.shape(),
                 presets: () => layout.presets().map((p) => ({ ...p, checked: p.id === this.layoutId })),
                 onSelectGrid: (rows, cols) => layout.onSelectGrid(rows, cols),
@@ -1090,7 +1077,8 @@ export class Topbar {
                 ...(layout.onCopyLink ? { onCopyLink: () => layout.onCopyLink?.() ?? Promise.resolve(null) } : {}),
                 ...(layout.linkGroup ? { linkGroup: () => layout.linkGroup?.() ?? null } : {}),
                 ...(layout.onLinkGroup ? { onLinkGroup: (tag) => layout.onLinkGroup?.(tag) } : {}),
-            });
+                });
+            }
         }
         this.tfMenu = new Menu({
             trigger: this.tfCaret,
@@ -1129,18 +1117,45 @@ export class Topbar {
         this.setLayoutState();
     }
 
-    /** Open the layout popover (optionally on one chart's column) — the workspace's door
-     *  for the status-line badge and the series context menu. */
+    /** Reflect the workspace-owned setup pane on its dedicated toolbar button. */
+    setLayoutSetupOpen(open: boolean, panelId?: string): void {
+        if (!this.layoutButton || !this.opts.onOpenLayoutSetup) return;
+        this.layoutButton.setAttribute('aria-expanded', String(open));
+        this.layoutButton.setAttribute('aria-pressed', String(open));
+        this.layoutButton.dataset.active = open ? '1' : '';
+        if (panelId) this.layoutButton.setAttribute('aria-controls', panelId);
+    }
+
+    /** Open the legacy picker on one chart's column when no pane owner was supplied. */
     openLayoutPicker(cellId?: string): void {
         this.layoutPicker?.openFor(cellId);
     }
 
-    /** The separate Indicator templates door — desktop dropdown. */
+    /** Use the workspace's dedicated pane while other Topbar hosts keep their popup. */
+    attachTemplatesPanel(pane: WorkspaceToolPanel): void {
+        this.templatesMenu?.attachPanel(pane);
+        this.templatesBtn?.removeAttribute('aria-haspopup');
+        this.templatesBtn?.setAttribute('aria-controls', pane.el.id);
+    }
+
+    /** Reflect a workspace pane on its existing tool, without duplicating toolbar entries. */
+    setToolPanelOpen(kind: 'symbol' | 'indicators' | 'templates' | 'compare', open: boolean, paneId?: string): void {
+        const button = kind === 'symbol' ? this.symbolEl : kind === 'templates' ? this.templatesBtn
+            : kind === 'compare' ? this.compareBtn : this.el.querySelector<HTMLElement>('.vela-widget-indicators');
+        if (!button) return;
+        button.removeAttribute('aria-haspopup');
+        button.setAttribute('aria-expanded', String(open));
+        if (paneId) button.setAttribute('aria-controls', paneId);
+        if (open) button.dataset.panelOpen = '1';
+        else delete button.dataset.panelOpen;
+    }
+
+    /** The separate Indicator templates door. */
     openTemplatesMenu(): void {
         if (this.templatesBtn) this.templatesMenu?.open(this.templatesBtn);
     }
 
-    /** The same Indicator templates surface as a centred dialog — phone More drawer. */
+    /** The same Indicator templates surface from the phone More drawer. */
     openTemplatesDialog(host: HTMLElement): void {
         this.templatesMenu?.openDialog(host);
     }
@@ -1150,12 +1165,11 @@ export class Topbar {
         this.templatesMenu?.refresh();
     }
 
-    /** Open the SEPARATE Manage layouts popover. The grid panel's door closes itself and
-     *  anchors the manager to the layout-name chip, so the two surfaces never stack. */
+    /** Retained rich layout-menu API for hosts; visible controls use the compact menu. */
     openLayoutMenu(trigger?: HTMLElement | null): void {
         if (!this.layoutMenu) {
             this.layoutPicker?.close();
-            this.opts.onOpenLayoutManager?.();
+            this.opts.onOpenLayoutManager?.(trigger ?? this.layoutButton);
             return;
         }
         const anchor = this.layoutsChip ?? this.layoutButton ?? trigger ?? this.el;
@@ -1239,7 +1253,7 @@ export class Topbar {
         this.layoutsNameEl.textContent = name ?? 'Untitled layout';
         if (name) delete chip.dataset.untitled;
         else chip.dataset.untitled = '1';
-        chip.title = name ? `Layout — ${name}` : 'Layout — untitled';
+        this.layoutNameTip?.setContent(name ? `Layout — ${name}` : 'Layout — untitled');
         // The name is spoken with its state: a screen reader hears the same answer the
         // dot gives the eye.
         chip.setAttribute(
@@ -1365,6 +1379,12 @@ export class Topbar {
         else delete this.replayBtn.dataset.active;
     }
 
+    /** Reflect the Alerts pane, regardless of whether the slot is visible. */
+    setAlertsActive(open: boolean): void {
+        this.alertsBtn.dataset.active = open ? '1' : '';
+        this.alertsBtn.setAttribute('aria-pressed', String(open));
+    }
+
     setAlertCount(n: number): void {
         this.alertsBadge.textContent = n > 9 ? '9+' : String(n);
         this.alertsBadge.style.display = n > 0 ? '' : 'none';
@@ -1377,7 +1397,7 @@ export class Topbar {
         if (!btn || !btn.classList.contains('vela-widget-compare')) return;
         btn.dataset.active = label ? '1' : '0';
         const tip = label ? `Comparing with ${label} — click to change` : 'Compare symbol';
-        btn.title = tip;
+        this.compareTip?.setContent(tip);
         btn.setAttribute('aria-label', tip);
         btn.setAttribute('aria-pressed', label ? 'true' : 'false');
     }
@@ -1394,16 +1414,19 @@ export class Topbar {
         this.panelsHost.replaceChildren();
         for (const b of buttons) {
             const el = this.toolButton(`vela-widget-panel-${b.id}`, b.icon, b.title, () => onClick(b.id), this.panelTooltips);
+            el.setAttribute('aria-pressed', 'false');
             this.panelBtns.set(b.id, el);
             this.panelsHost.appendChild(el);
         }
     }
 
-    /** Reflect a docked side panel's open state on its button — the panels toggle each other,
-     *  so the dock pushes the state rather than the button assuming it. */
+    /** Reflect each panel's open state, including multiple floating cards. */
     setPanelActive(id: string, open: boolean): void {
         const btn = this.panelBtns.get(id);
-        if (btn) btn.dataset.active = open ? '1' : '';
+        if (btn) {
+            btn.dataset.active = open ? '1' : '';
+            btn.setAttribute('aria-pressed', String(open));
+        }
     }
 
     destroy(): void {

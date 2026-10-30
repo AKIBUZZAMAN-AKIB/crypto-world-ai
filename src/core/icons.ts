@@ -211,6 +211,9 @@ registerIcon('jump-realtime', S('<path d="m2.6 4.2 4 3.8-4 3.8M8.2 4.2l4 3.8-4 3
 
 registerIcon('check', S('<path d="m2.8 8.4 3.4 3.4 7-7.6"/>'));
 registerIcon('close', S('<path d="m3.8 3.8 8.4 8.4M12.2 3.8l-8.4 8.4"/>'));
+// A side column leaving / returning to the chart — not the fullscreen corners.
+registerIcon('panel-float', S('<rect x="2" y="3" width="8.2" height="9.8" rx=".5"/><path d="M10.3 5.2H14v7.5H6.8v-2M8.1 7.1l3-3M8.8 4.1h2.3v2.3"/>'));
+registerIcon('panel-dock', S('<rect x="2" y="3" width="12" height="10" rx=".5"/><path d="M10.5 3v10M4.2 8h4.3M6.9 6.4 8.5 8 6.9 9.6"/>'));
 // A pushpin — outline while something floats (press to pin it), filled once pinned.
 registerIcon('pin', S('<path d="M5.6 2.5h4.8M6.4 2.5v3.6L4.4 8.4v.9h7.2v-.9L9.6 6.1V2.5M8 9.3v4.2"/>'));
 registerIcon('pin-filled', S('<path d="M5.6 2.5h4.8M6.4 2.5v3.6L4.4 8.4v.9h7.2v-.9L9.6 6.1V2.5M8 9.3v4.2"/><path d="M6.4 2.5h3.2v3.6l2 2.3v.9H4.4v-.9l2-2.3z" fill="currentColor" stroke="none"/>'));

@@ -207,10 +207,10 @@ try {
     await page.waitForTimeout(600);
     m = await read();
     const lp = await page.evaluate(() => {
-        // The drawer's layout view: its canvas + the preset strip (the picker the bar's
+        // The shared layout pane: its canvas + the preset strip (the picker the bar's
         // one-tap door used to raise is unchanged — only the door moved).
-        const grid = document.querySelector('.vela-md-gridwrap .vela-lp-grid');
-        const presets = [...document.querySelectorAll('.vela-md-preset')];
+        const grid = document.querySelector('.vela-layout-setup .vela-lp-grid');
+        const presets = [...document.querySelectorAll('.vela-ls-preset')];
         const live = presets.filter((p) => p.getBoundingClientRect().width > 0);
         const r = grid?.getBoundingClientRect();
         return {

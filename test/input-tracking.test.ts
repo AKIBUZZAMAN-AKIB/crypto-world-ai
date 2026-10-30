@@ -40,6 +40,8 @@ function harness() {
         onPointerMove: vi.fn(),
         onTrackingChange: vi.fn(),
         onClick: vi.fn(),
+        drawingsClaim: vi.fn(() => false),
+        drawingsPointerDown: vi.fn(),
         beginPriceScale: vi.fn(),
         priceScaleBy: vi.fn(),
         beginPricePan: () => false,
@@ -109,12 +111,49 @@ describe('touch tracking (long-press crosshair)', () => {
         hold(400, 100);
         lift(400, 100);
         deps.apply.mockClear();
+        deps.onPointerMove.mockClear();
         ev('pointerdown', 300, 90, 900);
+        expect(deps.onPointerMove).not.toHaveBeenCalled(); // touching elsewhere must not jump
         ev('pointermove', 360, 120, 940);
-        expect(deps.onPointerMove).toHaveBeenLastCalledWith(360, 120);
+        expect(deps.onPointerMove).toHaveBeenLastCalledWith(460, 130); // previous position + contact delta
         ev('pointerup', 360, 120, 980);
         expect(ctl.isTracking).toBe(true);
         expect(deps.apply).not.toHaveBeenCalled();
+    });
+
+    it('leaves an armed drawing gesture in control instead of starting inspection', () => {
+        const { deps, ctl, hold } = harness();
+        deps.drawingsClaim.mockReturnValue(true);
+        hold(400, 100);
+        expect(deps.drawingsPointerDown).toHaveBeenCalled();
+        expect(ctl.isTracking).toBe(false);
+        expect(deps.onTrackingChange).not.toHaveBeenCalled();
+    });
+
+    it('does not let disabled drawing hit-tests steal an established tracking drag', () => {
+        const { deps, ctl, ev, hold, lift } = harness();
+        ctl.drawings = false;
+        deps.drawingsClaim.mockReturnValue(true);
+        hold(400, 100);
+        lift(400, 100);
+        ev('pointerdown', 420, 100, 900);
+        ev('pointermove', 450, 120, 950);
+        ev('pointerup', 450, 120, 1000);
+        expect(deps.drawingsClaim).not.toHaveBeenCalled();
+        expect(ctl.isTracking).toBe(true);
+        expect(deps.onPointerMove).toHaveBeenLastCalledWith(430, 120);
+    });
+
+    it('re-grabs the actually applied crosshair (including a magnet snap)', () => {
+        const { deps, ctl, ev, hold, lift } = harness();
+        hold(400, 100);
+        lift(400, 100);
+        // A renderer may snap or reposition the displayed crosshair between contacts.
+        Object.assign(deps, { getAppliedCrosshair: () => ({ x: 410, y: 75 }) });
+        ev('pointerdown', 100, 80, 900);
+        ev('pointermove', 130, 95, 940);
+        expect(deps.onPointerMove).toHaveBeenLastCalledWith(440, 90);
+        expect(ctl.isTracking).toBe(true);
     });
 
     it('a single tap on the chart exits tracking (the documented way out)', () => {
@@ -143,11 +182,67 @@ describe('touch tracking (long-press crosshair)', () => {
         expect(ctl.isTracking).toBe(false);
     });
 
-    it('endTracking() is the programmatic exit', () => {
-        const { deps, ctl, hold } = harness();
+    it('endTracking() releases an active contact and cannot resurrect the cleared crosshair', () => {
+        const { deps, ctl, ev, hold } = harness();
         hold(400, 100);
         ctl.endTracking();
         expect(ctl.isTracking).toBe(false);
         expect(deps.onPointerMove).toHaveBeenLastCalledWith(null, null);
+        deps.onPointerMove.mockClear();
+        ev('pointermove', 450, 120, 500); // the old finger is still physically down
+        ev('pointerup', 450, 120, 550);
+        expect(deps.onPointerMove).not.toHaveBeenCalled();
+    });
+
+    it('a small wobble before the hold neither pans nor selects the stale touchdown point', () => {
+        const { deps, ctl, ev } = harness();
+        ev('pointerdown', 400, 100, 0);
+        deps.apply.mockClear(); // the initial press freezes an existing animation
+        ev('pointermove', 406, 104, 100);
+        expect(deps.apply).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(400);
+        expect(ctl.isTracking).toBe(true);
+        expect(deps.onPointerMove).toHaveBeenLastCalledWith(406, 104);
+    });
+
+    it('keeps the crosshair on the plot when a captured finger travels onto an axis or outside', () => {
+        const { deps, ev, hold } = harness();
+        hold(400, 100);
+        ev('pointermove', 850, 250, 450);
+        expect(deps.onPointerMove).toHaveBeenLastCalledWith(800, 200);
+        ev('pointermove', -20, -30, 500);
+        expect(deps.onPointerMove).toHaveBeenLastCalledWith(0, 0);
+    });
+
+    it('notifies the host when a pinch ends tracking', () => {
+        const { deps, ev, hold } = harness();
+        hold(400, 100);
+        ev('pointerdown', 500, 120, 600, 2);
+        expect(deps.onTrackingChange).toHaveBeenLastCalledWith(false);
+        expect(deps.onPointerMove).toHaveBeenLastCalledWith(null, null);
+    });
+
+    it('a cancelled tracking pointer does not keep dragging or respond to stale moves', () => {
+        const { deps, ctl, ev, hold } = harness();
+        hold(400, 100);
+        ev('pointercancel', 400, 100, 420);
+        expect(ctl.isTracking).toBe(true); // keep the last inspection point, like a lift
+        deps.onPointerMove.mockClear();
+        ev('pointermove', 500, 150, 460); // the cancelled pointer no longer exists
+        expect(deps.onPointerMove).not.toHaveBeenCalled();
+        ev('pointerdown', 450, 100, 700, 2);
+        ev('pointermove', 480, 120, 740, 2);
+        expect(deps.onPointerMove).toHaveBeenLastCalledWith(430, 120);
+    });
+
+    it('an ignored third finger cannot end an active two-finger pinch', () => {
+        const { deps, ev, hold } = harness();
+        hold(400, 100);
+        ev('pointerdown', 500, 120, 600, 2);
+        ev('pointerdown', 600, 140, 620, 3); // extra contact is ignored
+        ev('pointerup', 600, 140, 640, 3);
+        deps.apply.mockClear();
+        ev('pointermove', 530, 120, 680, 2);
+        expect(deps.apply).toHaveBeenCalled(); // the original pinch still owns its contacts
     });
 });

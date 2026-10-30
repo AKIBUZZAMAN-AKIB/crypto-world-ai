@@ -212,6 +212,17 @@ describe('sanitizeState (the applyState gate)', () => {
         expect(doc!.charts[0]!.drawings).toEqual(config);
     });
 
+    it('round-trips only a true Compare-owned percent-axis flag', () => {
+        const raw = { version: 1, layout: '1', charts: [
+            { id: 'a', compareAutoPercent: true },
+            { id: 'b', compareAutoPercent: false },
+            { id: 'c', compareAutoPercent: 'yes' },
+        ] };
+        const sanitized = sanitizeState(raw)!;
+        expect(sanitized.charts).toEqual([{ id: 'a', compareAutoPercent: true }, { id: 'b' }, { id: 'c' }]);
+        expect(decodeState(encodeState(sanitized))).toEqual(sanitized);
+    });
+
     it('keeps sync group records only when at least one valid member remains', () => {
         const doc = sanitizeState({
             version: 1,

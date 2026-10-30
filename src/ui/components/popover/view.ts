@@ -5,6 +5,7 @@ import { injectStyles } from '../../styles';
 import { ensureUIHost, floatingLayerHost } from '../../tokens';
 import { announceSurface } from '../../surface-events';
 import { holdForExit, type SurfaceExit } from '../../surface-exit';
+import { makePanelDraggable, type PanelDrag } from '../../panel-drag';
 import {
     insetRect,
     intersectRects,
@@ -32,6 +33,10 @@ export interface PopoverOptions extends PopoverControllerOptions {
     boundary?: PopoverBoundary;
     /** Fade the shell in on show and out on hide over this many ms (default 0 — instant). */
     fadeMs?: number;
+    /** Return focus to the trigger on Escape when focus was inside this popover. */
+    restoreFocusOnEscape?: boolean;
+    /** Constrain the surface to its visible viewport/boundary and scroll its content. */
+    fitWithinBoundary?: boolean;
 }
 
 let open: Popover | null = null;
@@ -49,6 +54,11 @@ export function isPopoverOpen(): boolean {
 
 export function openPopoverTrigger(): HTMLElement | null {
     return open?.trigger ?? null;
+}
+
+/** The currently open shell, for live control synchronization without retaining closed popovers. */
+export function openPopoverElement(): HTMLElement | null {
+    return open?.el ?? null;
 }
 
 /** Flag stamped on a pointer event whose only job was dismissing an open popover. */
@@ -72,6 +82,13 @@ function toRect(r: DOMRect): Rect {
     return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
 }
 
+/** An inset viewport that stays valid even when a keyboard leaves only a few pixels. */
+function visibleRect(left: number, top: number, width: number, height: number, inset: number): Rect {
+    const w = Math.max(0, width), h = Math.max(0, height), gap = Math.max(0, inset);
+    const x = Math.min(gap, w / 2), y = Math.min(gap, h / 2);
+    return { left: left + x, top: top + y, right: left + w - x, bottom: top + h - y, width: w - x * 2, height: h - y * 2 };
+}
+
 export class Popover {
     readonly el: HTMLElement;
     readonly trigger: HTMLElement;
@@ -83,9 +100,21 @@ export class Popover {
     private readonly inheritsTokens: boolean;
     private onOutside: ((e: Event) => void) | null = null;
     private onKey: ((e: KeyboardEvent) => void) | null = null;
-    private onReflow: (() => void) | null = null;
+    private onReflow: ((event?: Event) => void) | null = null;
+    private onFitFocus: (() => void) | null = null;
+    private onFitPointerDown: (() => void) | null = null;
+    private onFitPointerEnd: (() => void) | null = null;
+    private fitPointerActive = false;
+    private focusRevealTimer: ReturnType<typeof setTimeout> | null = null;
     private shown = false;
+    private drag: PanelDrag | null = null;
+    private layoutRoot: HTMLElement | null = null;
     private readonly fadeMs: number;
+    private readonly restoreFocusOnEscape: boolean;
+    private readonly fitWithinBoundary: boolean;
+    private sizeObserver: ResizeObserver | null = null;
+    private fitFrame: number | null = null;
+    private fitBoxDefaults: { padding: string; borderWidth: string } | null = null;
     /** The pending removal of a fading-out shell; a show() that reuses the shell cancels it. */
     private leaveTimer: ReturnType<typeof setTimeout> | null = null;
     /** The shell's exit animation before it leaves the DOM; a show() that reuses the shell cancels it. */
@@ -103,6 +132,8 @@ export class Popover {
         this.boundary = opts.boundary ?? 'viewport';
         this.theme = opts.theme;
         this.fadeMs = Math.max(0, opts.fadeMs ?? 0);
+        this.restoreFocusOnEscape = opts.restoreFocusOnEscape === true;
+        this.fitWithinBoundary = opts.fitWithinBoundary === true;
 
         this.el = doc.createElement('div');
         this.el.className = 'vela-popover vela-ui-layer' + (opts.className ? ` ${opts.className}` : '');
@@ -151,9 +182,31 @@ export class Popover {
             this.el.style.opacity = '0';
             this.el.style.pointerEvents = '';
         }
-        this.host.appendChild(this.el);
+        // A separate layout-containment layer prevents a dragged popover's overflow
+        // from growing the page, even when the host creates a fixed containing block.
+        // The surface is created inside it from the start; no live panel is remounted.
+        const movable = !!this.el.querySelector('.vela-tm-head, .vela-lm-head');
+        const containOverflow = movable && this.ctrl.position === 'fixed' && !!this.host.closest('[data-layout="desktop"]');
+        if (containOverflow) {
+            this.layoutRoot ??= this.el.ownerDocument.createElement('div');
+            this.layoutRoot.className = 'vela-popover-layout-root';
+            this.layoutRoot.style.zIndex = this.el.style.zIndex;
+            this.layoutRoot.appendChild(this.el);
+            this.host.appendChild(this.layoutRoot);
+        } else {
+            this.host.appendChild(this.el);
+            this.layoutRoot?.remove();
+        }
         this.shown = true;
         open = this;
+        // Only panel-style popovers with a title bar are movable. Small select/color
+        // popovers stay anchored to their input, and header controls remain clickable.
+        if (movable) {
+            this.drag = makePanelDraggable(this.el, {
+                handle: '.vela-tm-head, .vela-lm-head', resizeHandle: '.vela-size-grip',
+                revealFocus: () => !!this.host.closest('[data-layout="desktop"]'),
+            });
+        }
         this.place();
         // place() measured the shell (a style flush at opacity 0) — flipping it now runs the transition.
         if (this.fadeMs > 0) this.el.style.opacity = '1';
@@ -175,9 +228,16 @@ export class Popover {
             if (ev.key !== 'Escape') return;
             ev.preventDefault();
             ev.stopPropagation();
+            const returnFocus = this.restoreFocusOnEscape && this.el.contains(this.el.ownerDocument.activeElement);
             this.hide();
+            if (returnFocus && this.trigger.isConnected) this.trigger.focus({ preventScroll: true });
         };
-        const onReflow = (): void => this.place();
+        const onReflow = (event?: Event): void => {
+            // A resized card scrolls internally. That must not re-anchor the whole
+            // panel while the user is reading it; outside scrolling can move its trigger.
+            if (event?.type === 'scroll' && event.target instanceof Node && this.el.contains(event.target)) return;
+            this.place();
+        };
         // Capture phase, deferred so the opening click does not immediately dismiss — and only
         // if this show is still the live one: a hide (or hide + show) in the same tick cleared or
         // replaced the handler, and attaching it then would leave it behind for good.
@@ -189,6 +249,46 @@ export class Popover {
         // A scroll anywhere (dialog body, chart container) moves the trigger while the
         // popover is fixed — re-place so the shell tracks it instead of detaching.
         document.addEventListener('scroll', onReflow, true);
+        if (this.fitWithinBoundary) {
+            // Some mobile browsers do not scroll a focused descendant into its overflow
+            // container. During a pointer gesture wait until its click has dispatched,
+            // so revealing the target cannot move it out from under the user's finger.
+            const onFocus = (): void => { if (!this.fitPointerActive) this.revealFocusedControl(); };
+            const onPointerDown = (): void => { this.fitPointerActive = true; };
+            const onPointerEnd = (): void => {
+                if (!this.fitPointerActive) return;
+                this.fitPointerActive = false;
+                if (this.focusRevealTimer !== null) clearTimeout(this.focusRevealTimer);
+                this.focusRevealTimer = setTimeout(() => {
+                    this.focusRevealTimer = null;
+                    if (this.shown) this.revealFocusedControl();
+                }, 0);
+            };
+            this.onFitFocus = onFocus;
+            this.onFitPointerDown = onPointerDown;
+            this.onFitPointerEnd = onPointerEnd;
+            this.el.addEventListener('focusin', onFocus);
+            this.el.addEventListener('pointerdown', onPointerDown);
+            window.addEventListener('pointerup', onPointerEnd, true);
+            window.addEventListener('pointercancel', onPointerEnd, true);
+            // A mobile keyboard and pinch zoom change the visible viewport without
+            // necessarily resizing the layout viewport or firing a window resize.
+            window.visualViewport?.addEventListener('resize', onReflow);
+            window.visualViewport?.addEventListener('scroll', onReflow);
+            if (typeof ResizeObserver !== 'undefined') {
+                this.sizeObserver = new ResizeObserver(() => {
+                    if (this.fitFrame !== null) return;
+                    const view = this.el.ownerDocument.defaultView;
+                    if (!view?.requestAnimationFrame) { this.place(); return; }
+                    this.fitFrame = view.requestAnimationFrame(() => {
+                        this.fitFrame = null;
+                        if (this.shown) this.place();
+                    });
+                });
+                this.sizeObserver.observe(this.el);
+                if (typeof this.boundary !== 'string' && typeof this.boundary !== 'function') this.sizeObserver.observe(this.boundary);
+            }
+        }
         this.onOutside = onOutside;
         this.onKey = onKey;
         this.onReflow = onReflow;
@@ -201,13 +301,36 @@ export class Popover {
         // Closed before announcing (a listener's own hide() must not re-enter), but still
         // attached — a fade-out or removal follows — so the close bubbles to the host.
         this.shown = false;
+        this.drag?.destroy();
+        this.drag = null;
+        this.el.style.removeProperty('translate');
         announceSurface(this.el, false, 'popover', this.trigger);
         if (this.onOutside) document.removeEventListener('pointerdown', this.onOutside, true);
         if (this.onKey) window.removeEventListener('keydown', this.onKey, true);
         if (this.onReflow) {
             window.removeEventListener('resize', this.onReflow, true);
             document.removeEventListener('scroll', this.onReflow, true);
+            if (this.fitWithinBoundary) {
+                window.visualViewport?.removeEventListener('resize', this.onReflow);
+                window.visualViewport?.removeEventListener('scroll', this.onReflow);
+            }
         }
+        this.sizeObserver?.disconnect();
+        this.sizeObserver = null;
+        if (this.fitFrame !== null) this.el.ownerDocument.defaultView?.cancelAnimationFrame(this.fitFrame);
+        this.fitFrame = null;
+        if (this.onFitFocus) this.el.removeEventListener('focusin', this.onFitFocus);
+        if (this.onFitPointerDown) this.el.removeEventListener('pointerdown', this.onFitPointerDown);
+        if (this.onFitPointerEnd) {
+            window.removeEventListener('pointerup', this.onFitPointerEnd, true);
+            window.removeEventListener('pointercancel', this.onFitPointerEnd, true);
+        }
+        if (this.focusRevealTimer !== null) clearTimeout(this.focusRevealTimer);
+        this.focusRevealTimer = null;
+        this.fitPointerActive = false;
+        this.onFitFocus = null;
+        this.onFitPointerDown = null;
+        this.onFitPointerEnd = null;
         this.onOutside = null;
         this.onKey = null;
         this.onReflow = null;
@@ -217,18 +340,23 @@ export class Popover {
             this.el.style.pointerEvents = 'none';
             this.leaveTimer = setTimeout(() => {
                 this.leaveTimer = null;
-                this.el.remove();
+                this.detach();
             }, this.fadeMs);
         } else {
             this.exit = holdForExit(this.el, () => {
                 this.exit = null;
                 leaving.delete(this);
-                this.el.remove();
+                this.detach();
             });
             if (this.exit) leaving.add(this);
         }
         if (open === this) open = null;
         this.ctrl.onClose?.();
+    }
+
+    private detach(): void {
+        this.el.remove();
+        this.layoutRoot?.remove();
     }
 
     /** Show if closed, hide if this instance is the open popover. */
@@ -247,11 +375,19 @@ export class Popover {
     }
 
     private clampRect(): Rect {
-        const view = viewportRect(window.innerWidth, window.innerHeight, this.ctrl.viewportInset);
+        let view = this.fitWithinBoundary
+            ? visibleRect(0, 0, window.innerWidth, window.innerHeight, this.ctrl.viewportInset)
+            : viewportRect(window.innerWidth, window.innerHeight, this.ctrl.viewportInset);
+        const visual = this.fitWithinBoundary ? window.visualViewport : null;
+        if (visual) {
+            view = intersectRects(view, visibleRect(visual.offsetLeft, visual.offsetTop, visual.width, visual.height, this.ctrl.viewportInset));
+        }
         const bound = this.readBoundary();
         if (!bound) return view;
-        const inset = insetRect(bound, this.ctrl.boundaryInset);
-        return intersectRects(view, inset);
+        const intersection = intersectRects(view, insetRect(bound, this.ctrl.boundaryInset));
+        // If the host has moved completely off screen there is no rectangle in both;
+        // prefer the visible viewport to placing a surface at negative coordinates.
+        return this.fitWithinBoundary && (intersection.width <= 0 || intersection.height <= 0) ? view : intersection;
     }
 
     private readBoundary(): Rect | null {
@@ -263,20 +399,73 @@ export class Popover {
 
     private place(): void {
         const ar = this.trigger.getBoundingClientRect();
+        const clamp = this.clampRect();
         if (this.ctrl.matchWidth) {
-            this.el.style.minWidth = `${Math.round(Math.max(this.el.offsetWidth, ar.width))}px`;
+            const width = Math.max(this.el.offsetWidth, ar.width);
+            this.el.style.minWidth = `${Math.round(this.fitWithinBoundary ? Math.min(width, Math.max(0, clamp.width)) : width)}px`;
         }
-        const origin = this.ctrl.position === 'absolute' ? this.host.getBoundingClientRect() : { left: 0, top: 0 };
+        if (this.fitWithinBoundary) {
+            // Border and padding are minimum physical dimensions even with max-width:
+            // 0. Remove them only when the available rectangle is smaller than the
+            // chrome itself, and restore the caller's original styles when it grows.
+            this.fitBoxDefaults ??= { padding: this.el.style.padding, borderWidth: this.el.style.borderWidth };
+            this.el.style.padding = this.fitBoxDefaults.padding;
+            this.el.style.borderWidth = this.fitBoxDefaults.borderWidth;
+            const style = getComputedStyle(this.el);
+            const number = (value: string): number => Number.parseFloat(value) || 0;
+            const borderX = number(style.borderLeftWidth) + number(style.borderRightWidth);
+            const borderY = number(style.borderTopWidth) + number(style.borderBottomWidth);
+            const chromeX = borderX + number(style.paddingLeft) + number(style.paddingRight);
+            const chromeY = borderY + number(style.paddingTop) + number(style.paddingBottom);
+            if (clamp.width < chromeX || clamp.height < chromeY) this.el.style.padding = '0';
+            if (clamp.width < borderX || clamp.height < borderY) this.el.style.borderWidth = '0';
+            // Size before placement: flipping an oversized panel cannot fit it. The
+            // surface becomes its own scroll region when the visible space is short.
+            this.el.style.maxWidth = `${Math.max(0, Math.floor(clamp.width))}px`;
+            this.el.style.maxHeight = `${Math.max(0, Math.floor(clamp.height))}px`;
+            this.el.style.overflowX = 'hidden';
+            this.el.style.overflowY = 'auto';
+            this.el.style.overscrollBehavior = 'contain';
+        }
+        // A fixed layer inside layout containment or a transformed host is no longer
+        // viewport-relative. Measure its real zero point, without adopting a drag shift,
+        // so anchored popovers remain beside the trigger in either coordinate system.
+        let origin: { left: number; top: number };
+        if (this.ctrl.position === 'absolute') origin = this.host.getBoundingClientRect();
+        else {
+            const style = this.el.style;
+            const properties = ['left', 'top', 'translate'] as const;
+            const saved = properties.map((name) => ({ name, value: style.getPropertyValue(name), priority: style.getPropertyPriority(name) }));
+            style.setProperty('left', '0px');
+            style.setProperty('top', '0px');
+            style.setProperty('translate', 'none');
+            origin = this.el.getBoundingClientRect();
+            for (const { name, value, priority } of saved) {
+                if (value) style.setProperty(name, value, priority);
+                else style.removeProperty(name);
+            }
+        }
         const pos = placePopover({
             trigger: toRect(ar),
             pop: { width: this.el.offsetWidth, height: this.el.offsetHeight },
             gap: this.ctrl.gap,
             align: this.ctrl.align,
-            clamp: this.clampRect(),
+            clamp,
             originX: origin.left,
             originY: origin.top,
         });
         this.el.style.left = `${pos.left}px`;
         this.el.style.top = `${pos.top}px`;
+        if (this.fitWithinBoundary) this.revealFocusedControl();
+    }
+
+    private revealFocusedControl(): void {
+        // Keep the active control usable when the keyboard shrinks the viewport or
+        // focus advances through a short panel. Never scroll the chart or the page.
+        const active = this.el.ownerDocument.activeElement;
+        if (!(active instanceof HTMLElement) || !this.el.contains(active)) return;
+        const a = active.getBoundingClientRect(), r = this.el.getBoundingClientRect();
+        if (a.bottom > r.bottom - 4) this.el.scrollTop += a.bottom - r.bottom + 4;
+        else if (a.top < r.top + 4) this.el.scrollTop -= r.top - a.top + 4;
     }
 }

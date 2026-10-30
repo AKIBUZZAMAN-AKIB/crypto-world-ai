@@ -10,12 +10,13 @@
 // The chart does the work: "Add to chart" calls `chart.runIndicator`, "Update on chart"
 // calls the existing handle's `updateCode`, which re-runs the script in place and keeps
 // the trader's input values. Nothing here parses Pine — errors are the engine's own.
-import { SidePanel } from './side-panel';
+import { MIN_FLOAT_PANEL_WIDTH, SidePanel } from './side-panel';
 import { injectStyles } from '../ui/styles';
 import { iconEl } from '../ui/icons';
 import { Tooltip } from '../ui/components/tooltip';
 import { isDarkColor } from '../core/color';
-import { SYNTAX_DARK, SYNTAX_LIGHT, WARNING } from '../core/palette';
+import { WARNING } from '../core/palette';
+import type { PineCodeSurface } from './pine-code-surface';
 import { builtinPineEntries } from '../core/native-indicators/classics/pine-source';
 import type { Vela } from '../Vela';
 import type { IndicatorHandle } from '../core/IndicatorHandle';
@@ -32,9 +33,6 @@ import {
     saveSettings,
     versionLabel,
     versionsNewestFirst,
-    complete,
-    lineStarts,
-    DEFAULT_SETTINGS,
     type EditorSettings,
     type PineScript,
     type ScriptLibrary,
@@ -43,57 +41,18 @@ import {
 
 const STYLE_ID = 'vela-widget-pine-editor';
 
-/** The minimap's fixed density: a source line is ~2.6px of strip, offset 10px from the top. */
-const MM_LINE_H = 2.6;
-const MM_TOP = 10;
-
-/** Where the editor's y-position/height decisions persist. */
-const SHEET_KEY = 'vela-pine-sheet';
-
 const CSS = `
-.vela-pe .vela-panel-body { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.vela-pe[data-standard-pane] .vela-panel-body { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* Keep a real editor viewport and the status/actions reachable by scrolling a tiny card. */
+.vela-pe[data-compact-height='1'] .vela-panel-body { overflow: auto; }
+.vela-pe[data-compact-height='1'] .vela-pe-wrap { flex: none; height: 76px; min-height: 76px; }
 /* The script's OWN name is the header's title here (TradingView's shape): a panel
    heading above it would say "Pine editor" twice and cost the name its width. */
 .vela-pe .vela-panel-title { display: none; }
 .vela-pe .vela-panel-header-slot { margin-left: -4px; gap: 4px; }
 
-/* ── mobile: a draggable bottom sheet over the chart ─────────────────────────── */
-.vela-pe-grip { display: none; }
-[data-layout='mobile'] .vela-panel.vela-pe {
-    inset: auto 0 0 0;
-    height: var(--pe-sheet-h, 58%);
-    min-height: 180px;
-    max-height: 92%;
-    border-top: 1px solid var(--vela-border);
-    border-radius: 14px 14px 0 0;
-    box-shadow: 0 -14px 44px rgba(0, 0, 0, 0.45);
-    z-index: 40;
-    transition: height 120ms ease;
-}
-[data-layout='mobile'] .vela-panel.vela-pe.vela-pe-dragging { transition: none; }
-[data-layout='mobile'] .vela-pe-grip {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 18px;
-    flex: none;
-    cursor: grab;
-    touch-action: none;
-}
-[data-layout='mobile'] .vela-pe-grip::after {
-    content: '';
-    width: 38px;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--vela-border);
-}
-[data-layout='mobile'] .vela-pe-grip:active::after { background: var(--vela-fg-muted); }
-/* A phone has no Ctrl key and no room for the console a desktop gets: drop the key hint
-   and cap the log so the code keeps most of the sheet. */
+/* The shared standard-pane shell owns the phone grip and desktop geometry. */
 [data-layout='mobile'] .vela-pe-status [data-part='hint'] { display: none; }
-/* No minimap on a phone: 56px of a 390px sheet is a seventh of the code, and the sheet is
-   already the thing being scrolled. Desktop keeps it (and the setting keeps its choice). */
-[data-layout='mobile'] .vela-pe-minimap { display: none; }
 [data-layout='mobile'] .vela-pe-console { max-height: 92px; }
 
 /* ── header slot: name · actions ───────────────────────────────────────────────── */
@@ -140,7 +99,8 @@ const CSS = `
     white-space: nowrap;
 }
 .vela-pe-act:hover { filter: brightness(1.12); }
-.vela-pe-act.primary { background: var(--vela-accent); color: #fff; }
+.vela-pe-act.primary { background: var(--vela-accent); color: var(--vela-fg-on-fill); }
+.vela-pe-act[hidden], .vela-pe-caret[hidden] { display: none; }
 .vela-pe-act:disabled { opacity: 0.5; cursor: default; }
 .vela-pe-split { display: inline-flex; align-items: stretch; }
 .vela-pe-split .vela-pe-act { border-radius: 5px 0 0 5px; }
@@ -150,12 +110,12 @@ const CSS = `
     width: 20px; height: 26px;
     border-radius: 0 5px 5px 0;
     background: var(--vela-accent);
-    color: #fff;
+    color: var(--vela-fg-on-fill);
     cursor: pointer;
     border-left: 1px solid rgba(0, 0, 0, 0.25);
 }
 .vela-pe-caret .vela-icon { font-size: 11px; }
-.vela-pe-caret:hover { filter: brightness(1.12); }
+.vela-pe-act.primary:hover, .vela-pe-caret:hover { filter: none; background: color-mix(in srgb, var(--vela-accent) 92%, #000); }
 .vela-pe-icon {
     all: unset;
     display: inline-flex; align-items: center; justify-content: center;
@@ -167,110 +127,41 @@ const CSS = `
 .vela-pe-icon:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
 .vela-pe-icon[aria-pressed='true'] { background: var(--vela-selected-bg); color: var(--vela-selected-fg); }
 
-/* ── the code surface ──────────────────────────────────────────────────────────── */
-.vela-pe-wrap { flex: 1 1 auto; min-height: 0; display: flex; position: relative; font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.vela-pe-gutter {
-    flex: none;
-    width: 44px;
-    padding: 10px 8px 10px 0;
-    text-align: right;
-    color: var(--vela-fg-muted);
-    opacity: 0.55;
-    user-select: none;
-    overflow: hidden;
-    font-variant-numeric: tabular-nums;
-    background: var(--vela-bg);
-    border-right: 1px solid var(--vela-border);
+/* The surface is Monaco; no translucent textarea or imitation gutter is retained. */
+.vela-pe-wrap { flex: 1 1 auto; min-width: 0; min-height: 0; position: relative; overflow: hidden; }
+.vela-pe-monaco { position: absolute; inset: 0; }
+.vela-pe-loading { padding: 12px; color: var(--vela-fg-muted); font-size: 12px; }
+.vela-pe-editor-menu {
+    position: absolute; z-index: 20; width: min(218px, calc(100% - 4px));
+    max-height: calc(100% - 4px); overflow-y: auto; overscroll-behavior: contain;
+    box-sizing: border-box; padding: 4px; border: 1px solid var(--vela-border-strong);
+    border-radius: 6px; background: var(--vela-surface-overlay, var(--vela-bg));
+    color: var(--vela-fg); box-shadow: var(--vela-shadow);
 }
-.vela-pe-gutter-line { display: block; }
-.vela-pe-gutter-line.vela-pe-err { color: var(--vela-danger); opacity: 1; font-weight: 700; }
-.vela-pe-code { position: relative; flex: 1 1 auto; min-width: 0; }
-/* The highlight layer sits UNDER the textarea and paints the colours; the textarea keeps
-   the caret, the selection and the input behaviour, with transparent text so both layers
-   read as one surface. Both must share every metric or the glyphs drift. */
-.vela-pe-hl,
-.vela-pe-input {
-    margin: 0;
-    padding: 10px 14px 10px 10px;
-    border: 0;
-    font: inherit;
-    line-height: inherit;
-    letter-spacing: inherit;
-    tab-size: 4;
-    white-space: pre;
-    word-wrap: normal;
-    overflow: auto;
-    box-sizing: border-box;
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
+.vela-pe-editor-menu[hidden], .vela-pe-editor-feedback[hidden] { display: none; }
+.vela-pe-editor-menu-item {
+    all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 10px;
+    width: 100%; min-height: 29px; padding: 4px 8px; border-radius: 4px;
+    color: var(--vela-fg); cursor: pointer; font: 12px/1.3 system-ui, sans-serif;
 }
-.vela-pe-hl { pointer-events: none; color: var(--vela-fg); overflow: hidden; }
-.vela-pe-input {
-    resize: none;
-    outline: 0;
-    background: transparent;
-    color: transparent;
-    caret-color: var(--vela-fg-bright);
+.vela-pe-editor-menu-item:hover, .vela-pe-editor-menu-item:focus-visible { background: var(--vela-selected-bg); color: var(--vela-selected-fg); outline: none; }
+.vela-pe-editor-menu-item:disabled { opacity: .45; cursor: default; }
+.vela-pe-editor-menu-shortcut { margin-left: auto; font-size: 10px; color: var(--vela-fg-muted); }
+.vela-pe-editor-menu-item:focus-visible .vela-pe-editor-menu-shortcut { color: inherit; }
+.vela-pe-editor-feedback {
+    position: absolute; z-index: 21; left: 8px; right: 8px; bottom: 8px;
+    padding: 8px 10px; border: 1px solid var(--vela-border-strong); border-radius: 4px;
+    color: var(--vela-fg); background: var(--vela-surface-overlay, var(--vela-bg));
+    box-shadow: var(--vela-shadow); font: 12px/1.35 system-ui, sans-serif;
 }
-.vela-pe-input::selection { background: var(--vela-selection, rgba(41, 98, 255, 0.35)); color: transparent; }
-.vela-pe-hl .tk-com { color: var(--vela-fg-muted); font-style: italic; }
-/* The palette is chosen for the SURFACE the panel sits on (data-surface is set from the
-   live --vela-bg), not for a fixed VS Code theme: the same tokens must stay legible on
-   the light chart a trader switched to at noon and on the dark one at night. */
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-str { color: ${SYNTAX_DARK.string}; }
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-num { color: ${SYNTAX_DARK.number}; }
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-kw { color: ${SYNTAX_DARK.keyword}; }
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-fn { color: ${SYNTAX_DARK.call}; }
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-ns { color: ${SYNTAX_DARK.namespace}; }
-.vela-pe[data-surface='dark'] .vela-pe-hl .tk-const { color: ${SYNTAX_DARK.constant}; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-str { color: ${SYNTAX_LIGHT.string}; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-num { color: ${SYNTAX_LIGHT.number}; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-kw { color: ${SYNTAX_LIGHT.keyword}; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-fn { color: ${SYNTAX_LIGHT.call}; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-ns { color: ${SYNTAX_LIGHT.namespace}; }
-.vela-pe[data-surface='light'] .vela-pe-hl .tk-const { color: ${SYNTAX_LIGHT.constant}; }
-
-/* The 80-character ruler — the same guide TradingView's editor draws (its editor
-   settings call it "vertical ruler at the 80-character mark"): a faint line under the
-   glyphs so a long line is visible before it wraps nowhere. Pointer-transparent. */
-.vela-pe-code::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: calc(10px + 80ch);
-    width: 1px;
-    background: var(--vela-border);
-    opacity: 0.5;
-    pointer-events: none;
+[data-layout='mobile'] .vela-pe-editor-menu-item { min-height: 36px; }
+.vela-pe-status { overflow-x: auto; scrollbar-width: none; }
+.vela-pe-status::-webkit-scrollbar { display: none; }
+.vela-pe-status-action {
+    all: unset; box-sizing: border-box; flex: none; padding: 2px 6px; border-radius: 3px;
+    color: var(--vela-accent-ink, var(--vela-accent)); cursor: pointer; font-weight: 600;
 }
-[data-layout='mobile'] .vela-pe-code::after { display: none; }
-
-/* The code OVERVIEW — TradingView's minimap. A condensed canvas of every line; the
-   visible window is boxed, and a click jumps there. Off from Editor settings. */
-.vela-pe-minimap {
-    flex: none;
-    width: 56px;
-    position: relative;
-    overflow: hidden;
-    border-left: 1px solid var(--vela-border);
-    background: var(--vela-bg);
-    cursor: pointer;
-}
-.vela-pe-minimap[hidden] { display: none; }
-.vela-pe-minimap canvas { display: block; width: 100%; height: 100%; }
-.vela-pe-mm-view {
-    position: absolute;
-    left: 0;
-    right: 0;
-    border-top: 1px solid var(--vela-border-strong);
-    border-bottom: 1px solid var(--vela-border-strong);
-    background: var(--vela-hover);
-    pointer-events: none;
-}
-.vela-pe[data-guide='off'] .vela-pe-code::after { display: none; }
+.vela-pe-status-action:hover, .vela-pe-status-action:focus-visible { background: var(--vela-selected-bg); color: var(--vela-selected-fg); outline: none; }
 
 /* Editor settings — the same five switches TradingView puts behind its three dots. */
 .vela-pe-set {
@@ -293,35 +184,6 @@ const CSS = `
     cursor: pointer;
 }
 .vela-pe-set-hint { padding: 0 8px 6px; font-size: 11px; color: var(--vela-fg-muted); }
-
-/* Autocomplete — the caret-anchored suggestion list (Ctrl+Space, or as you type). */
-.vela-pe-ac {
-    position: absolute;
-    z-index: 6;
-    min-width: 150px;
-    max-width: 260px;
-    max-height: 176px;
-    overflow: auto;
-    padding: 4px;
-    border: 1px solid var(--vela-border);
-    border-radius: 6px;
-    background: var(--vela-surface-overlay);
-    box-shadow: var(--vela-shadow);
-}
-.vela-pe-ac[hidden] { display: none; }
-.vela-pe-ac-row {
-    display: flex;
-    gap: 8px;
-    align-items: baseline;
-    padding: 3px 8px;
-    border-radius: 4px;
-    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    color: var(--vela-fg);
-    cursor: pointer;
-    white-space: nowrap;
-}
-.vela-pe-ac-row[data-active='true'] { background: var(--vela-selected-bg); color: var(--vela-selected-fg); }
-.vela-pe-ac-kind { margin-left: auto; font-size: 10px; opacity: 0.6; }
 
 /* ── console ───────────────────────────────────────────────────────────────────── */
 /* Built-in source view (TradingView's read-only { } view): a banner that explains the
@@ -353,7 +215,6 @@ const CSS = `
     cursor: pointer;
 }
 .vela-pe-builtin button:hover { background: var(--vela-hover); }
-.vela-pe-input[readonly] { caret-color: transparent; }
 .vela-pe-builtin-list { max-height: 260px; overflow-y: auto; }
 
 .vela-pe-status {
@@ -408,7 +269,7 @@ const CSS = `
     flex: none;
     cursor: pointer;
     text-decoration: underline dotted;
-    color: var(--vela-accent);
+    color: var(--vela-accent-ink, var(--vela-accent));
     font-variant-numeric: tabular-nums;
 }
 .vela-pe-msg[data-level='error'] { color: var(--vela-danger); }
@@ -458,7 +319,7 @@ const CSS = `
     border: 1px solid var(--vela-border);
     border-radius: 8px;
     box-shadow: var(--vela-shadow);
-    z-index: 3;
+    z-index: 100;
     padding: 6px;
 }
 .vela-pe-pop[hidden] { display: none; }
@@ -514,9 +375,12 @@ export class PineEditor extends SidePanel {
     /** Closes the popover on an outside press — removed with the panel. */
     private onDocPointerDown: ((event: Event) => void) | null = null;
     private readonly messages: ConsoleMessage[] = [];
+    /** Markers belong to the latest engine attempt, not to the whole console history. */
+    private readonly engineErrors: { line: number; text: string }[] = [];
+    /** Invalidates late diagnostics after a draft, script or chart changes. */
+    private diagnosticEpoch = 0;
 
     // Elements
-    private readonly grip: HTMLDivElement;
     private readonly nameButton: HTMLButtonElement;
     private readonly nameLabel: HTMLSpanElement;
     private readonly dirtyDot: HTMLSpanElement;
@@ -525,23 +389,18 @@ export class PineEditor extends SidePanel {
     private readonly caret: HTMLButtonElement;
     private readonly scriptsButton: HTMLButtonElement;
     private readonly wrap: HTMLDivElement;
-    private readonly gutter: HTMLDivElement;
-    private readonly highlight: HTMLPreElement;
-    private readonly input: HTMLTextAreaElement;
+    private surface: PineCodeSurface | null = null;
+    private loadingSurface: Promise<void> | null = null;
+    private surfaceDestroyed = false;
+    private focusAfterLoad = false;
     private readonly consoleEl: HTMLDivElement;
     private readonly statusEl: HTMLDivElement;
     private settings: EditorSettings;
-    private readonly minimapEl: HTMLDivElement;
-    private readonly minimapView: HTMLDivElement;
-    private readonly minimapCanvas: HTMLCanvasElement;
-    private readonly autocompleteEl: HTMLDivElement;
 
     /** Levels the console is showing — TradingView's level filter, in miniature. */
     private readonly hiddenLevels = new Set<ConsoleMessage['level']>();
     /** Console suppressed with Ctrl+` (the shortcut toggles it back). */
     private consoleCollapsed = false;
-    /** Pixels per source line in the minimap, from the last paint. */
-    private mmRowH = MM_LINE_H;
 
 
     private readonly pop: HTMLDivElement;
@@ -561,11 +420,10 @@ export class PineEditor extends SidePanel {
         super(host, 'Pine editor', 'vela-pe', {
             resizable: true,
             width: 520,
-            minWidth: 340,
+            minWidth: MIN_FLOAT_PANEL_WIDTH,
             maxWidth: 980,
-            // DOCKED (the chart shrinks beside it), never floating over it: an editor is a
-            // place you work, not a popover — and TradingView's side panel docks too.
-            maximizable: true,
+            standardPane: true,
+            mobileMinHeight: 216,
         });
         const doc = host.ownerDocument;
         injectStyles(STYLE_ID, CSS, doc);
@@ -609,44 +467,13 @@ export class PineEditor extends SidePanel {
         this.headerSlot.append(this.nameButton, split, this.scriptsButton);
 
         // ── body ───────────────────────────────────────────────────────────────────
-        this.grip = doc.createElement('div');
-        this.grip.className = 'vela-pe-grip';
-        this.grip.setAttribute('aria-label', 'Drag to resize');
-        this.grip.setAttribute('role', 'separator');
-
         this.wrap = doc.createElement('div');
         this.wrap.className = 'vela-pe-wrap';
-
-        this.gutter = doc.createElement('div');
-        this.gutter.className = 'vela-pe-gutter';
-
-        // The minimap: a canvas of the whole script plus a viewport box.
-        this.minimapEl = doc.createElement('div');
-        this.minimapEl.className = 'vela-pe-minimap';
-        this.minimapEl.setAttribute('aria-hidden', 'true');
-        this.minimapCanvas = doc.createElement('canvas');
-        this.minimapView = doc.createElement('div');
-        this.minimapView.className = 'vela-pe-mm-view';
-        this.minimapEl.append(this.minimapCanvas, this.minimapView);
-
-        this.autocompleteEl = doc.createElement('div');
-        this.autocompleteEl.className = 'vela-pe-ac';
-        this.autocompleteEl.hidden = true;
-
-        const codeBox = doc.createElement('div');
-        codeBox.className = 'vela-pe-code';
-        this.highlight = doc.createElement('pre');
-        this.highlight.className = 'vela-pe-hl';
-        this.highlight.setAttribute('aria-hidden', 'true');
-        this.input = doc.createElement('textarea');
-        this.input.className = 'vela-pe-input';
-        this.input.spellcheck = false;
-        this.input.setAttribute('autocapitalize', 'off');
-        this.input.setAttribute('autocomplete', 'off');
-        this.input.setAttribute('aria-label', 'Pine Script source');
-        codeBox.append(this.highlight, this.input);
-
-        this.wrap.append(this.gutter, codeBox, this.minimapEl);
+        this.wrap.setAttribute('aria-label', 'Pine Script editor');
+        const loading = doc.createElement('div');
+        loading.className = 'vela-pe-loading';
+        loading.textContent = 'Loading editor…';
+        this.wrap.append(loading);
 
         this.statusEl = doc.createElement('div');
         this.statusEl.className = 'vela-pe-status';
@@ -669,10 +496,8 @@ export class PineEditor extends SidePanel {
         this.builtinCopy.addEventListener('click', () => this.makeWorkingCopy());
         this.builtinBar.append(builtinText, this.builtinCopy);
 
-        // Built, but NOT appended: the editor's surface (gutter, code layer, console,
-        // autocomplete, run popover) is a hundred nodes, and a closed editor is a panel
-        // nobody is looking at. `mountBody()` puts it in on the first open.
-        this.pendingBody = [this.grip, this.builtinBar, this.wrap, this.autocompleteEl, this.statusEl, this.consoleEl, this.pop];
+        // Keep the expensive editor unmounted until the panel first opens.
+        this.pendingBody = [this.builtinBar, this.wrap, this.statusEl, this.consoleEl, this.pop];
 
         this.bind();
         this.syncSurface();
@@ -688,6 +513,10 @@ export class PineEditor extends SidePanel {
         this.themeOff = null;
         if (this.onDocPointerDown) this.body.ownerDocument.removeEventListener('pointerdown', this.onDocPointerDown);
         this.onDocPointerDown = null;
+        this.surfaceDestroyed = true;
+        this.clearEngineErrors();
+        this.surface?.destroy();
+        this.surface = null;
         super.destroy();
     }
 
@@ -696,26 +525,78 @@ export class PineEditor extends SidePanel {
      * the panel was closed must not give the trader dark-theme tokens on a white sheet.
      */
     override toggle(open = !this.open, instant = false): void {
-        if (open) this.mountBody();
+        if (open) {
+            this.mountBody();
+            if (!this.surface && !this.pendingBody) void this.loadSurface();
+        }
         super.toggle(open, instant);
-        if (open) this.syncSurface();
+        if (open) {
+            this.syncSurface();
+            requestAnimationFrame(() => this.surface?.layout());
+        }
     }
 
-    /** Put the editor's surface into the panel body — once, on the first open. */
+    /** Put the editor's surface into the panel body — once, on its first open. */
     private mountBody(): void {
         const pending = this.pendingBody;
         if (!pending) return;
         this.pendingBody = null;
         this.body.append(...pending);
-        // The code layer only has a size once it is attached: re-render so the viewport,
-        // the highlights and the scroll position are measured against the real box.
-        this.render();
+        void this.loadSurface();
+    }
+
+    private async loadSurface(): Promise<void> {
+        if (this.loadingSurface || this.surface || this.surfaceDestroyed) return;
+        this.loadingSurface = (async () => {
+            try {
+                const { PineCodeSurface: Surface } = await import('./pine-code-surface');
+                if (this.surfaceDestroyed) return;
+                this.surface = new Surface(this.wrap, {
+                    onChange: (value) => {
+                        if (this.builtin) return;
+                        this.active = editCode(this.active, value);
+                        this.clearEngineErrors();
+                        this.commitActive();
+                        this.dirtyDot.hidden = !isDirty(this.active);
+                        this.persist();
+                        this.paintStatus();
+                    },
+                    onCursor: () => this.paintStatus(),
+                    onRun: () => void this.runPrimary(),
+                    onSave: () => this.saveVersion(),
+                    onNew: () => this.addScript('indicator'),
+                    onOpen: () => this.openPop('scripts'),
+                    onToggleConsole: () => {
+                        this.consoleCollapsed = !this.consoleCollapsed;
+                        this.consoleEl.style.display = this.consoleCollapsed ? 'none' : '';
+                    },
+                }, this.settings);
+                this.render();
+                this.applySettings();
+                this.syncSurface();
+                if (this.focusAfterLoad && this.open) this.surface.focus();
+                this.focusAfterLoad = false;
+                requestAnimationFrame(() => this.surface?.layout());
+            } catch (error) {
+                if (this.surfaceDestroyed) return;
+                const message = this.body.ownerDocument.createElement('div');
+                message.className = 'vela-pe-loading';
+                message.textContent = 'Editor could not load. Close and reopen this panel to retry.';
+                this.wrap.replaceChildren(message);
+                console.error('Pine editor failed to load', error);
+            } finally {
+                this.loadingSurface = null;
+            }
+        })();
+        await this.loadingSurface;
     }
 
     /** Pick the syntax palette from the background actually painted behind the panel. */
     private syncSurface(): void {
         const bg = getComputedStyle(this.el).getPropertyValue('--vela-bg').trim();
-        this.el.dataset.surface = isDarkColor(bg || '#000') ? 'dark' : 'light';
+        const dark = isDarkColor(bg || '#000');
+        this.el.dataset.surface = dark ? 'dark' : 'light';
+        this.surface?.setTheme(dark, bg);
     }
 
     /**
@@ -732,6 +613,7 @@ export class PineEditor extends SidePanel {
 
     /** Bind to the chart whose scripts this editor runs. */
     onChart(chart: Vela): void {
+        if (this.chart !== chart) this.clearEngineErrors();
         this.chart = chart;
         // A theme flip is a SURFACE change: the syntax palette has to follow it, or a
         // trader who switches to the light chart gets light-grey keywords on white.
@@ -747,18 +629,18 @@ export class PineEditor extends SidePanel {
      * script — never edits a different script behind the trader's back.
      */
     openSource(source: string, title?: string, opts: { readOnly?: boolean } = {}): void {
+        this.messages.length = 0;
+        this.clearEngineErrors();
         if (opts.readOnly) {
             // A built-in study's source: shown, never edited. `render()` reads `builtin`
             // instead of `active`, so the library and its versions are untouched.
             this.builtin = { title: title || 'Built-in script', source };
-            this.input.readOnly = true;
             this.builtinBar.hidden = false;
             this.render();
             this.focus();
             return;
         }
         this.builtin = null;
-        this.input.readOnly = false;
         this.builtinBar.hidden = true;
         const existing = this.library.scripts.find((s) => s.code === source);
         this.active = existing ?? (() => {
@@ -776,43 +658,14 @@ export class PineEditor extends SidePanel {
 
     /** Open on the script the shell already knows (a fresh panel with a saved library). */
     focus(): void {
-        this.input.focus();
+        if (this.surface) this.surface.focus();
+        else this.focusAfterLoad = true;
     }
 
     // ── wiring ─────────────────────────────────────────────────────────────────────
 
     private bind(): void {
         const doc = this.body.ownerDocument;
-
-        this.input.addEventListener('input', (event) => {
-            // A built-in's text is read-only; the textarea is `readOnly`, so this only fires
-            // for a programmatic paste — refuse it rather than editing the study.
-            if (this.builtin) return;
-            this.active = editCode(this.active, this.input.value);
-            this.commitActive();
-            this.paint();
-            this.persist();
-            const typed = (event as InputEvent).data;
-            if (this.settings.suggestions && typed && /[A-Za-z_.]/.test(typed)) this.offerAutocomplete();
-            else this.hideAutocomplete();
-        });
-        this.input.addEventListener('scroll', () => {
-            this.syncScroll();
-            this.paintMinimapView();
-            this.hideAutocomplete();
-        });
-        this.minimapEl.addEventListener('pointerdown', (event) => {
-            const rect = this.minimapEl.getBoundingClientRect();
-            this.jumpToFraction((event.clientY - rect.top) / Math.max(1, rect.height));
-        });
-        this.autocompleteEl.addEventListener('pointerdown', (event) => {
-            // Keep the caret where it is: the suggestion list is not a text field.
-            event.preventDefault();
-        });
-        for (const ev of ['keyup', 'click', 'select', 'focus'] as const) {
-            this.input.addEventListener(ev, () => this.paintStatus());
-        }
-        this.input.addEventListener('keydown', (event) => this.onKeyDown(event as KeyboardEvent));
 
         this.primary.addEventListener('click', () => void this.runPrimary());
         this.caret.addEventListener('click', (event) => {
@@ -829,127 +682,12 @@ export class PineEditor extends SidePanel {
         };
         doc.addEventListener('pointerdown', this.onDocPointerDown);
 
-        this.bindSheetDrag();
         new Tooltip(this.scriptsButton, { content: 'More actions', host: this.body });
     }
 
-    private onKeyDown(event: KeyboardEvent): void {
-        const mod = event.ctrlKey || event.metaKey;
-        const key = event.key;
-        const lower = key.toLowerCase();
-
-        // The suggestion list owns the arrows/Enter/Esc while it is open.
-        if (!this.autocompleteEl.hidden) {
-            if (key === 'ArrowDown' || key === 'ArrowUp') {
-                event.preventDefault();
-                this.moveAutocomplete(key === 'ArrowDown' ? 1 : -1);
-                return;
-            }
-            if (key === 'Enter' || key === 'Tab') {
-                event.preventDefault();
-                this.acceptAutocomplete();
-                return;
-            }
-            if (key === 'Escape') {
-                event.preventDefault();
-                this.hideAutocomplete();
-                return;
-            }
-        }
-
-        if (mod && key === 'Enter') {
-            event.preventDefault();
-            void this.runPrimary();
-            return;
-        }
-        if (mod && lower === 's') {
-            event.preventDefault();
-            this.saveVersion();
-            return;
-        }
-        if (mod && lower === 'i') {
-            // TV's "new script"
-            event.preventDefault();
-            this.addScript('indicator');
-            return;
-        }
-        if (mod && lower === 'o') {
-            event.preventDefault();
-            this.openPop('scripts');
-            return;
-        }
-        if (mod && key === '`') {
-            event.preventDefault();
-            this.consoleCollapsed = !this.consoleCollapsed;
-            this.consoleEl.style.display = this.consoleCollapsed ? 'none' : '';
-            return;
-        }
-        if (mod && (key === '/' || key === '7')) {
-            event.preventDefault();
-            this.toggleComment();
-            return;
-        }
-        if (mod && lower === 'd') {
-            // TV: Ctrl+D removes the current line; Ctrl+Shift+D duplicates it.
-            event.preventDefault();
-            if (event.shiftKey) this.duplicateLine();
-            else this.removeLine();
-            return;
-        }
-        if (mod && key === ' ') {
-            event.preventDefault();
-            this.offerAutocomplete();
-            return;
-        }
-        if (event.altKey && (key === 'ArrowUp' || key === 'ArrowDown')) {
-            event.preventDefault();
-            if (event.shiftKey) this.duplicateLine(key === 'ArrowUp' ? 'up' : 'down');
-            else this.moveLine(key === 'ArrowUp' ? 'up' : 'down');
-            return;
-        }
-        if (key === 'Tab') {
-            event.preventDefault();
-            if (this.hasMultilineSelection()) this.indentSelection(event.shiftKey ? -1 : 1);
-            else if (event.shiftKey) this.indentSelection(-1);
-            else {
-                const before = this.input.value.slice(0, this.input.selectionStart);
-                const lineStart = before.lastIndexOf('\n') + 1;
-                const indent = before.slice(lineStart).match(/^ */)?.[0].length ?? 0;
-                const width = this.settings.tabSize;
-                this.input.setRangeText(' '.repeat(width - (indent % width)), this.input.selectionStart, this.input.selectionEnd, 'end');
-                this.input.dispatchEvent(new Event('input'));
-            }
-            return;
-        }
-        if (key === 'Enter') {
-            const { selectionStart: start, selectionEnd: end, value } = this.input;
-            const before = value.slice(0, start);
-            const lineStart = before.lastIndexOf('\n') + 1;
-            const line = before.slice(lineStart);
-            const indent = line.match(/^ */)?.[0] ?? '';
-            if (/:\s*$/.test(line)) return; // Pine has no block colon; keep the plain newline
-            const deeper = /(^|\s)(if|for|while|switch|else|method|type)\b/.test(line) && !line.trim().startsWith('//') ? ' '.repeat(this.settings.tabSize) : '';
-            event.preventDefault();
-            this.input.setRangeText(`\n${indent}${deeper}`, start, end, 'end');
-            this.input.dispatchEvent(new Event('input'));
-        }
-    }
-
-    // ── settings · minimap · autocomplete ─────────────────────────────────────────
-
-    /** Push the current settings onto the surface (font size, tab width, the two toggles). */
+    /** Push the persisted settings onto Monaco. */
     private applySettings(): void {
-        const s = this.settings;
-        this.wrap.style.fontSize = `${s.fontSize}px`;
-        this.input.style.tabSize = String(s.tabSize);
-        this.highlight.style.tabSize = String(s.tabSize);
-        this.el.dataset.guide = s.lineGuide ? 'on' : 'off';
-        this.minimapEl.hidden = !s.minimap;
-        if (s.minimap) this.paintMinimap();
-        this.savePreferences();
-    }
-
-    private savePreferences(): void {
+        this.surface?.applySettings(this.settings);
         saveSettings((key, value) => globalThis.localStorage?.setItem(key, value), this.settings);
     }
 
@@ -993,7 +731,7 @@ export class PineEditor extends SidePanel {
         };
         const hint = doc.createElement('div');
         hint.className = 'vela-pe-set-hint';
-        hint.textContent = 'Ctrl+Space always offers suggestions.';
+        hint.textContent = 'Use Ctrl+Space or Actions → Suggest. Minimap is hidden in phone portrait.';
         this.pop.replaceChildren(
             this.popTitle('Editor settings'),
             toggle('Suggestions as you type', 'suggestions'),
@@ -1003,348 +741,6 @@ export class PineEditor extends SidePanel {
             number('Tab size', 'tabSize', [2, 4, 8]),
             hint,
         );
-    }
-
-    /** Paint the code overview: one faint bar per line, width by line length. */
-    private paintMinimap(): void {
-        if (!this.settings.minimap) return;
-        const doc = this.body.ownerDocument;
-        const dpr = globalThis.devicePixelRatio || 1;
-        const width = this.minimapEl.clientWidth || 56;
-        const height = this.minimapEl.clientHeight || this.wrap.clientHeight || 300;
-        this.minimapCanvas.width = Math.round(width * dpr);
-        this.minimapCanvas.height = Math.round(height * dpr);
-        const ctx = this.minimapCanvas.getContext('2d');
-        if (!ctx) return;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, width, height);
-        const ink = getComputedStyle(this.el).getPropertyValue('--vela-fg-faint').trim() || 'rgba(255,255,255,0.35)';
-        const lines = this.input.value.split('\n');
-        const top = MM_TOP;
-        // A real minimap reads at a FIXED density (a line is worth a few pixels, never
-        // thirty): a short script then occupies the top of the strip instead of stretching
-        // six fat bars down the panel.
-        const usable = Math.max(1, height - top * 2);
-        const rowH = Math.max(1.2, Math.min(MM_LINE_H, usable / Math.max(1, lines.length)));
-        this.mmRowH = rowH;
-        ctx.fillStyle = ink;
-        const maxLen = Math.max(20, ...lines.map((l) => l.length));
-        lines.forEach((line, i) => {
-            const trimmed = line.trim();
-            if (trimmed === '') return;
-            const w = Math.max(2, (Math.min(line.length, maxLen) / maxLen) * (width - 8));
-            ctx.globalAlpha = trimmed.startsWith('//') ? 0.3 : 0.7;
-            ctx.fillRect(4, top + i * rowH, w, Math.max(1, rowH - 0.8));
-        });
-        ctx.globalAlpha = 1;
-        this.paintMinimapView();
-        void doc;
-    }
-
-    /** The viewport box on the minimap — the slice of the script the editor shows. */
-    private paintMinimapView(): void {
-        if (!this.settings.minimap) return;
-        const lines = this.input.value.split('\n').length;
-        const lineHeight = parseFloat(getComputedStyle(this.input).lineHeight) || 19;
-        const visible = Math.min(lines, Math.max(1, this.input.clientHeight / lineHeight));
-        const rowH = this.mmRowH || MM_LINE_H;
-        const boxH = Math.max(6, visible * rowH);
-        const scrolled = this.input.scrollTop / lineHeight;
-        const boxTop = MM_TOP + Math.max(0, Math.min(lines * rowH - boxH, scrolled * rowH));
-        this.minimapView.style.top = `${Math.round(boxTop)}px`;
-        this.minimapView.style.height = `${Math.round(boxH)}px`;
-    }
-
-    /** A click on the minimap scrolls the editor to that fraction of the drawn map. */
-    private jumpToFraction(fraction: number): void {
-        const lines = this.input.value.split('\n').length;
-        const rowH = this.mmRowH || MM_LINE_H;
-        const height = this.minimapEl.clientHeight || 1;
-        const drawn = lines * rowH;
-        const y = Math.max(0, Math.min(drawn, fraction * (height - MM_TOP * 2)));
-        const target = Math.min(lines, Math.max(1, Math.round(y / Math.max(0.5, rowH)) + 1));
-        this.jumpToLine(target);
-    }
-
-    // ── autocomplete ──────────────────────────────────────────────────────────────
-
-    private acItems: Array<{ label: string; kind: string }> = [];
-    private acIndex = 0;
-    private acFrom = 0;
-
-    /** Offer completions for the word at the caret (as-you-type, or on Ctrl+Space). */
-    private offerAutocomplete(): void {
-        const text = this.input.value;
-        const caret = this.input.selectionStart;
-        const before = text.slice(0, caret);
-        const prefix = /[A-Za-z_][A-Za-z0-9_.]*$|\.[A-Za-z0-9_]*$/.exec(before)?.[0] ?? '';
-        const items = complete(prefix, text);
-        if (items.length === 0 || (prefix === '' && !this.input.selectionStart)) {
-            this.hideAutocomplete();
-            return;
-        }
-        this.acItems = items;
-        this.acIndex = 0;
-        this.acFrom = caret - prefix.length;
-        this.renderAutocomplete();
-        this.positionAutocomplete(this.acFrom);
-    }
-
-    private renderAutocomplete(): void {
-        const doc = this.body.ownerDocument;
-        this.autocompleteEl.replaceChildren(
-            ...this.acItems.map((item, i) => {
-                const row = doc.createElement('div');
-                row.className = 'vela-pe-ac-row';
-                row.dataset.active = String(i === this.acIndex);
-                const label = doc.createElement('span');
-                label.textContent = item.label;
-                const kind = doc.createElement('span');
-                kind.className = 'vela-pe-ac-kind';
-                kind.textContent = item.kind;
-                row.append(label, kind);
-                row.addEventListener('click', () => {
-                    this.acIndex = i;
-                    this.acceptAutocomplete();
-                });
-                return row;
-            }),
-        );
-        this.autocompleteEl.hidden = false;
-    }
-
-    /** Anchor the list to the CARET, measured in the same monospace grid as the code. */
-    private positionAutocomplete(from: number): void {
-        const text = this.input.value;
-        const starts = lineStarts(text);
-        let line = 0;
-        while (line + 1 < starts.length && starts[line + 1]! <= from) line++;
-        const col = from - starts[line]!;
-        const style = getComputedStyle(this.input);
-        const lineHeight = parseFloat(style.lineHeight) || 19;
-        const charWidth = this.charWidth(style);
-        const padLeft = parseFloat(style.paddingLeft) || 10;
-        const padTop = parseFloat(style.paddingTop) || 10;
-        const wrapRect = this.wrap.getBoundingClientRect();
-        const left = Math.min(
-            Math.max(4, padLeft + col * charWidth - this.input.scrollLeft + this.gutter.clientWidth),
-            Math.max(4, wrapRect.width - 170),
-        );
-        const top = Math.min(
-            Math.max(4, padTop + (line + 1) * lineHeight - this.input.scrollTop),
-            Math.max(4, this.wrap.clientHeight - 40),
-        );
-        this.autocompleteEl.style.left = `${left}px`;
-        this.autocompleteEl.style.top = `${top}px`;
-    }
-
-    /** Monospace glyph width, measured once per call (the font size can change). */
-    private charWidth(style: CSSStyleDeclaration): number {
-        const probe = this.body.ownerDocument.createElement('span');
-        probe.textContent = 'M'.repeat(25);
-        probe.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font:${style.font};letter-spacing:${style.letterSpacing}`;
-        this.body.appendChild(probe);
-        const width = probe.getBoundingClientRect().width / 25;
-        probe.remove();
-        return width || 7.5;
-    }
-
-    private moveAutocomplete(delta: number): void {
-        if (this.acItems.length === 0) return;
-        this.acIndex = (this.acIndex + delta + this.acItems.length) % this.acItems.length;
-        this.renderAutocomplete();
-        const active = this.autocompleteEl.querySelector<HTMLElement>('[data-active="true"]');
-        active?.scrollIntoView({ block: 'nearest' });
-    }
-
-    private acceptAutocomplete(): void {
-        const item = this.acItems[this.acIndex];
-        if (!item) {
-            this.hideAutocomplete();
-            return;
-        }
-        const caret = this.input.selectionStart;
-        this.input.setRangeText(item.label, this.acFrom, caret, 'end');
-        this.input.dispatchEvent(new Event('input'));
-        this.hideAutocomplete();
-    }
-
-    private hideAutocomplete(): void {
-        this.autocompleteEl.hidden = true;
-        this.acItems = [];
-    }
-
-    // ── line operations (TradingView's editing shortcuts) ─────────────────────────
-    //
-    // Everything below works on the LINES array and then rebuilds the selection from
-    // (line, column) rather than from absolute offsets: a comment marker, an indent or a
-    // moved line changes the text length, and offset arithmetic is where such edits go
-    // wrong. `commitEdit` is the one place that writes.
-
-    private selectionInfo(): {
-        lines: string[];
-        first: number;
-        last: number;
-        startCol: number;
-        endCol: number;
-    } {
-        const text = this.input.value;
-        const lines = text.split('\n');
-        const starts = lineStarts(text);
-        const lineOf = (index: number): number => {
-            let lo = 0;
-            let hi = starts.length - 1;
-            while (lo < hi) {
-                const mid = (lo + hi + 1) >> 1;
-                if (starts[mid]! <= index) lo = mid;
-                else hi = mid - 1;
-            }
-            return lo;
-        };
-        const first = lineOf(this.input.selectionStart);
-        const last = lineOf(this.input.selectionEnd);
-        return {
-            lines,
-            first,
-            last,
-            startCol: this.input.selectionStart - starts[first]!,
-            endCol: this.input.selectionEnd - starts[last]!,
-        };
-    }
-
-    /** Write the lines back and re-place the caret by (line, column). */
-    private commitEdit(lines: string[], first: number, last: number, startCol: number, endCol: number): void {
-        const text = lines.join('\n');
-        const starts = lineStarts(text);
-        const from = starts[Math.max(0, Math.min(first, starts.length - 1))]!;
-        let to = starts[Math.max(0, Math.min(last, starts.length - 1))]!;
-        const lineText = lines[Math.max(0, Math.min(last, lines.length - 1))] ?? '';
-        const startLineText = lines[Math.max(0, Math.min(first, lines.length - 1))] ?? '';
-        const fromPos = from + Math.min(startCol, startLineText.length);
-        const toPos = to + Math.min(endCol, lineText.length);
-        this.input.value = text;
-        this.input.setSelectionRange(fromPos, toPos);
-        this.input.dispatchEvent(new Event('input'));
-    }
-
-    private hasMultilineSelection(): boolean {
-        return this.input.value.slice(this.input.selectionStart, this.input.selectionEnd).includes('\n');
-    }
-
-    /** Ctrl+/ — comment the selected lines, or uncomment them when they all are. */
-    private toggleComment(): void {
-        const { lines, first, last, startCol, endCol } = this.selectionInfo();
-        const body = lines.slice(first, last + 1);
-        const filled = body.filter((l) => l.trim() !== '');
-        const allCommented = filled.length > 0 && filled.every((l) => /^\s*\/\//.test(l));
-        for (let i = first; i <= last; i++) {
-            const line = lines[i]!;
-            if (line.trim() === '') continue;
-            lines[i] = allCommented ? line.replace(/^(\s*)\/\/ ?/, '$1') : line.replace(/^(\s*)/, '$1// ');
-        }
-        const shift = filled.length > 0 && allCommented ? -3 : 3;
-        this.commitEdit(lines, first, last, Math.max(0, startCol + shift), Math.max(0, endCol + shift));
-    }
-
-    /** Ctrl+D — remove the line (the caret lands at the start of the next one). */
-    private removeLine(): void {
-        const { lines, first } = this.selectionInfo();
-        if (lines.length === 1) {
-            this.commitEdit([''], 0, 0, 0, 0);
-            return;
-        }
-        lines.splice(first, 1);
-        const target = Math.min(first, lines.length - 1);
-        this.commitEdit(lines, target, target, 0, 0);
-    }
-
-    /** Ctrl+Shift+D / Alt+Shift+↑↓ — copy the selected lines below (or above) themselves. */
-    private duplicateLine(direction: 'up' | 'down' = 'down'): void {
-        const { lines, first, last, startCol, endCol } = this.selectionInfo();
-        const block = lines.slice(first, last + 1);
-        if (direction === 'down') {
-            lines.splice(last + 1, 0, ...block);
-            this.commitEdit(lines, first + block.length, last + block.length, startCol, endCol);
-        } else {
-            lines.splice(first, 0, ...block);
-            this.commitEdit(lines, first, last, startCol, endCol);
-        }
-    }
-
-    /** Alt+↑↓ — move the selected lines one line up or down, selection riding along. */
-    private moveLine(direction: 'up' | 'down'): void {
-        const { lines, first, last, startCol, endCol } = this.selectionInfo();
-        if (direction === 'up') {
-            if (first === 0) return;
-            const above = lines[first - 1]!;
-            lines.splice(first - 1, 1);
-            lines.splice(last, 0, above);
-            this.commitEdit(lines, first - 1, last - 1, startCol, endCol);
-        } else {
-            if (last >= lines.length - 1) return;
-            const below = lines[last + 1]!;
-            lines.splice(last + 1, 1);
-            lines.splice(first, 0, below);
-            this.commitEdit(lines, first + 1, last + 1, startCol, endCol);
-        }
-    }
-
-    /** Tab / Shift+Tab over a selection — indent or outdent every touched line. */
-    private indentSelection(direction: 1 | -1): void {
-        const { lines, first, last, startCol, endCol } = this.selectionInfo();
-        const pad = ' '.repeat(this.settings.tabSize);
-        let firstDelta = 0;
-        let lastDelta = 0;
-        for (let i = first; i <= last; i++) {
-            const line = lines[i]!;
-            const next = direction > 0 ? pad + line : line.replace(new RegExp(`^ {1,${this.settings.tabSize}}`), '');
-            const delta = next.length - line.length;
-            if (i === first) firstDelta = delta;
-            if (i === last) lastDelta = delta;
-            lines[i] = next;
-        }
-        this.commitEdit(lines, first, last, Math.max(0, startCol + firstDelta), Math.max(0, endCol + lastDelta));
-    }
-
-    /** The phone sheet: drag the grip to set the panel's height, remembered per device. */
-    private bindSheetDrag(): void {
-        const saved = Number(globalThis.localStorage?.getItem(SHEET_KEY) ?? '');
-        if (Number.isFinite(saved) && saved > 0) this.el.style.setProperty('--pe-sheet-h', `${saved}%`);
-        let startY = 0;
-        let startPct = 0;
-        const move = (event: PointerEvent): void => {
-            const parent = this.el.parentElement;
-            const full = parent?.getBoundingClientRect().height || window.innerHeight;
-            const next = startPct + ((startY - event.clientY) / full) * 100;
-            const clamped = Math.min(92, Math.max(22, next));
-            this.el.style.setProperty('--pe-sheet-h', `${clamped.toFixed(2)}%`);
-        };
-        const up = (event: PointerEvent): void => {
-            this.el.classList.remove('vela-pe-dragging');
-            this.el.ownerDocument.removeEventListener('pointermove', move);
-            this.el.ownerDocument.removeEventListener('pointerup', up);
-            const pct = parseFloat(this.el.style.getPropertyValue('--pe-sheet-h'));
-            if (Number.isFinite(pct)) {
-                try {
-                    globalThis.localStorage?.setItem(SHEET_KEY, String(Math.round(pct)));
-                } catch {
-                    // storage disabled — the height still applies for this session
-                }
-            }
-            // A tap (no movement) snaps between the two useful heights.
-            if (Math.abs(event.clientY - startY) < 4) {
-                const nextPct = parseFloat(this.el.style.getPropertyValue('--pe-sheet-h')) > 60 ? 34 : 72;
-                this.el.style.setProperty('--pe-sheet-h', `${nextPct}%`);
-            }
-        };
-        this.grip.addEventListener('pointerdown', (event) => {
-            event.preventDefault();
-            startY = event.clientY;
-            startPct = parseFloat(this.el.style.getPropertyValue('--pe-sheet-h')) || 58;
-            this.el.classList.add('vela-pe-dragging');
-            this.el.ownerDocument.addEventListener('pointermove', move);
-            this.el.ownerDocument.addEventListener('pointerup', up);
-        });
     }
 
     // ── chart actions ──────────────────────────────────────────────────────────────
@@ -1384,19 +780,28 @@ export class PineEditor extends SidePanel {
     private async run(mode: 'add' | 'update'): Promise<void> {
         const chart = this.chart;
         if (!chart) return;
+        // The engine runs this exact snapshot even if the user types or switches scripts
+        // while it is working. Late errors must not annotate a different draft or chart.
+        const script = this.active;
+        const code = script.code;
+        const handle = this.handle;
         const started = performance.now();
+        const epoch = this.clearEngineErrors();
+        const current = (): boolean => !this.surfaceDestroyed && this.chart === chart && !this.builtin && this.active.id === script.id;
+        const currentAttempt = (): boolean => current() && this.diagnosticEpoch === epoch && this.active.code === code;
         this.pushMessage('info', mode === 'add' ? 'Adding to chart…' : 'Updating on chart…');
 
-        if (mode === 'update' && this.handle) {
-            const result = await this.handle.updateCode(this.active.code);
+        if (mode === 'update' && handle) {
+            const result = await handle.updateCode(code);
             const ms = Math.round(performance.now() - started);
             if (result.ok) {
-                this.active = commitVersion(this.active, 'update');
-                this.commitActive();
-                this.persist();
-                this.pushMessage('info', `${this.active.name} updated on chart (${versionLabel(this.active)}, ${ms} ms)`);
-                this.render();
-            } else {
+                const version = this.commitExecutedSnapshot(script.id, code);
+                if (current() && version) {
+                    this.syncHandle();
+                    this.pushMessage('info', `${version.name} updated on chart (${versionLabel(version)}, ${ms} ms)`);
+                    this.render();
+                }
+            } else if (currentAttempt()) {
                 this.pushMessage('error', result.error?.message ?? 'Update failed', errorLine(result.error));
             }
             return;
@@ -1404,32 +809,36 @@ export class PineEditor extends SidePanel {
 
         // A fresh add: drop the previous instance of THIS script so a re-add never stacks
         // two copies (the editor's own id makes that cheap).
-        if (this.handle) {
-            this.handle.remove();
-            this.handle = null;
+        if (handle) {
+            handle.remove();
+            if (this.handle === handle) this.handle = null;
         }
-        const result = await chart.runIndicator(this.active.code, {
+        const result = await chart.runIndicator(code, {
             // The chart's OWN default language: the editor is engine-agnostic, so a host
             // that registered only `demo` (the docs example) gets a working editor too.
             language: chart.defaultLanguage,
-            id: this.chartIdFor(this.active),
-            title: this.active.name,
+            id: this.chartIdFor(script),
+            title: script.name,
         });
         const ms = Math.round(performance.now() - started);
         if (result.ok && result.handle) {
-            this.handle = result.handle;
-            this.active = commitVersion(this.active, 'update');
-            this.commitActive();
-            this.persist();
-            this.pushMessage('info', `${this.active.name} added to chart (${versionLabel(this.active)}, ${ms} ms)`);
-            this.render();
-        } else {
+            const version = this.commitExecutedSnapshot(script.id, code);
+            if (current() && version) {
+                this.handle = result.handle;
+                this.pushMessage('info', `${version.name} added to chart (${versionLabel(version)}, ${ms} ms)`);
+                this.render();
+            }
+        } else if (currentAttempt()) {
             this.pushMessage('error', result.error?.message ?? 'The script did not run', errorLine(result.error));
             this.render();
         }
     }
 
     private saveVersion(): void {
+        if (this.builtin) {
+            this.pushMessage('warn', 'Create a working copy before saving a built-in script.');
+            return;
+        }
         this.active = commitVersion(this.active, 'save');
         this.commitActive();
         this.persist();
@@ -1438,6 +847,19 @@ export class PineEditor extends SidePanel {
     }
 
     // ── library helpers ────────────────────────────────────────────────────────────
+
+    /** Version what actually ran, while retaining any newer draft and active script. */
+    private commitExecutedSnapshot(id: string, code: string): PineScript | null {
+        if (this.surfaceDestroyed) return null;
+        const current = this.library.scripts.find((script) => script.id === id);
+        if (!current) return null;
+        const version = commitVersion({ ...current, code }, 'update');
+        const next = { ...version, code: current.code, updatedAt: Math.max(version.updatedAt, current.updatedAt) };
+        this.library = { ...this.library, scripts: this.library.scripts.map((script) => script.id === id ? next : script) };
+        if (this.active.id === id) this.active = next;
+        this.persist();
+        return next;
+    }
 
     private commitActive(): void {
         this.library = {
@@ -1452,6 +874,8 @@ export class PineEditor extends SidePanel {
     }
 
     private switchTo(script: PineScript): void {
+        this.clearEngineErrors();
+        this.builtin = null;
         this.active = script;
         this.library = { ...this.library, activeId: script.id };
         this.messages.length = 0;
@@ -1479,9 +903,10 @@ export class PineEditor extends SidePanel {
         this.primary.textContent = builtin ? 'Make a copy' : this.live ? 'Update on chart' : 'Add to chart';
         this.primary.hidden = builtin !== null;
         const code = builtin ? builtin.source : this.active.code;
-        if (this.input.value !== code) this.input.value = code;
+        const key = builtin ? `builtin:${builtin.title}` : `script:${this.active.id}`;
+        this.surface?.showDocument(key, code, builtin !== null);
         this.builtinBar.hidden = !builtin;
-        this.input.readOnly = builtin !== null;
+        this.caret.hidden = builtin !== null;
         this.paint();
         this.paintStatus();
     }
@@ -1493,12 +918,12 @@ export class PineEditor extends SidePanel {
     makeWorkingCopy(): void {
         const builtin = this.builtin;
         if (!builtin) return;
+        this.clearEngineErrors();
         const created = createScript('indicator', `${builtin.title} copy`);
         const copy = { ...created, code: builtin.source, versions: [{ ...created.versions[0]!, code: builtin.source }] };
         this.library = { ...this.library, scripts: [...this.library.scripts, copy], activeId: copy.id };
         this.active = copy;
         this.builtin = null;
-        this.input.readOnly = false;
         this.builtinBar.hidden = true;
         this.syncHandle();
         this.render();
@@ -1507,23 +932,18 @@ export class PineEditor extends SidePanel {
         this.focus();
     }
 
-    /** Repaint the highlight layer, the gutter and the console — not the textarea value. */
+    /** Invalidate in-flight diagnostics and remove markers from the current model. */
+    private clearEngineErrors(): number {
+        this.diagnosticEpoch += 1;
+        this.engineErrors.length = 0;
+        this.surface?.setErrors([]);
+        return this.diagnosticEpoch;
+    }
+
+    /** Only engine-reported errors become Monaco markers; no synthetic diagnostics. */
     private paint(): void {
-        const code = this.input.value;
-        this.highlight.innerHTML = highlight(code) + '\n';
-        const errorLines = new Set(this.messages.filter((m) => m.level === 'error' && m.line).map((m) => m.line as number));
-        const lines = code.split('\n').length;
-        const row = this.body.ownerDocument.createElement('div');
-        for (let i = 1; i <= lines; i++) {
-            const span = this.body.ownerDocument.createElement('span');
-            span.className = errorLines.has(i) ? 'vela-pe-gutter-line vela-pe-err' : 'vela-pe-gutter-line';
-            span.textContent = String(i);
-            row.append(span);
-        }
-        this.gutter.replaceChildren(row);
-        this.syncScroll();
+        this.surface?.setErrors(this.engineErrors);
         this.paintConsole();
-        this.paintMinimap();
     }
 
     private paintConsole(): void {
@@ -1561,7 +981,8 @@ export class PineEditor extends SidePanel {
         clear.textContent = 'Clear';
         clear.addEventListener('click', () => {
             this.messages.length = 0;
-            this.paintConsole();
+            this.clearEngineErrors();
+            this.paint();
         });
         head.append(clear);
 
@@ -1592,28 +1013,15 @@ export class PineEditor extends SidePanel {
         this.consoleEl.scrollTop = this.consoleEl.scrollHeight;
     }
 
-    private syncScroll(): void {
-        this.highlight.scrollTop = this.input.scrollTop;
-        this.highlight.scrollLeft = this.input.scrollLeft;
-        this.gutter.scrollTop = this.input.scrollTop;
-    }
-
     private jumpToLine(line: number): void {
-        const lines = this.input.value.split('\n');
-        const before = lines.slice(0, Math.max(0, line - 1)).join('\n');
-        const start = before.length + (line > 1 ? 1 : 0);
-        const end = start + (lines[line - 1]?.length ?? 0);
-        this.input.focus();
-        this.input.setSelectionRange(start, end);
-        const lineHeight = parseFloat(getComputedStyle(this.input).lineHeight) || 20;
-        this.input.scrollTop = Math.max(0, (line - 4) * lineHeight);
-        this.syncScroll();
+        this.surface?.jumpToLine(line);
     }
 
     private pushMessage(level: ConsoleMessage['level'], text: string, line?: number): void {
         this.messages.push({ level, text, time: Date.now(), ...(line ? { line } : {}) });
         if (level === 'error') {
-            // An error invalidates the last promise: repaint the gutter so the line is marked.
+            if (line) this.engineErrors.push({ line, text });
+            // Only the engine's reported line becomes an editor marker.
             this.paint();
         } else {
             this.paintConsole();
@@ -1640,11 +1048,8 @@ export class PineEditor extends SidePanel {
     /** The slim strip under the code: caret, size, language, and whether it is on chart. */
     private paintStatus(): void {
         const doc = this.body.ownerDocument;
-        const text = this.input.value;
-        const before = text.slice(0, this.input.selectionStart);
-        const line = before.split('\n').length;
-        const col = before.length - before.lastIndexOf('\n');
-        const lines = text.split('\n').length;
+        const position = this.surface?.getPosition() ?? { line: 1, column: 1, lines: (this.builtin?.source ?? this.active.code).split('\n').length };
+        const { line, column: col, lines } = position;
         const make = (key: string, label: string, push = false): HTMLElement => {
             const span = doc.createElement('span');
             span.dataset.part = key;
@@ -1653,19 +1058,28 @@ export class PineEditor extends SidePanel {
             return span;
         };
         const state = make('state', this.live ? `On chart · v${versionLabel(this.active)}` : 'Not on chart');
-        if (this.live) state.style.color = 'var(--vela-accent)';
+        if (this.live) state.style.color = 'var(--vela-accent-ink, var(--vela-accent))';
+        const language = make('lang', 'Pine Script');
+        language.title = 'Pine v6 reference suggestions; execution depends on the configured engine.';
         this.statusEl.replaceChildren(
             make('caret', `Ln ${line}, Col ${col}`),
             make('size', `${lines} line${lines === 1 ? '' : 's'}`),
-            make('lang', 'Pine Script'),
+            language,
             state,
             make('hint', 'Ctrl+Enter to run', true),
         );
+        const actions = doc.createElement('button');
+        actions.type = 'button';
+        actions.className = 'vela-pe-status-action';
+        actions.textContent = 'Actions';
+        actions.setAttribute('aria-label', 'Editor actions');
+        actions.addEventListener('click', () => this.surface?.showActions(actions));
+        this.statusEl.append(actions);
     }
 
     /** One popover, four contents — a second click on the same trigger closes it. */
     private openPop(kind: 'scripts' | 'history' | 'run' | 'more' | 'settings' | 'builtin'): void {
-        this.hideAutocomplete();
+        this.surface?.dismissOverlays();
         if (!this.pop.hidden && this.pop.dataset.kind === kind) {
             this.pop.hidden = true;
             return;
@@ -1867,6 +1281,7 @@ export class PineEditor extends SidePanel {
             meta.textContent = new Date(v.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
             row.append(label, kind, meta);
             row.addEventListener('click', () => {
+                this.clearEngineErrors();
                 this.active = restoreVersion(this.active, v.label);
                 this.commitActive();
                 this.persist();

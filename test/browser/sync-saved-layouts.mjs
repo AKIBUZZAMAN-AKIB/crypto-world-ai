@@ -1,13 +1,12 @@
-// Saved-layout management (gap 14). Desktop management now lives in the SEPARATE
-// layout-name popover, not in the grid setup panel. jsdom proves the callbacks;
-// Chromium proves the file picker, the download, and that rows survive a re-render.
+// Saved-layout management through the retained rich-menu API. The user-facing compact
+// manager and the same file operations are exercised in sync-floating-layout-manager.mjs.
 import { open, assert, report } from './helpers.mjs';
 
 const { browser, page, errors } = await open();
 try {
     const openManager = async () => {
         if (await page.locator('.vela-lm').count()) return;
-        await page.locator('.vela-widget-layoutname').click();
+        await page.evaluate(() => window.__ws.topbar.openLayoutMenu());
         await page.waitForSelector('.vela-lm', { timeout: 5000 });
     };
     const openActions = async (name) => {

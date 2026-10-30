@@ -27,6 +27,7 @@ const STYLE_ID = 'vela-widget-chart-type-sheet';
 const CSS = `
 .vela-cts {
     position: absolute;
+    container-type: inline-size;
     left: 50%;
     bottom: calc(58px + env(safe-area-inset-bottom, 0px));
     transform: translateX(-50%);
@@ -39,7 +40,7 @@ const CSS = `
     background: var(--vela-surface);
     color: var(--vela-fg);
     border: 1px solid var(--vela-border-strong);
-    border-radius: 14px;
+    border-radius: 0;
     box-shadow: var(--vela-shadow-dialog), inset 0 1px 0 rgb(255 255 255 / 6%);
     transform-origin: bottom center;
     animation: vela-cts-in 160ms var(--vela-ease);
@@ -53,7 +54,7 @@ const CSS = `
 /* A phone on its side has ~390px of height, not 844: the sheet must use the width it
    suddenly has instead of squeezing two rows of tiles under a 46px bar. Six columns and
    a taller scroll area turn 19 styles into four comfortable rows. */
-@media (max-height: 560px) {
+@media (max-height: 560px) and (orientation: landscape) {
     .vela-cts {
         bottom: calc(52px + env(safe-area-inset-bottom, 0px));
         max-height: min(84vh, 420px);
@@ -155,6 +156,13 @@ const CSS = `
     grid-template-columns: repeat(4, 1fr);
     gap: 5px;
 }
+/* Narrow embedded workspaces need fewer columns too: the star must not cover the
+   centre of its own tile. The viewport query is a fallback for older engines. */
+@container (max-width: 280px) { .vela-cts-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 280px) { .vela-cts-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-height: 560px) and (orientation: landscape) {
+    .vela-cts .vela-cts-grid { grid-template-columns: repeat(6, 1fr); }
+}
 .vela-cts-grid:empty { display: none; }
 .vela-cts-cell { position: relative; min-width: 0; }
 .vela-cts-tile {
@@ -182,7 +190,7 @@ const CSS = `
     background: var(--vela-hover);
     border-color: var(--vela-border-strong);
 }
-.vela-cts-cell[data-on='1'] .vela-cts-tile svg { color: var(--vela-accent, var(--vela-fg-bright)); }
+.vela-cts-cell[data-on='1'] .vela-cts-tile svg { color: var(--vela-accent-ink, var(--vela-accent, var(--vela-fg-bright))); }
 .vela-cts-tile:focus-visible { outline: 2px solid var(--vela-focus); outline-offset: 1px; }
 .vela-cts-name {
     font-size: 9.5px;
@@ -665,11 +673,18 @@ export class ChartTypeSheet {
             this.focusTrigger();
             return;
         }
-        const move: Record<string, number> = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: COLS, ArrowUp: -COLS };
+        // Follow the actual responsive grid and rendered (favourites-first) DOM order.
+        // A narrow embedded panel has three columns; landscape can have six.
+        const grid = (this.doc.activeElement as HTMLElement | null)?.closest<HTMLElement>('.vela-cts-grid');
+        const tracks = grid ? this.doc.defaultView?.getComputedStyle(grid).gridTemplateColumns ?? '' : '';
+        const repeat = /^repeat\((\d+)/.exec(tracks);
+        const columns = repeat ? Number(repeat[1]) : tracks && tracks !== 'none' ? tracks.trim().split(/\s+/).length : COLS;
+        const move: Record<string, number> = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: columns, ArrowUp: -columns };
         const step = move[e.key];
         if (step === undefined) return;
         // Rove over the tiles that are ON SCREEN (a filtered sheet has gaps).
-        const tiles = this.cells.filter((c) => !c.root.hidden).map((c) => c.tile);
+        const tiles = [...this.el.querySelectorAll<HTMLButtonElement>('.vela-cts-cell:not([hidden]) .vela-cts-tile')]
+            .filter((tile) => tile.getClientRects().length > 0);
         if (tiles.length === 0) return;
         e.preventDefault();
         e.stopPropagation();

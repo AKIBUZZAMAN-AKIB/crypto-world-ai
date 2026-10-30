@@ -34,19 +34,16 @@ try {
             if (shell === 'phone') {
                 await page.evaluate(() => document.querySelector('.vela-mb-more')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
                 await page.waitForTimeout(400);
-                // R87: Chart syncing is its OWN door now (the old "Sync" TAB inside the
-                // Layout sheet is gone). Open the door directly to reach the matrix.
-                await page.evaluate(() => [...document.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.trim().startsWith('Chart syncing'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+                await page.locator('.vela-md-row', { hasText: 'Layout setup' }).click();
             } else {
                 await page.click('button[aria-label^="Layout —"]');
             }
+            await page.locator('.vela-layout-setup').getByRole('tab', { name: 'Chart syncing' }).click();
             await page.waitForTimeout(450);
             const m = await page.evaluate(() => {
                 // The drawer keeps BOTH shells' tables in the DOM (one hidden) — take the live one.
                 const wrap = [...document.querySelectorAll('.vela-md-matrixwrap')].find((w) => w.clientWidth > 0) ?? null;
-                const sec = [...document.querySelectorAll('.vela-md-sec')].find((e) => e.getBoundingClientRect().width > 0);
-                const pop = document.querySelector('.vela-lp');
-                const sheet = pop && pop.getBoundingClientRect().width > 0 ? pop : sec;
+                const sheet = document.querySelector('.vela-layout-setup');
                 const r = sheet?.getBoundingClientRect();
                 return {
                     page: { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth },
@@ -76,14 +73,14 @@ try {
         try {
             await page.locator('.vela-mb-more').tap();
             await page.waitForTimeout(350);
-            // R87: "Chart syncing" is its own door (the old Sync TAB is gone).
-            await page.evaluate(() => [...document.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.trim().startsWith('Chart syncing'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+            await page.locator('.vela-md-row', { hasText: 'Layout setup' }).tap();
+            await page.locator('.vela-layout-setup').getByRole('tab', { name: 'Chart syncing' }).tap();
             await page.waitForTimeout(400);
             const m = await page.evaluate(() => {
                 const coarse = matchMedia('(pointer: coarse)').matches;
                 const cell = document.querySelector('.vela-md-matrixwrap[data-shell="phone"] .vela-md-chip');
                 const chip = document.querySelector('.vela-md-matrixwrap[data-shell="phone"] .vela-md-chip');
-                const row = document.querySelector('.vela-md-row');
+                const row = document.querySelector('.vela-ls-syncrows [role="switch"]');
                 const rect = (el) => (el ? { w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) } : null);
                 return { coarse, cell: rect(cell), tap: rect(chip ?? row), row: rect(row), page: { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth } };
             });

@@ -58,6 +58,10 @@ export const SYNC_MATRIX_CSS = `
 
 /* ── the table ─────────────────────────────────────────────────────────────── */
 .vela-md-matrixwrap {
+    /* The screen-reader live region must stay inside the scrollable matrix. Without
+       a local containing block its static position can escape a phone pane's
+       scroller and make the entire document vertically scrollable. */
+    position: relative;
     /* A 30px row is a dense table, not a toy: a chip is a STATE ("this chart is in the
        red group"), and a chip twice the glyph's height is a billboard. The desktop cell
        stays comfortably over the WCAG 2.2 AA floor (24px); the coarse-pointer block at
@@ -230,6 +234,8 @@ export const SYNC_MATRIX_CSS = `
 /* Visually hidden, but read: the matrix's live region (group changes). */
 .vela-md-sr {
     position: absolute;
+    top: 0;
+    left: 0;
     width: 1px;
     height: 1px;
     margin: -1px;

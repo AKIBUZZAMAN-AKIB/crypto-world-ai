@@ -24,7 +24,7 @@ const MARKS_CSS = `
 .vela-marks-html { color: var(--vela-fg); line-height: 1.45; overflow-wrap: anywhere; }
 .vela-marks-html p { margin: 0 0 6px; }
 .vela-marks-html p:last-child { margin-bottom: 0; }
-.vela-marks-html a { color: var(--vela-accent); }
+.vela-marks-html a { color: var(--vela-accent-ink, var(--vela-accent)); }
 .vela-marks-html img { max-width: 100%; height: auto; }
 .vela-marks-html table { border-collapse: collapse; }
 .vela-marks-html td, .vela-marks-html th { padding: 2px 6px; border: 1px solid var(--vela-border); }

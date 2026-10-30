@@ -5,6 +5,18 @@ import { DARK_THEME, LIGHT_THEME } from '../src/core/theme';
 import { STATIC_TOKENS, themeTokens } from '../src/core/tokens';
 
 const opaque = (value: string) => !/rgba|hsla|transparent/.test(value) && parseRgb(value) !== null;
+const contrast = (a: string, b: string): number => {
+    const luminance = (value: string): number => {
+        const { r, g, b } = parseRgb(value)!;
+        const [red, green, blue] = [r, g, b].map((n) => {
+            const v = n / 255;
+            return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+    };
+    const x = luminance(a), y = luminance(b);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
 
 describe('mix', () => {
     it('flattens a wash onto the base as an opaque color', () => {
@@ -53,9 +65,17 @@ describe('themeTokens', () => {
         expect(light['--vela-selected-fg']).toBe('#ffffff');
     });
 
-    it('keeps the brand accent theme-independent', () => {
-        expect(themeTokens(DARK_THEME)['--vela-accent']).toBe(ACCENT);
-        expect(themeTokens(LIGHT_THEME)['--vela-accent']).toBe(ACCENT);
+    it('keeps the filled accent and its ink legible in both themes', () => {
+        for (const theme of [DARK_THEME, LIGHT_THEME]) {
+            const tokens = themeTokens(theme);
+            expect(tokens['--vela-accent']).toBe(ACCENT);
+            expect(contrast(tokens['--vela-fg-on-fill']!, tokens['--vela-accent']!)).toBeGreaterThanOrEqual(4.5);
+            const wash = mix(theme.background, tokens['--vela-accent']!, 0.12);
+            expect(contrast(tokens['--vela-accent-ink']!, wash)).toBeGreaterThanOrEqual(4.5);
+            expect(contrast(tokens['--vela-star']!, theme.background)).toBeGreaterThanOrEqual(4.5);
+            expect(contrast(tokens['--vela-star']!, wash)).toBeGreaterThanOrEqual(4.5);
+        }
+        expect(themeTokens(DARK_THEME)['--vela-accent-ink']).not.toBe(themeTokens(LIGHT_THEME)['--vela-accent-ink']);
     });
 
     it('emits every token in both themes so no chrome falls back to an unset variable', () => {

@@ -76,6 +76,22 @@ describe('the phone bar is three zones', () => {
         expect(order).toEqual(['vela-mb-tf', 'vela-mb-style', 'vela-mb-drawings', 'vela-mb-maximize', 'vela-mb-indicators', 'vela-mb-editor', 'vela-mb-actions']);
     });
 
+    it('puts the optional Alerts stop at the start of the scrolling band and mirrors its state', () => {
+        let calls = 0;
+        const bar = mount({ onAlertsClick: () => { calls += 1; } });
+        const band = bar.el.querySelector('.vela-mb-scroll')!;
+        const button = bar.el.querySelector<HTMLButtonElement>('.vela-mb-alerts')!;
+        expect(kids(band).map(name)[0]).toBe('vela-mb-alerts');
+        button.click();
+        expect(calls).toBe(1);
+        bar.setAlertsActive(true);
+        bar.setAlertCount(12);
+        expect(button.getAttribute('aria-pressed')).toBe('true');
+        expect(button.querySelector('.vela-mb-badge')!.textContent).toBe('9+');
+        bar.setAlertCount(0);
+        expect(button.querySelector<HTMLElement>('.vela-mb-badge')!.hidden).toBe(true);
+    });
+
     it('a shell without a stop simply has a shorter band — nothing else moves', () => {
         const bar = mount({ onEditorClick: undefined, onMaximizeClick: undefined, onDrawingsClick: undefined });
         const band = bar.el.querySelector('.vela-mb-scroll')!;

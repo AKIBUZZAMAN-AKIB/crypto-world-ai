@@ -44,6 +44,21 @@ describe('document — armed price alerts', () => {
         expect(out.priceAlerts![2]!.source).toBeUndefined();
     });
 
+    it('persists a durable level-line id and explicit ownership without trusting malformed fields', () => {
+        const out = sanitizeState({
+            ...base,
+            priceAlerts: [
+                { cellId: 'a', symbol: 'AAA', condition: 'cross', value: 100, lineId: 'dw-owned', lineOwned: true },
+                { cellId: 'a', symbol: 'AAA', condition: 'cross', value: 101, lineId: 'dw-legacy', lineOwned: false },
+                { cellId: 'a', symbol: 'AAA', condition: 'cross', value: 102, lineId: 5, lineOwned: true },
+            ],
+        })!;
+        expect(out.priceAlerts![0]).toMatchObject({ lineId: 'dw-owned', lineOwned: true });
+        expect(out.priceAlerts![1]).toMatchObject({ lineId: 'dw-legacy', lineOwned: false });
+        expect(out.priceAlerts![2]!.lineId).toBeUndefined();
+        expect(out.priceAlerts![2]!.lineOwned).toBeUndefined();
+    });
+
     it('drops rows that can never fire (no cell, no level, no condition)', () => {
         const out = sanitizeState({
             ...base,

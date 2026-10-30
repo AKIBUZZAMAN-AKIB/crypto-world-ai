@@ -79,7 +79,7 @@ const CSS = `
 .vela-cp-opt[data-active='1'] { background: var(--vela-selected-bg, var(--vela-hover)); color: var(--vela-selected-fg, var(--vela-fg-bright)); }
 .vela-cp-opt[aria-disabled='true'] { opacity: 0.5; cursor: default; }
 .vela-cp-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vela-cp-label mark { background: transparent; color: var(--vela-accent); font-weight: 700; }
+.vela-cp-label mark { background: transparent; color: var(--vela-accent-ink, var(--vela-accent)); font-weight: 700; }
 .vela-cp-opt[data-active='1'] .vela-cp-label mark { color: inherit; text-decoration: underline; }
 .vela-cp-keys { flex: none; display: inline-flex; gap: 3px; }
 .vela-cp-key {

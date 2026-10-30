@@ -71,10 +71,11 @@ own — a worker engine per chart). See [the workspace](./workspace.md).
 
 ### The script editor
 
-Configure an engine and the shells grow a **script editor**, docked as a side panel — the
-shape TradingView moved to in August 2025. It is a working surface, not a demo: scripts are
-created from a template, edited with syntax colouring and an 80-character ruler, versioned,
-and rendered **on the chart** they belong to.
+Configure an engine and the shells grow a **script editor**. Its editing surface is Monaco
+Editor 0.45.0 (the editor technology used by VS Code), loaded when the panel first opens.
+Scripts are created from a template, edited with Pine colouring and an optional 80-character
+ruler, versioned, and rendered **on the chart** they belong to. The editor is not the engine:
+execution still goes through the scripting engine configured by the host.
 
 ```ts
 new VelaWorkspace('#app', {
@@ -86,7 +87,7 @@ new VelaWorkspace('#app', {
 | Where | Entry point |
 | --- | --- |
 | Desktop | the **`<>` panel toggle** in the topbar (with the other panels), or a script row's **Source code** chip |
-| Phone | the **`<>` stop on the bottom bar** — the same panel, as a bottom sheet |
+| Phone | **More → Pine Editor** — the same panel, attached to the bottom of the workspace |
 | Code | `ws.openEditor()` / `ws.openEditor(source, title)`, and `ws.hasEditor` |
 
 **The flow** (TradingView's, deliberately):
@@ -94,8 +95,8 @@ new VelaWorkspace('#app', {
 - **Create new** — the script's name opens the library: every script, an inline rename
   field, and *New indicator* / *New strategy*. Templates compile as they are.
 - **Add to chart** — runs the script and, on success, puts it on the chart. A failure
-  leaves nothing behind: the error lands in the console (red, with a **clickable line
-  number**) and the offending gutter line is marked.
+  lands in the console; when the engine reports a line, that line is underlined and its
+  console link selects it. Markers describe the latest run only and clear on edits.
 - **Update on chart** — the same button once the script is live. It re-runs the code **in
   place**, keeps the trader's input values, and bumps only the **minor** version
   (`1.0 → 1.1`). Your *Settings* survive an update; that is the point of the split.
@@ -110,9 +111,9 @@ new VelaWorkspace('#app', {
   (the copy is a new library script — the built-in itself is never modified); the code chip
   and the banner sit behind `registerLegendAction` with `when: (ind) => ind.source !== undefined`.
 - **Open → Built-in script…** (⋯ menu, or *Built-in scripts…* in the script list) — the
-  catalog of built-in studies that have a Pine implementation, searchable, each opening
-  read-only. Studies whose visuals are not Pine (a volume profile, a compare overlay) have
-  no code, so they appear in neither place — TradingView's own rule: no `{ }`, no source.
+  catalog of built-in studies with Pine source, searchable, each opening read-only. Volume
+  and Compare also have readable Pine source; VPVR's viewport-dependent volume profile is
+  the intentional exception and has no `{ }` source action.
 
 ### Built-ins run their Pine code
 
@@ -128,8 +129,8 @@ state and `inspect()` all behave as before.
 - Inputs come from the script's `input.*` declarations (the settings dialog edits them and
   the chart re-runs), so the defaults are the study's own: `hlc3` for CCI and VWAP, `close`
   for the rest.
-- A study with **no** Pine implementation (`volume`, `vpvr`, `compare`, the session
-  studies) keeps the core-computed path and shows no `{ }` chip.
+- Volume and Compare retain their core-computed layer paths even though they offer readable
+  Pine source. A study without source, such as VPVR, has no `{ }` chip.
 - With no engine registered for the chart's default language, every built-in falls back to
   the core compute, so a host with candles only still gets its indicators.
 
@@ -138,12 +139,31 @@ emits a drawable model, and declares the catalog's `overlay`. `test/pine-parity.
 (opt-in, `PINE_PARITY=1`) runs a study both ways — native compute and Pine — and prints the
 drift, so a script that stops matching its built-in is visible rather than assumed.
 
-**Editor settings** (⋯ → *Editor settings*, the same block TradingView keeps there):
-suggestions as you type, the **minimap** (a click jumps), the **line-length guide** at the
-80-character mark, font size and tab size. They persist per device, and `Ctrl+Space`
-always offers completions whatever the suggestion toggle says.
+**Pine suggestions.** Completions include a factual snapshot of the official Pine v6
+reference (914 function, variable, constant, type and keyword records, retrieved
+2026-10-29), namespace members, named arguments, signatures where the reference provides
+them, locally declared symbols, and simple user-defined types and fields. Where a receiver's
+explicit or recognizable type is known, built-in and simple user-defined method completions
+omit the implicit receiver. `Ctrl/⌘+Space` opens suggestions manually;
+parameter help and a reference link are available for supported entries. This is a lexical
+editor aid, **not** TradingView's compiler or a complete semantic language service; symbols,
+scopes, overloads and future API changes may not all be represented. A suggestion also does
+not mean that the host's configured execution engine implements it.
 
-**Shortcuts**, matching the editor TradingView ships:
+**Editor actions.** Right-click opens Monaco's desktop context menu. On touch devices,
+long-press the code or tap **Actions** in the status strip for Undo, Redo, Cut, Copy, Paste,
+Select all, Find, Replace, Toggle line comment, Suggest and the command palette. Clipboard
+operations depend on browser permissions, a secure context and user activation; when a
+browser blocks them, use its native selection menu or keyboard shortcut instead. Long-press
+is cancelled by a scrolling gesture.
+
+**Editor settings** (⋯ → *Editor settings*): suggestions as you type, the **minimap**,
+the **line-length guide** at the 80-character mark, font size and tab size. They persist per
+device. The minimap is hidden in phone portrait to leave room for code, and returns in the
+desktop layout when enabled. Manual suggestions remain available when automatic suggestions
+are off. Each open script keeps its own model and undo history during the session.
+
+**Shortcuts** include:
 
 | Keys | Action |
 | --- | --- |
@@ -160,10 +180,18 @@ always offers completions whatever the suggestion toggle says.
 The console groups its messages by level (info / warning / error chips with counts), and
 an error's line number is a link that selects that line in the source.
 
-The panel is docked and resizable (drag the inner edge, double-click to reset), maximizable,
-and the open/closed state rides the shell's saved document. The script library itself lives
-in `localStorage` under `vela-pine-library` — a script written in the panel is the script
-the standalone `editor.html` deep link opens.
+The panel uses the same square standard-pane geometry as the Data Window: docked and
+width-adjustable on desktop, full-width, bottom-attached and height-adjustable on a portrait
+phone. Its heading does not move or maximize the pane. Landscape phones use desktop-style
+chrome. Open/closed state rides the shell's saved document; the script library lives in
+`localStorage` under `vela-pine-library`.
+
+Monaco's project does not officially support mobile browsers. Vela provides touch actions
+and tests them in mobile Chromium emulation, but real devices, virtual keyboards and native
+selection can vary. The one-file workspace embeds Monaco's CSS, font and editor worker, so
+the editor itself does not need a CDN; live market feeds still need a network. A host's CSP
+must allow the inline styling and a `blob:` worker (or provide its own compatible
+`MonacoEnvironment` worker configuration).
 
 ### Registering it once, app-wide
 

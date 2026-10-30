@@ -74,6 +74,16 @@ describe('surface inert', () => {
         expect(main.getAttribute('inert')).toBe(''); // still the host's, still inert
     });
 
+    it('an explicitly non-modal dialog leaves the chart interactive', () => {
+        const { main, panel } = page();
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-modal', 'false');
+        announceSurface(panel, true, 'dialog');
+        expect(main.hasAttribute('inert')).toBe(false);
+        announceSurface(panel, false, 'dialog');
+        expect(main.hasAttribute('inert')).toBe(false);
+    });
+
     it('a menu owns no isolation (it is non-modal by design)', () => {
         const { main, host } = page();
         const menu = document.createElement('div');

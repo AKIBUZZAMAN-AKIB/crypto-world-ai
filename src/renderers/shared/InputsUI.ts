@@ -1,4 +1,5 @@
 import type { InputSchema, InputValue, SymbolPickerFn } from '../../core/model/inputs';
+import { isLineLikeSeries, type SeriesSpec } from '../../core/model/series';
 import type { LegendActionView, LegendCalloutView } from '../../core/ports/IChartRenderer';
 import type { VelaTheme, MoveTarget } from '../../core/options';
 import { withAlpha } from '../../core/color';
@@ -52,6 +53,66 @@ export interface LegendPlotValue {
     color: string;
 }
 
+const INTERVAL_VISIBILITY_FAMILIES = ['Ticks', 'Seconds', 'Minutes', 'Hours', 'Days', 'Weeks', 'Months'] as const;
+export type IndicatorIntervalFamily = typeof INTERVAL_VISIBILITY_FAMILIES[number];
+
+/** Exclude hidden fill/source anchors that are not user-facing plot visuals. */
+function isUserVisiblePlot(spec: SeriesSpec): boolean {
+    if (spec.editable === false) return false;
+    if (spec.editable === true) return true;
+    const d = spec.display;
+    return spec.visible === false || !d || d.pane !== false || d.legend !== false || d.priceScale === true || d.dataWindow === true;
+}
+
+/** Settings controls generated from renderable Pine plots (not drawing objects). */
+export function indicatorStyleInputs(series: readonly SeriesSpec[]): InputSchema[] {
+    const plots = series.filter(isUserVisiblePlot);
+    if (plots.length === 0) return [];
+    const out: InputSchema[] = [
+        { key: 'visual:labelsOnScale', title: 'Labels on price scale', type: 'bool', defval: plots.every((s) => s.display?.priceScale !== false) },
+        { key: 'visual:valuesInStatusLine', title: 'Values in status line', type: 'bool', defval: plots.every((s) => s.display?.legend !== false) },
+    ];
+    for (const spec of plots) {
+        const group = spec.title || spec.id;
+        const prefix = `plot:${encodeURIComponent(spec.id)}:`;
+        const display = spec.display;
+        const displayed = !display || display.pane !== false || display.priceScale === true || display.legend === true || display.dataWindow === true;
+        out.push({ key: `${prefix}visible`, title: 'Visible', type: 'bool', defval: spec.visible !== false && displayed, group });
+        if (isLineLikeSeries(spec)) {
+            const pointColors = new Set(spec.points.map((point) => point.color).filter((color): color is string => Boolean(color)));
+            // A plot's point colors are a series payload even when Pine supplied a const color.
+            // Only omit the picker when more than one actual color proves the output dynamic.
+            if (pointColors.size <= 1) out.push({ key: `${prefix}color`, title: 'Color', type: 'color', defval: pointColors.values().next().value ?? spec.style.color, group });
+            out.push({ key: `${prefix}plotStyle`, title: 'Plot style', type: 'string', defval: spec.kind, options: ['line', 'step', 'area', 'histogram', 'columns', 'circles', 'cross'], group });
+            out.push({ key: `${prefix}width`, title: 'Line width', type: 'int', defval: spec.style.width, min: 1, max: 10, group });
+            out.push({ key: `${prefix}lineStyle`, title: 'Line style', type: 'string', defval: spec.style.lineStyle, options: ['solid', 'dashed', 'dotted'], group });
+        } else if (spec.kind === 'candle' || spec.kind === 'bar') {
+            const style = spec.style ?? {};
+            if (style.up) out.push({ key: `${prefix}up`, title: 'Up color', type: 'color', defval: style.up, group });
+            if (style.down) out.push({ key: `${prefix}down`, title: 'Down color', type: 'color', defval: style.down, group });
+        } else if (spec.kind === 'markers' && spec.markers.length > 0) {
+            const colors = [...new Set(spec.markers.map((marker) => marker.color))];
+            const sizes = [...new Set(spec.markers.map((marker) => marker.size ?? 'normal'))];
+            if (colors.length === 1) out.push({ key: `${prefix}color`, title: 'Color', type: 'color', defval: colors[0]!, group });
+            if (sizes.length === 1) out.push({ key: `${prefix}size`, title: 'Size', type: 'string', defval: sizes[0]!, options: ['tiny', 'small', 'normal', 'large', 'huge'], group });
+        }
+    }
+    return out;
+}
+
+/** Standard Pine indicator interval families used by its Visibility settings tab. */
+export function indicatorVisibilityInputs(): InputSchema[] {
+    return INTERVAL_VISIBILITY_FAMILIES.map((family) => ({ key: `interval:${family.toLowerCase()}`, title: family, type: 'bool', defval: true, group: 'Show on intervals' }));
+}
+
+export function indicatorStyleValues(series: readonly SeriesSpec[]): Record<string, InputValue> {
+    return Object.fromEntries(indicatorStyleInputs(series).map((input) => [input.key, input.defval]));
+}
+
+export function indicatorVisibilityValues(): Record<string, InputValue> {
+    return Object.fromEntries(indicatorVisibilityInputs().map((input) => [input.key, input.defval]));
+}
+
 interface LegendRow {
     id: string;
     /** Display text for the legend chip AND the settings-dialog header (may be a compact shorttitle). */
@@ -61,6 +122,11 @@ interface LegendRow {
     /** Declaration-props schema + values (the settings dialog's "Properties" tab). */
     props: InputSchema[];
     propValues: Record<string, InputValue>;
+    styleInputs: InputSchema[];
+    styleValues: Record<string, InputValue>;
+    styleNote?: string;
+    visibilityInputs: InputSchema[];
+    visibilityValues: Record<string, InputValue>;
     /** The NATIVE type id — what the settings dialog's Defaults menu keys on. */
     indicatorType?: string;
     el: HTMLElement;
@@ -855,7 +921,7 @@ export class InputsUI {
     }
 
     /** Create or update an indicator's legend row (in the legend for its pane). */
-    upsert(id: string, title: string, inputs: InputSchema[], values: Record<string, InputValue>, paneId = 'price', opts: { native?: boolean; beta?: boolean; props?: InputSchema[]; propValues?: Record<string, InputValue>; type?: string } = {}): void {
+    upsert(id: string, title: string, inputs: InputSchema[], values: Record<string, InputValue>, paneId = 'price', opts: { native?: boolean; beta?: boolean; props?: InputSchema[]; propValues?: Record<string, InputValue>; type?: string; series?: SeriesSpec[] } = {}): void {
         const existing = this.rows.get(id);
         if (existing) {
             existing.title = title;
@@ -863,6 +929,13 @@ export class InputsUI {
             existing.values = { ...values };
             existing.props = opts.props ?? [];
             existing.propValues = { ...(opts.propValues ?? {}) };
+            if (opts.series) {
+                existing.styleInputs = indicatorStyleInputs(opts.series);
+                existing.styleValues = { ...indicatorStyleValues(opts.series), ...existing.styleValues };
+                existing.styleNote = existing.styleInputs.length === 0
+                    ? (opts.native ? 'This indicator has no editable plot series.' : 'This script draws chart objects rather than plot series. Drawing colors and options are controlled by its Inputs.')
+                    : undefined;
+            }
             if (opts.type !== undefined) existing.indicatorType = opts.type;
             existing.titleEl.textContent = title;
             if (existing.paneId !== paneId) { // re-routed to a different pane
@@ -987,6 +1060,11 @@ export class InputsUI {
             values: { ...values },
             props: opts.props ?? [],
             propValues: { ...(opts.propValues ?? {}) },
+            styleInputs: indicatorStyleInputs(opts.series ?? []),
+            styleValues: indicatorStyleValues(opts.series ?? []),
+            ...(indicatorStyleInputs(opts.series ?? []).length === 0 ? { styleNote: opts.native ? 'This indicator has no editable plot series.' : 'This script draws chart objects rather than plot series. Drawing colors and options are controlled by its Inputs.' } : {}),
+            visibilityInputs: indicatorVisibilityInputs(),
+            visibilityValues: indicatorVisibilityValues(),
             ...(opts.type !== undefined ? { indicatorType: opts.type } : {}),
             el,
             titleEl,
@@ -1147,7 +1225,7 @@ export class InputsUI {
             row.controlsEl.appendChild(eye);
             eyeEl = eye;
         }
-        if (row.inputs.length > 0 || row.props.length > 0) {
+        if (row.inputs.length > 0 || row.props.length > 0 || row.styleInputs.length > 0 || row.visibilityInputs.length > 0) {
             const gear = doc.createElement('button');
             gear.type = 'button';
             gear.setAttribute('aria-label', 'Settings');

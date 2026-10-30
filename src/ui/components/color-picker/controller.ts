@@ -2,23 +2,67 @@
 
 import { ACCENT_BRIGHT } from '../../../core/palette';
 
-/** Split a color into its `#RRGGBB` part + alpha 0..1 (handles `#RGB`, `#RRGGBB(AA)`, `rgba()`). */
-export function splitColor(color: string): { hex6: string; alpha: number } {
-    const s = String(color ?? '').trim();
-    let m = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(s);
-    if (m) return { hex6: `#${m[1]!.toLowerCase()}`, alpha: m[2] ? parseInt(m[2], 16) / 255 : 1 };
-    m = /^#([0-9a-f]{3})$/i.exec(s);
-    if (m) {
-        const h = m[1]!.toLowerCase();
-        return { hex6: `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`, alpha: 1 };
+type ColorParts = { hex6: string; alpha: number };
+
+function parseColor(color: string): ColorParts | null {
+    let match = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(color);
+    if (match) return { hex6: `#${match[1]!.toLowerCase()}`, alpha: match[2] ? parseInt(match[2], 16) / 255 : 1 };
+    match = /^#([0-9a-f]{3})([0-9a-f])?$/i.exec(color);
+    if (match) {
+        const h = match[1]!.toLowerCase();
+        return { hex6: `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`, alpha: match[2] ? parseInt(match[2] + match[2], 16) / 255 : 1 };
     }
-    const rgba = /^rgba?\(([^)]+)\)/i.exec(s);
-    if (rgba) {
-        const p = rgba[1]!.split(',').map((v) => v.trim());
-        const hx = (n: number): string => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
-        const a = p[3] != null ? Math.max(0, Math.min(1, parseFloat(p[3]))) : 1;
-        return { hex6: `#${hx(parseInt(p[0] ?? '0', 10))}${hx(parseInt(p[1] ?? '0', 10))}${hx(parseInt(p[2] ?? '0', 10))}`, alpha: a };
-    }
+    const rgb = /^rgba?\(([^)]+)\)$/i.exec(color);
+    if (!rgb) return null;
+    const parts = rgb[1]!.trim().replace(/\s*\/\s*/, ' ').split(/[\s,]+/);
+    if (parts.length < 3 || parts.length > 4 || parts.some((value) => !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?%?$/i.test(value))) return null;
+    const channel = (value: string): number => {
+        const n = Number.parseFloat(value);
+        return value.endsWith('%') ? n * 255 / 100 : n;
+    };
+    const raw = parts.slice(0, 3).map(channel);
+    let alpha = parts[3] == null ? 1 : Number.parseFloat(parts[3]);
+    if (parts[3]?.endsWith('%')) alpha /= 100;
+    if (!raw.every(Number.isFinite) || !Number.isFinite(alpha)) return null;
+    const hx = (n: number): string => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+    return { hex6: `#${raw.map(hx).join('')}`, alpha: Math.max(0, Math.min(1, alpha)) };
+}
+
+/** Split CSS colors into `#RRGGBB` plus alpha; browsers resolve names and HSL via canvas. */
+export function splitColor(color: string): ColorParts {
+    const input = String(color ?? '').trim();
+    const direct = parseColor(input);
+    if (direct) return direct;
+    // Canvas accepts the browser's CSS color grammar (including names and HSL). Use two
+    // sentinels: an invalid assignment leaves fillStyle unchanged, rather than turning
+    // an unsupported value into a real but unrelated color.
+    try {
+        if (typeof document !== 'undefined' && typeof CSS !== 'undefined'
+            && typeof CSS.supports === 'function' && CSS.supports('color', input)) {
+            const canvas = document.createElement('canvas');
+            const ctx = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
+            if (ctx) {
+                ctx.fillStyle = '#010203'; // palette-exempt: validation sentinel, not a UI color
+                ctx.fillStyle = input;
+                const first = String(ctx.fillStyle);
+                ctx.fillStyle = '#fdfdfd';
+                ctx.fillStyle = input;
+                const second = String(ctx.fillStyle);
+                if (first === second) {
+                    const resolved = parseColor(first);
+                    if (resolved) return resolved;
+                    // Modern color spaces may serialize back as lab(), oklch(), or
+                    // color(display-p3 ...), not rgb(). Read one sRGB canvas pixel to
+                    // match the actual canvas renderer's gamut and alpha.
+                    ctx.clearRect(0, 0, 1, 1);
+                    ctx.fillRect(0, 0, 1, 1);
+                    const rgba = ctx.getImageData(0, 0, 1, 1).data;
+                    const hex6 = `#${[rgba[0], rgba[1], rgba[2]].map((n) => Number(n).toString(16).padStart(2, '0')).join('')}`;
+                    return { hex6, alpha: Number(rgba[3]) / 255 };
+                }
+            }
+        }
+    } catch { /* no canvas in a non-browser host */ }
     return { hex6: ACCENT_BRIGHT, alpha: 1 };
 }
 

@@ -1,11 +1,9 @@
-// The three-dots drawer (mobile) — the catch-all for everything the hidden topbar and
-// desktop bottombar used to carry: undo/redo/screenshot as an action row, then rows for
-// chart type, the multi-chart layout (workspace shells), the side panels (data window,
-// object tree, contributed), alerts, and every contributed topbar action. Chart type,
-// layout and alerts open as IN-DRAWER sub-views with a back button — a drawer inside a
-// drawer would stack sheets. Time zone lives on a long-press of the time axis (see
-// `timezone-drawer.ts`), not here.
+// The More pane carries the phone's hidden topbar and bottombar actions. Workspace
+// shells use a standard pane; legacy hosts keep the Drawer and its existing subviews.
+// Cursor, timezone and workspace action menus open without replacing the parent list.
 import { Drawer } from '../ui/components/drawer';
+import { CompactChoiceMenu } from './compact-choice-menu';
+import type { WorkspaceToolPanel } from './workspace-tool-panel';
 import { iconEl } from '../ui/icons';
 import { downloadText } from '../ui/download';
 import { injectStyles } from '../ui/styles';
@@ -87,6 +85,10 @@ const CSS = `
 .vela-md-action .vela-icon { font-size: 17px; width: 17px; height: 17px; }
 .vela-md-list { padding: 6px 0 4px; }
 .vela-md-row {
+    all: unset;
+    box-sizing: border-box;
+    width: 100%;
+    text-align: left;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -97,47 +99,11 @@ const CSS = `
     -webkit-tap-highlight-color: transparent;
 }
 .vela-md-row:active { background: var(--vela-hover); }
+.vela-md-row:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: -2px; }
 .vela-md-row[data-checked='1'] { background: var(--vela-hover-strong); }
 .vela-md-row .vela-icon { flex: none; font-size: 17px; width: 17px; height: 17px; color: var(--vela-fg-muted); }
 .vela-md-row-label { flex: 1 1 auto; min-width: 0; font-size: 14px; color: var(--vela-fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vela-md-row-value { flex: none; font-size: 13px; color: var(--vela-fg-muted); }
-.vela-md-search {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 40px;
-    padding: 0 10px;
-    margin: 0 0 8px;
-    border: 1px solid var(--vela-border);
-    border-radius: 8px;
-    color: var(--vela-fg-muted);
-    background: var(--vela-surface-elev);
-}
-.vela-md-search:focus-within { border-color: var(--vela-border-strong); }
-.vela-md-search input {
-    all: unset;
-    flex: 1 1 auto;
-    min-width: 0;
-    font-size: 14px;
-    color: var(--vela-fg-bright);
-}
-.vela-md-search-clear {
-    all: unset;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    color: var(--vela-fg);
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-}
-.vela-md-search-clear:active { background: var(--vela-hover); }
-/* 28px is the drawn glyph's box, not the finger's: the hit area is widened to 44px with an
-   invisible centred pseudo-element so a thumb can actually land on it. */
-.vela-md-search-clear { position: relative; }
-.vela-md-search-clear::after { content: ''; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
 /* Create alert reads as a verb row, not a shortcut tile: full width, icon + label left,
    the sheet's accent colour, and a chevron where a sheet would show one. */
 .vela-md-createalert {
@@ -150,7 +116,7 @@ const CSS = `
     border-radius: 10px;
     background: transparent;
     font: inherit;
-    color: var(--vela-accent);
+    color: var(--vela-accent-ink, var(--vela-accent));
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
@@ -160,18 +126,6 @@ const CSS = `
 .vela-md-createlist { padding-bottom: 4px; }
 /* The alerts log is the last block in its sheet — keep its final row off the home bar. */
 .vela-md-list:last-child { padding-bottom: 8px; }
-/* The hidden attribute must beat the author display rules these rows carry (flex/grid), otherwise a
-   filtered row keeps its box and the search looks like it did nothing. */
-.vela-md-row[hidden], .vela-md-action[hidden], .vela-md-lrow[hidden], .vela-md-lact[hidden],
-.vela-md-section[hidden], .vela-md-libhead[hidden], .vela-md-charthead[hidden],
-.vela-md-actions[hidden], .vela-md-lib[hidden], .vela-md-hero[hidden],
-.vela-md-list[hidden], .vela-md-nomatch[hidden] { display: none !important; }
-.vela-md-nomatch {
-    padding: 22px 4px;
-    text-align: center;
-    font-size: 13px;
-    color: var(--vela-fg-muted);
-}
 .vela-md-back {
     all: unset;
     display: flex;
@@ -202,10 +156,10 @@ const CSS = `
 }
 .vela-md-empty { padding: 18px 2px; color: var(--vela-fg-muted); font-size: 13px; }
 /* Layout sheet: glyph tiles, three across on a phone, larger where there is room. */
-/* The uniform-grid canvas, phone-sized: 20px squares keep the 4×4 block compact so the
-   asymmetric presets below it are one small scroll away, not a page. */
-.vela-md-gridwrap .vela-lp-grid { grid-template-columns: repeat(4, 20px); grid-auto-rows: 20px; gap: 3px; }
-.vela-md-gridwrap { padding: 4px 0 2px; }
+/* Keep the square canvas compact without shrinking touch targets: each box remains
+   a 44px target and the selection stays visible on small phones. */
+.vela-md-gridwrap .vela-lp-grid { grid-template-columns: repeat(4, 44px); grid-auto-rows: 44px; gap: 6px; }
+.vela-md-gridwrap { padding: 8px 0 6px; }
 .vela-md-presets {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
@@ -320,6 +274,8 @@ const CSS = `
     gap: 12px;
     margin: 0 0 12px;
     padding: 10px 4px 12px;
+    cursor: grab;
+    touch-action: none;
     background: var(--vela-surface-elev);
     border-bottom: 1px solid var(--vela-border);
 }
@@ -354,7 +310,7 @@ const CSS = `
     border-radius: 10px;
     background: color-mix(in srgb, var(--vela-accent) 15%, transparent);
     border: 1px solid color-mix(in srgb, var(--vela-accent) 45%, transparent);
-    color: var(--vela-accent);
+    color: var(--vela-accent-ink, var(--vela-accent));
 }
 .vela-md-panemark .vela-icon { font-size: 17px; width: 17px; height: 17px; }
 .vela-md-paneid { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
@@ -438,7 +394,7 @@ const CSS = `
     font-weight: 600;
     letter-spacing: 0.3px;
     text-transform: uppercase;
-    color: var(--vela-accent, var(--vela-selected-bg));
+    color: var(--vela-accent-ink, var(--vela-accent, var(--vela-selected-bg)));
     background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 16%, transparent);
 }
 /* The aggregate badge: every DISTINCT group this chart sits in, e.g. "A 🔴". */
@@ -506,49 +462,6 @@ const CSS = `
 /* The open layout's strip: name + state on the left, Save on the right. */
 /* "Show all N layouts": a quiet row, not a button-shaped box. */
 /* The library's own top gap: it opens the sheet, so it needs air above the actions. */
-/* ── the Cursors stop ─────────────────────────────────────────────────────────
-   56 px rows: a pointer choice needs two lines (name + what it does) and a finger.
-   The glyph sits in its own slot so all seven icons line up like a type specimen. */
-.vela-md-cursors { padding-top: 4px; }
-.vela-md-cursorrow {
-    all: unset;
-    box-sizing: border-box;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
-    min-height: 56px;
-    padding: 6px 8px;
-    border-radius: 10px;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-}
-.vela-md-cursorrow:active { background: var(--vela-hover); }
-.vela-md-cursorrow[data-active] { background: color-mix(in srgb, var(--vela-accent, var(--vela-selected-bg)) 12%, transparent); }
-.vela-md-cursorrow:focus-visible { outline: 2px solid var(--vela-accent, var(--vela-selected-bg)); outline-offset: -2px; }
-.vela-md-cursorglyph { flex: none; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; color: var(--vela-fg-muted); }
-.vela-md-cursorglyph svg { width: 24px; height: 24px; }
-.vela-md-cursorrow[data-active] .vela-md-cursorglyph { color: var(--vela-accent, var(--vela-selected-bg)); }
-.vela-md-cursortext { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.vela-md-cursorlabel { font-size: 14px; color: var(--vela-fg-bright); }
-.vela-md-cursorsub { font-size: 11.5px; color: var(--vela-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The choice dot: an outline that fills when this pointer is the one in use. */
-.vela-md-cursorcheck {
-    flex: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    border: 1.5px solid var(--vela-border-strong);
-    position: relative;
-}
-.vela-md-cursorrow[data-active] .vela-md-cursorcheck { border-color: var(--vela-accent, var(--vela-selected-bg)); }
-.vela-md-cursorrow[data-active] .vela-md-cursorcheck::after {
-    content: '';
-    position: absolute;
-    inset: 3px;
-    border-radius: 50%;
-    background: var(--vela-accent, var(--vela-selected-bg));
-}
 .vela-md-lib { padding-top: 2px; padding-bottom: 0; }
 /* The library and the settings rows are two lists in one scroll: give the second
    one a heading, but not a second page's worth of air between them. */
@@ -667,8 +580,7 @@ const CSS = `
 }
 .vela-md-segbtn[data-active] { background: var(--vela-elevated, var(--vela-hover-strong)); color: var(--vela-fg-bright); }
 .vela-md-segbtn:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: 1px; }
-/* The segmented tabs are 28px tall by design (they sit under a search field); the THUMB
-   gets 44 through an invisible centred hit box, so the drawer keeps its density. */
+/* The segmented tabs are compact; the THUMB gets 44 through an invisible hit box. */
 .vela-md-segbtn { position: relative; }
 .vela-md-segbtn::after { content: ''; position: absolute; left: 50%; top: 50%; width: calc(100% + 4px); height: 46px; transform: translate(-50%, -50%); }
 .vela-md-libpane { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
@@ -781,7 +693,7 @@ const CSS = `
     -webkit-tap-highlight-color: transparent;
 }
 .vela-md-star .vela-icon { width: 18px; height: 18px; font-size: 18px; color: var(--vela-fg-faint); }
-.vela-md-star[data-on='1'] .vela-icon { color: var(--vela-accent, var(--vela-selected-bg)); }
+.vela-md-star[data-on='1'] .vela-icon { color: var(--vela-star, var(--vela-accent-ink, var(--vela-accent))); }
 .vela-md-star:active { background: var(--vela-hover); }
 .vela-md-star:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
 /* "Show all N" and the two "+ save" / "import" entry points: quiet rows, no boxes. */
@@ -815,6 +727,36 @@ const CSS = `
 .vela-md-lghost:active, .vela-md-more:active { background: var(--vela-hover); }
 .vela-md-lghost:focus-visible, .vela-md-more:focus-visible { outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px; }
 
+/* The legacy modal contains the child so its focus trap stays valid. Let that fixed
+   child escape the sheet's clipping; the drawer body remains its own scroller. */
+.vela-drawer[data-more-child-open] { overflow: visible; }
+/* The standard More pane is flat like its fellow workspace tools. */
+.vela-panel.vela-more-panel .vela-panel-body { padding: 8px 10px 12px; }
+.vela-panel.vela-more-panel .vela-md-actions {
+    gap: 0; padding: 0 0 8px; overflow-x: auto; scrollbar-width: thin;
+}
+.vela-panel.vela-more-panel .vela-md-action {
+    min-width: 44px; min-height: 52px; padding: 2px 4px; border-radius: 0;
+    background: transparent; box-shadow: none; backdrop-filter: none;
+}
+.vela-panel.vela-more-panel .vela-md-row,
+.vela-panel.vela-more-panel .vela-md-switchrow,
+.vela-panel.vela-more-panel .vela-md-back {
+    min-height: 44px; padding-left: 8px; padding-right: 8px; border-radius: 0;
+    box-shadow: none; backdrop-filter: none;
+}
+.vela-panel.vela-more-panel .vela-md-row:not([data-checked]):not([data-active]),
+.vela-panel.vela-more-panel .vela-md-switchrow,
+.vela-panel.vela-more-panel .vela-md-back { background: transparent; }
+.vela-panel.vela-more-panel .vela-md-row:hover,
+.vela-panel.vela-more-panel .vela-md-action:hover,
+.vela-panel.vela-more-panel .vela-md-back:hover { background: var(--vela-hover); }
+.vela-panel.vela-more-panel :is(.vela-md-row,.vela-md-action,.vela-md-back):focus-visible {
+    outline: 2px solid var(--vela-focus, var(--vela-selected-bg)); outline-offset: -2px;
+}
+.vela-panel.vela-more-panel .vela-md-row-value { min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vela-panel.vela-more-panel .vela-md-charthead { margin-top: 0; padding-top: 8px; border-top: 0; }
+
 `;
 
 /** Paint a group chip: its mark, lit when it is in a group, dashed while it is the
@@ -841,8 +783,12 @@ export interface MoreDrawerAction {
 
 export interface MoreDrawerOptions {
     host: HTMLElement;
-    /** Open the COMPACT layout-management panel instead of the grid sheet's library tab. */
-    onOpenLayoutManager?: () => void;
+    /** The workspace uses the shared non-modal standard pane; standalone hosts keep Drawer. */
+    panel?: WorkspaceToolPanel;
+    /** Open the compact layout-management menu instead of the grid sheet's library tab. */
+    onOpenLayoutManager?: (anchor: HTMLElement) => void;
+    /** Open the workspace's unified Layout setup / Chart syncing pane. */
+    onOpenLayoutSetup?: () => void;
     /** Open the SEPARATE Indicator templates panel. Templates no longer live in the
      *  Manage-layouts library; this is their own door in the main More list. */
     onOpenIndicatorTemplates?: () => void;
@@ -865,6 +811,8 @@ export interface MoreDrawerOptions {
      *  it, the Chart type row opens THAT instead of the drawer's own flat list, so the
      *  phone never grows two different chart pickers. */
     onChartType?: () => void;
+    /** The phone chart-type sheet is unavailable while this pane is in desktop chrome. */
+    canOpenChartType?: () => boolean;
     priceStyle: () => string;
     onPriceStyle: (id: string) => void;
     /** Docked side panels (built-in + contributed), toggled by id. */
@@ -872,6 +820,8 @@ export interface MoreDrawerOptions {
     onTogglePanel: (id: string) => void;
     /** Omitted ⇒ no Alerts row (composition removed `'alerts'`). */
     alerts?: () => Array<{ title: string; message: string; time: number }>;
+    /** Open the shared Alerts pane instead of a separate in-drawer view. */
+    onAlerts?: () => void;
     /** Open the create-alert sheet. Omitted ⇒ the Alerts view is a read-only log. */
     onCreateAlert?: () => void;
     /** Live price alerts (armed levels), newest first — shown above the log. */
@@ -882,6 +832,8 @@ export interface MoreDrawerOptions {
      * Editor one tap away on mobile too) — so it gets a row of its own, not just a toggle.
      */
     onEditor?: () => void;
+    /** Open the shared Drawings picker from More; the bottom Drawings tab uses this same route. */
+    onDrawings?: () => void;
     /** "Reset chart view" — the desktop chart-body menu's one row a phone has no other
      *  door to (right-click is the crosshair hold here). Omitted ⇒ no row. */
     onResetView?: () => void;
@@ -908,14 +860,14 @@ export interface MoreDrawerOptions {
     /** The pointer style over the plot (Cross / Dot / Arrow / Demonstration / Magic /
      *  Eraser / None), read live — the Cursors row's value. Omitted ⇒ no row. */
     cursorStyle?: () => CursorStyle;
-    /** Set the pointer style on every chart (the Cursors stop's radio rows). */
+    /** Set the pointer style on every chart (the compact cursor menu's choices). */
     onCursorStyle?: (style: CursorStyle) => void;
-    /** Opens the timezone overflow sheet (the same one a hold on the time axis opens).
+    /** Opens the timezone menu (the same one a hold on the time axis opens).
      *  Omitted ⇒ no Time zone row. */
-    onTimeZone?: () => void;
-    /** The desktop chart-body menu (Reset · syncing · apply-to-all · clear · settings) as
-     *  a sheet. Omitted ⇒ no "Chart actions…" row. */
-    onChartMenu?: () => void;
+    onTimeZone?: (anchor: HTMLElement) => void;
+    /** The desktop chart-body actions (Reset · syncing · apply-to-all · clear · settings)
+     *  as a floating menu. Omitted ⇒ no "Chart actions…" row. */
+    onChartMenu?: (anchor: HTMLElement) => void;
     /** Contributed topbar actions, projected as plain rows at the end of the list. */
     actions: () => MoreDrawerAction[];
     /** Contributed PRIMARY actions (left cluster, menu-placed) — rows right after Layout. */
@@ -1023,10 +975,20 @@ export interface MoreDrawerOptions {
     onOpenChange?: (open: boolean) => void;
 }
 
-type MoreView = 'main' | 'style' | 'layout' | 'manage' | 'alerts' | 'cursor' | 'hidden';
+type MoreView = 'main' | 'style' | 'layout' | 'manage' | 'drawings' | 'alerts' | 'hidden';
+
+interface MoreSurface {
+    readonly body: HTMLElement;
+    readonly open: boolean;
+    show(): void;
+    hide(): void;
+    destroy(): void;
+}
 
 export class MoreDrawer {
-    private readonly drawer: Drawer;
+    private readonly drawer: MoreSurface;
+    private cursorMenu: CompactChoiceMenu | null = null;
+    private cursorAnchor: HTMLElement | null = null;
     /** First tap arms the "hidden charts" row; the second one commits. */
     private poolArmed = false;
     /** "Show all N layouts" — the sheet shows the newest few until asked for more. */
@@ -1055,11 +1017,24 @@ export class MoreDrawer {
      *  the library tab is on screen — repaint its rows instead of showing a stale count. */
     refreshLibrary(): void {
         if (!this.drawer.open) return;
-        if (this.view !== 'manage' && !(this.view === 'layout' && this.tab === 'manage')) return;
+        if (this.view !== 'manage' && this.view !== 'drawings' && !(this.view === 'layout' && this.tab === 'manage')) return;
         this.render();
     }
-    /** The main view's search query (D: 60+ rows with no way to narrow them). */
-    private query = '';
+    /** Update live labels without rebuilding the parent pane or disturbing its scroll. */
+    refreshMainValues(): void {
+        if (!this.drawer.open || this.view !== 'main') return;
+        for (const row of this.drawer.body.querySelectorAll<HTMLElement>('.vela-md-row')) {
+            const name = row.querySelector<HTMLElement>('.vela-md-row-label')?.textContent;
+            const value = row.querySelector<HTMLElement>('.vela-md-row-value');
+            if (name === 'Time zone' && value && this.opts.timezone) { value.textContent = this.opts.timezone(); value.title = value.textContent; }
+            if (name === 'Cursor' && this.opts.cursorStyle) {
+                const style = cursorSpec(this.opts.cursorStyle());
+                if (value) value.textContent = style.label;
+                const glyph = row.querySelector<HTMLElement>('.vela-icon');
+                if (glyph && !glyph.classList.contains(`vela-ic-${style.icon}`)) glyph.replaceWith(iconEl(style.icon, row.ownerDocument));
+            }
+        }
+    }
     /** Scroll the layout sheet to its sync block on the next paint. */
     private focus: 'manage' | 'sync' | undefined;
     /** The chart whose links panel opens straight away (the status line's badge names
@@ -1071,7 +1046,39 @@ export class MoreDrawer {
     constructor(private readonly opts: MoreDrawerOptions) {
         injectStyles(STYLE_ID, CSS, opts.host.ownerDocument);
         installSmoothScrolling(opts.host.ownerDocument);
-        this.drawer = new Drawer({ host: opts.host, onOpenChange: opts.onOpenChange });
+        const panel = opts.panel;
+        if (!panel) {
+            this.drawer = new Drawer({ host: opts.host, onOpenChange: (open) => {
+                if (!open) this.cursorMenu?.close();
+                opts.onOpenChange?.(open);
+            } });
+            return;
+        }
+        this.drawer = {
+            body: panel.content,
+            get open() { return panel.open; },
+            show: () => panel.showFrom(),
+            hide: () => panel.toggle(false),
+            destroy: () => { panel.onVisibilityChange = null; panel.content.replaceChildren(); },
+        };
+        panel.onVisibilityChange = (open, userOpening) => {
+            if (!open) this.cursorMenu?.close();
+            opts.onOpenChange?.(open);
+            if (open && !userOpening) {
+                // Restoring an already-registered pane must populate it without taking focus.
+                queueMicrotask(() => { if (panel.open) this.render(); });
+            } else if (open) {
+                // Avoid summoning the phone keyboard merely by opening More, while making
+                // its controls reachable immediately to keyboard and screen-reader users.
+                queueMicrotask(() => {
+                    if (panel.open && !panel.el.contains(panel.el.ownerDocument.activeElement)) {
+                        panel.el.querySelector<HTMLElement>('.vela-panel-close')?.focus({ preventScroll: true });
+                    }
+                });
+            }
+        };
+        // A persisted open state can be applied before the workspace's lazy content exists.
+        if (panel.open) this.render();
     }
 
     /** Show the sheet. `focus: 'sync'` lands on the Sync tab (the status line's marks
@@ -1085,16 +1092,17 @@ export class MoreDrawer {
         // come back with a half-typed rename or a save form unfolded on a stale row.
         this.openRow = null;
         this.saveField = null;
-        this.query = ''; // a fresh open is a fresh scan, never the last search
         this.render();
         this.drawer.show();
     }
 
     close(): void {
+        this.cursorMenu?.close();
         this.drawer.hide();
     }
 
     destroy(): void {
+        this.cursorMenu?.destroy();
         this.drawer.destroy();
     }
 
@@ -1108,6 +1116,12 @@ export class MoreDrawer {
         // setup right after Chart syncing would still land on the Sync pane.
         if (view === 'layout') this.tab = opts.focus ?? 'layouts';
         this.render();
+        if (this.opts.panel) {
+            const target = view === 'main'
+                ? this.drawer.body.querySelector<HTMLElement>('.vela-md-row:not([hidden]), .vela-md-action:not([hidden])')
+                : this.drawer.body.querySelector<HTMLElement>('.vela-md-back, .vela-md-paneback');
+            target?.focus({ preventScroll: true });
+        }
     }
 
     private render(): void {
@@ -1120,25 +1134,21 @@ export class MoreDrawer {
             const back = doc.createElement('button');
             back.className = 'vela-md-back';
             back.appendChild(iconEl('chevron-left', doc));
-            const backLabel = this.view === 'style' ? 'Chart type' : this.view === 'cursor' ? 'Cursor' : this.view === 'hidden' || this.view === 'manage' ? 'More' : 'Alerts';
+            const backLabel = this.view === 'style' ? 'Chart type' : this.view === 'hidden' || this.view === 'manage' || this.view === 'drawings' ? 'More' : 'Alerts';
             back.appendChild(doc.createTextNode(backLabel));
             back.addEventListener('click', () => this.show('main'));
             this.drawer.body.appendChild(back);
         }
 
-        if (this.view === 'main') {
-            this.drawer.body.appendChild(this.searchRow(doc));
-            this.renderMain(doc);
-        }
+        if (this.view === 'main') this.renderMain(doc);
         else if (this.view === 'style') this.renderStyle(doc);
         else if (this.view === 'layout') this.renderLayout(doc, this.focus, this.focusCell);
         else if (this.view === 'manage') this.renderManage(doc);
-        else if (this.view === 'cursor') this.renderCursor(doc);
+        else if (this.view === 'drawings') this.renderDrawingLibrary(doc);
         else if (this.view === 'hidden') this.renderHidden(doc);
         else this.renderAlerts(doc);
         this.focus = undefined;
         this.focusCell = undefined;
-        if (this.view === 'main') this.applyFilter();
         // Fields built inside a detached pane cannot take focus; the sheet asks for it
         // here, once everything is mounted (the phone keyboard follows the cursor).
         if (this.pendingFocus) {
@@ -1148,8 +1158,9 @@ export class MoreDrawer {
         }
     }
 
-    private row(doc: Document, label: string, opts: { icon?: string; glyph?: string; value?: string; chevron?: boolean; checked?: boolean; danger?: boolean; onClick: () => void }): HTMLElement {
-        const el = doc.createElement('div');
+    private row(doc: Document, label: string, opts: { icon?: string; glyph?: string; value?: string; chevron?: boolean; checked?: boolean; danger?: boolean; onClick: (anchor: HTMLElement) => void }): HTMLElement {
+        const el = doc.createElement('button');
+        el.type = 'button';
         el.className = 'vela-md-row';
         if (opts.icon) {
             const icon = iconEl(opts.icon, doc);
@@ -1164,113 +1175,14 @@ export class MoreDrawer {
             const value = doc.createElement('span');
             value.className = 'vela-md-row-value';
             value.textContent = opts.value;
+            value.title = opts.value;
             el.appendChild(value);
         }
         if (opts.checked) el.dataset.checked = '1';
         if (opts.danger) el.dataset.danger = '1';
         if (opts.chevron) el.appendChild(iconEl('chevron-right', doc));
-        el.addEventListener('click', opts.onClick);
+        el.addEventListener('click', () => opts.onClick(el));
         return el;
-    }
-
-    /**
-     * The sheet's search field. It filters the rows already on screen IN PLACE (so the
-     * caret never jumps), and it deliberately does not touch the sub-views: those open one
-     * tap deeper and carry their own structure. Sections whose every row is filtered out
-     * collapse, so a stray heading never sits above empty space.
-     */
-    private searchRow(doc: Document): HTMLElement {
-        const wrap = doc.createElement('div');
-        wrap.className = 'vela-md-search';
-        wrap.appendChild(iconEl('search', doc));
-        const input = doc.createElement('input');
-        input.type = 'text';
-        input.value = this.query;
-        input.placeholder = 'Search settings…';
-        input.setAttribute('aria-label', 'Search settings');
-        input.spellcheck = false;
-        const clear = doc.createElement('button');
-        clear.type = 'button';
-        clear.className = 'vela-md-search-clear';
-        clear.setAttribute('aria-label', 'Clear search');
-        clear.appendChild(iconEl('close', doc));
-        clear.hidden = this.query === '';
-        input.addEventListener('input', () => {
-            this.query = input.value;
-            clear.hidden = this.query === '';
-            this.applyFilter();
-        });
-        clear.addEventListener('click', () => {
-            this.query = '';
-            input.value = '';
-            clear.hidden = true;
-            this.applyFilter();
-            input.focus({ preventScroll: true });
-        });
-        wrap.append(input, clear);
-        return wrap;
-    }
-
-    /** Hide every row/action that does not match the query, then every heading whose
-     *  block went empty. A hint stands in when nothing at all matches. */
-    private applyFilter(): void {
-        const body = this.drawer.body;
-        const q = this.query.trim().toLowerCase();
-        const items = [...body.querySelectorAll<HTMLElement>('.vela-md-row, .vela-md-action, .vela-md-lrow, .vela-md-lact')];
-        if (!q) {
-            for (const el of items) el.hidden = false;
-            for (const el of body.querySelectorAll<HTMLElement>('.vela-md-section, .vela-md-libhead, .vela-md-charthead, .vela-md-hero, .vela-md-actions, .vela-md-lib')) el.hidden = false;
-            body.querySelector('.vela-md-nomatch')?.remove();
-            return;
-        }
-        let any = false;
-        for (const el of items) {
-            const hit = (el.textContent ?? '').toLowerCase().includes(q);
-            el.hidden = !hit;
-            if (hit) any = true;
-        }
-        // A heading survives only while something under it does.
-        for (const list of body.querySelectorAll<HTMLElement>('.vela-md-list, .vela-md-lib, .vela-md-actions')) {
-            let live = false;
-            for (const child of [...list.children] as HTMLElement[]) {
-                if (child.matches('.vela-md-row, .vela-md-action, .vela-md-lrow, .vela-md-lact, .vela-md-list') && !child.hidden) live = true;
-            }
-            let kept = false;
-            for (const child of [...list.children] as HTMLElement[]) {
-                if (child.classList.contains('vela-md-section') || child.classList.contains('vela-md-libhead') || child.classList.contains('vela-md-charthead')) {
-                    // does anything between this heading and the next one survive?
-                    let next = child.nextElementSibling as HTMLElement | null;
-                    let seen = false;
-                    while (next && !(next.classList.contains('vela-md-section') || next.classList.contains('vela-md-libhead') || next.classList.contains('vela-md-charthead'))) {
-                        if (!next.hidden) seen = true;
-                        next = next.nextElementSibling as HTMLElement | null;
-                    }
-                    child.hidden = !seen;
-                    if (seen) kept = true;
-                }
-            }
-            // A wrapper (the actions strip, the library block) with nothing visible goes too.
-            if (list.classList.contains('vela-md-actions')) list.hidden = !live && !kept;
-            void live;
-        }
-        // The library is a compound surface (its own tabs, autosave, import/export) — while a
-        // query is up it either has a matching saved row or it steps aside entirely; leaving
-        // its chrome on screen next to one matched setting row reads as a rendering bug.
-        for (const lib of body.querySelectorAll<HTMLElement>('.vela-md-lib')) {
-            const anyRow = [...lib.querySelectorAll<HTMLElement>('.vela-md-lrow, .vela-md-lact')].some((r) => !r.hidden);
-            lib.hidden = q !== '' && !anyRow;
-        }
-        if (!any) {
-            let hint = body.querySelector<HTMLElement>('.vela-md-nomatch');
-            if (!hint) {
-                hint = body.ownerDocument.createElement('div');
-                hint.className = 'vela-md-nomatch';
-                body.appendChild(hint);
-            }
-            hint.textContent = `Nothing matches “${this.query.trim()}”.`;
-        } else {
-            body.querySelector('.vela-md-nomatch')?.remove();
-        }
     }
 
     private renderMain(doc: Document): void {
@@ -1298,14 +1210,18 @@ export class MoreDrawer {
 
         const list = doc.createElement('div');
         list.className = 'vela-md-list';
+        const section = (label: string): void => {
+            const head = doc.createElement('div');
+            head.className = 'vela-md-section vela-md-charthead';
+            head.textContent = label;
+            list.appendChild(head);
+        };
 
         // ── the library, behind its OWN door ──────────────────────────────────
-        // TradingView splits "Layout setup" (the grid) from "Manage layouts" (the saved
-        // library) into two screens; a phone needs that split twice over, because the
-        // library's rows — saved layouts, autosave, templates, drawings — buried every
-        // other row of this sheet under a wall of them. One row is the door; the
-        // library keeps its own page and its own back button (see renderManage).
+        // Keep layout setup separate from management. The workspace supplies a compact
+        // anchored menu; the legacy library page is only a fallback for standalone hosts.
         if (this.opts.layout) {
+            section('Workspace');
             const saved = this.opts.layout.savedLayouts?.().length ?? 0;
             list.appendChild(
                 this.row(doc, 'Manage layouts', {
@@ -1313,10 +1229,9 @@ export class MoreDrawer {
                     glyph: this.opts.layout.glyph?.(),
                     value: saved > 0 ? `${saved} saved` : undefined,
                     chevron: true,
-                    onClick: () => {
+                    onClick: (anchor) => {
                         if (this.opts.onOpenLayoutManager) {
-                            this.drawer.hide();
-                            this.opts.onOpenLayoutManager();
+                            this.opts.onOpenLayoutManager(anchor);
                         } else {
                             this.show('layout', { focus: 'manage' });
                         }
@@ -1325,19 +1240,21 @@ export class MoreDrawer {
             );
         }
         // Indicator templates are their OWN panel now — never a tab inside Manage layouts.
+        section('Chart');
         if (this.opts.onOpenIndicatorTemplates) {
             const count = this.opts.indicatorTemplateCount?.() ?? 0;
-            list.appendChild(
-                this.row(doc, 'Indicator templates', {
-                    icon: 'templates',
-                    value: count > 0 ? `${count} saved` : undefined,
-                    chevron: true,
-                    onClick: () => {
-                        this.drawer.hide();
-                        this.opts.onOpenIndicatorTemplates?.();
-                    },
-                }),
-            );
+            const templates = this.row(doc, 'Indicator templates', {
+                icon: 'templates',
+                value: count > 0 ? `${count} saved` : undefined,
+                chevron: true,
+                onClick: () => {
+                    this.drawer.hide();
+                    this.opts.onOpenIndicatorTemplates?.();
+                },
+            });
+            // The native button supports both pointer and keyboard activation.
+            templates.setAttribute('aria-label', 'Indicator templates');
+            list.appendChild(templates);
         }
         const current = this.opts.priceStyles().find((s) => s.id === this.opts.priceStyle());
         list.appendChild(
@@ -1346,7 +1263,7 @@ export class MoreDrawer {
                 value: current?.label,
                 chevron: true,
                 onClick: () => {
-                    if (!this.opts.onChartType) {
+                    if (!this.opts.onChartType || this.opts.canOpenChartType?.() === false) {
                         this.show('style');
                         return;
                     }
@@ -1359,18 +1276,45 @@ export class MoreDrawer {
             // The pointer is the same kind of choice as the chart type — how you READ the
             // chart — so it sits beside it, with the live label as its value.
             const style = cursorSpec(this.opts.cursorStyle());
-            list.appendChild(this.row(doc, 'Cursor', { icon: style.icon, value: style.label, chevron: true, onClick: () => this.show('cursor') }));
+            list.appendChild(this.row(doc, 'Cursor', { icon: style.icon, value: style.label, chevron: true, onClick: (anchor) => {
+                this.cursorAnchor = anchor;
+                const modal = this.opts.panel ? null : this.drawer.body.closest<HTMLElement>('.vela-drawer');
+                this.cursorMenu ??= new CompactChoiceMenu({
+                    // A legacy Drawer is modal. Keep its menu within the focus trap while
+                    // fitting against the outer host; standard panes portal to the workspace.
+                    host: modal ?? this.opts.host,
+                    boundary: this.opts.host, label: 'Cursor', className: 'vela-cursor-menu',
+                    onOpenChange: (open) => modal?.toggleAttribute('data-more-child-open', open),
+                    onSelect: (id) => {
+                        const next = CURSOR_SPECS.find((entry) => entry.id === id);
+                        if (!next) return;
+                        this.opts.onCursorStyle?.(next.id);
+                        const value = this.cursorAnchor?.querySelector<HTMLElement>('.vela-md-row-value');
+                        if (value) { value.textContent = next.label; value.title = next.label; }
+                        const glyph = this.cursorAnchor?.querySelector<HTMLElement>('.vela-icon');
+                        if (glyph) glyph.replaceWith(iconEl(next.icon, doc));
+                    },
+                });
+                this.cursorMenu.open(anchor, CURSOR_SPECS.map((entry) => ({ id: entry.id, label: entry.label, icon: entry.icon, checked: entry.id === this.opts.cursorStyle?.() })));
+            } }));
         }
         if (this.opts.layout) {
+            section('Layout');
             const shape = this.opts.layout.shape();
             const value = shape ? `${shape.cols} × ${shape.rows}` : this.opts.layout.presets().find((p) => p.checked)?.label;
-            // R87: one job — one door. "Layout setup" is the grid; "Chart syncing" is the
-            // links; "Manage layouts" and "Indicator templates" are their own panels.
-            // They used to be three TABS in one sheet; each now gets a titled pane of its
-            // own, opened directly from here.
-            list.appendChild(this.row(doc, 'Layout setup', { icon: 'layout', glyph: this.opts.layout.glyph?.(), value, chevron: true, onClick: () => this.show('layout', { focus: undefined }) }));
+            // One entry opens the shared layout-and-sync pane. Hosts without that pane
+            // retain the drawer's legacy layout and sync views.
+            list.appendChild(this.row(doc, 'Layout setup', {
+                icon: 'layout', glyph: this.opts.layout.glyph?.(), value, chevron: true,
+                onClick: () => {
+                    if (this.opts.onOpenLayoutSetup) {
+                        this.drawer.hide();
+                        this.opts.onOpenLayoutSetup();
+                    } else this.show('layout', { focus: undefined });
+                },
+            }));
         }
-        if (this.opts.layout?.syncs) {
+        if (this.opts.layout?.syncs && !this.opts.onOpenLayoutSetup) {
             const on = this.opts.layout.syncs().filter((s) => s.checked).length;
             list.appendChild(this.row(doc, 'Chart syncing', { icon: 'link', value: on > 0 ? `${on} linked` : undefined, chevron: true, onClick: () => this.show('layout', { focus: 'sync' }) }));
         }
@@ -1391,7 +1335,19 @@ export class MoreDrawer {
             }
         }
         for (const act of this.opts.primaryActions?.() ?? []) list.appendChild(this.actionRow(doc, act));
-        for (const panel of this.opts.panels()) {
+        const panels = this.opts.panels();
+        if (panels.length || this.opts.onEditor || this.opts.onDrawings) section('Panels');
+        if (this.opts.onDrawings) {
+            list.appendChild(this.row(doc, 'Drawings', {
+                icon: 'ruler',
+                value: 'Open',
+                onClick: () => {
+                    this.drawer.hide();
+                    this.opts.onDrawings?.();
+                },
+            }));
+        }
+        for (const panel of panels) {
             list.appendChild(
                 this.row(doc, panel.title, {
                     icon: panel.icon,
@@ -1414,6 +1370,7 @@ export class MoreDrawer {
                 }),
             );
         }
+        if (this.opts.onResetView || this.opts.onChartMenu || this.opts.onTimeZone || this.opts.alerts) section('Actions');
         if (this.opts.onResetView) {
             list.appendChild(
                 this.row(doc, 'Reset chart view', {
@@ -1427,15 +1384,13 @@ export class MoreDrawer {
         }
         // Two more doors a phone otherwise only finds by accident: the chart body's own
         // menu (a desktop right-click) and the display time zone (a long-press on the time
-        // axis). Both open their own sheet, so this one closes first — two stacked
-        // backdrops would leave the user tapping through a ghost surface.
+        // axis). Open each as an anchored child without replacing More.
         if (this.opts.onChartMenu) {
             list.appendChild(
                 this.row(doc, 'Chart actions…', {
                     icon: 'more',
-                    onClick: () => {
-                        this.drawer.hide();
-                        this.opts.onChartMenu?.();
+                    onClick: (anchor) => {
+                        this.opts.onChartMenu?.(anchor);
                     },
                 }),
             );
@@ -1446,26 +1401,20 @@ export class MoreDrawer {
                     icon: 'clock',
                     value: this.opts.timezone?.(),
                     chevron: true,
-                    onClick: () => {
-                        this.drawer.hide();
-                        this.opts.onTimeZone?.();
+                    onClick: (anchor) => {
+                        this.opts.onTimeZone?.(anchor);
                     },
                 }),
             );
         }
         if (this.opts.alerts) {
             const alertCount = this.opts.alerts().length;
-            list.appendChild(this.row(doc, 'Alerts', { icon: 'bell', value: alertCount > 0 ? String(alertCount) : undefined, chevron: true, onClick: () => this.show('alerts') }));
+            list.appendChild(this.row(doc, 'Alerts', { icon: 'bell', value: alertCount > 0 ? String(alertCount) : undefined, chevron: true, onClick: () => {
+                if (this.opts.onAlerts) { this.drawer.hide(); this.opts.onAlerts(); }
+                else this.show('alerts'); // legacy standalone drawer callers
+            } }));
         }
         for (const act of this.opts.actions()) list.appendChild(this.actionRow(doc, act));
-        // The settings rows sit under their own heading — without it the library above
-        // and these rows read as one undifferentiated pile.
-        if (list.childElementCount > 0) {
-            const chartHead = doc.createElement('div');
-            chartHead.className = 'vela-md-section vela-md-charthead';
-            chartHead.textContent = 'Chart';
-            list.prepend(chartHead);
-        }
         this.drawer.body.appendChild(list);
     }
 
@@ -1495,47 +1444,6 @@ export class MoreDrawer {
                     },
                 }),
             );
-        }
-        this.drawer.body.appendChild(list);
-    }
-
-    /** The Cursors stop: seven radio rows, each saying what the pointer does. */
-    private renderCursor(doc: Document): void {
-        const list = doc.createElement('div');
-        list.className = 'vela-md-list vela-md-cursors';
-        const current = this.opts.cursorStyle?.() ?? 'cross';
-        const hint = doc.createElement('div');
-        hint.className = 'vela-md-hint';
-        hint.textContent = 'One pointer for every chart. It is a view setting — it never enters a saved layout.';
-        list.appendChild(hint);
-        for (const spec of CURSOR_SPECS) {
-            const row = doc.createElement('button');
-            row.type = 'button';
-            row.className = 'vela-md-row vela-md-cursorrow';
-            row.dataset.cursor = spec.id;
-            row.toggleAttribute('data-active', spec.id === current);
-            row.setAttribute('role', 'radio');
-            row.setAttribute('aria-checked', String(spec.id === current));
-            const glyph = iconEl(spec.icon, doc);
-            glyph.classList.add('vela-md-cursorglyph');
-            const text = doc.createElement('span');
-            text.className = 'vela-md-cursortext';
-            const label = doc.createElement('span');
-            label.className = 'vela-md-cursorlabel';
-            label.textContent = spec.label;
-            const sub = doc.createElement('span');
-            sub.className = 'vela-md-cursorsub';
-            sub.textContent = spec.hint;
-            text.append(label, sub);
-            const check = doc.createElement('span');
-            check.className = 'vela-md-cursorcheck';
-            check.setAttribute('aria-hidden', 'true');
-            row.append(glyph, text, check);
-            row.addEventListener('click', () => {
-                this.opts.onCursorStyle?.(spec.id);
-                this.render();
-            });
-            list.appendChild(row);
         }
         this.drawer.body.appendChild(list);
     }
@@ -1625,10 +1533,10 @@ export class MoreDrawer {
         const activePane: 'layouts' | 'manage' | 'sync' =
             focus === 'sync' ? 'sync' : focus === 'manage' ? 'manage' : (this.tab ?? 'layouts');
         const paneMeta = activePane === 'sync'
-            ? { kicker: 'Multi-chart', title: 'Chart syncing', sub: 'What follows, and which charts follow whom', icon: 'link' }
+            ? { title: 'Chart syncing', icon: 'link' }
             : activePane === 'manage'
-                ? { kicker: 'Library', title: 'Manage layouts', sub: 'Saved layouts and drawing templates', icon: 'layout' }
-                : { kicker: 'Workspace', title: 'Layout setup', sub: 'Choose a chart grid and a preset', icon: 'layout' };
+                ? { title: 'Manage layouts', icon: 'layout' }
+                : { title: 'Layout setup', icon: 'layout' };
         const paneHead = doc.createElement('div');
         paneHead.className = 'vela-md-panehead';
         paneHead.dataset.pane = activePane;
@@ -1644,16 +1552,10 @@ export class MoreDrawer {
         paneMark.appendChild(iconEl(paneMeta.icon, doc));
         const paneId = doc.createElement('div');
         paneId.className = 'vela-md-paneid';
-        const paneKicker = doc.createElement('span');
-        paneKicker.className = 'vela-md-panekicker';
-        paneKicker.textContent = paneMeta.kicker;
         const paneTitle = doc.createElement('b');
         paneTitle.className = 'vela-md-panetitle';
         paneTitle.textContent = paneMeta.title;
-        const paneHint = doc.createElement('small');
-        paneHint.className = 'vela-md-panehint';
-        paneHint.textContent = paneMeta.sub;
-        paneId.append(paneKicker, paneTitle, paneHint);
+        paneId.append(paneTitle);
         paneHead.append(paneBack, paneMark, paneId);
         list.prepend(paneHead);
 
@@ -1831,11 +1733,6 @@ export class MoreDrawer {
             head.textContent = 'Chart syncing';
             syncSec.append(head);
 
-            const hint = doc.createElement('div');
-            hint.className = 'vela-md-hint';
-            hint.textContent = 'Links decide what follows. Charts decide who follows whom — same emoji, same group.';
-            syncSec.append(hint);
-
             // ── the TABLE: one row per link, one column per chart ────────────────
             // TV marks a chart with an emoji, not a table; the table is our synthesis —
             // every (link, chart) pair one tap away — and a table with ten charts is fine
@@ -1864,13 +1761,6 @@ export class MoreDrawer {
 
                 const legend = doc.createElement('div');
                 legend.className = 'vela-md-legend';
-                const legendHint = doc.createElement('span');
-                // The cue exists only when the table really does overflow: telling a
-                // four-chart layout to scroll sideways that it cannot would be a lie.
-                legendHint.textContent = charts.length > 4
-                    ? 'Same mark, same group · scroll sideways for the rest'
-                    : 'Same mark, same group · tap a cell to cycle it';
-                legend.append(legendHint);
                 // The groups IN USE, with the names the trader gave them ("🔴 scalp").
                 // The table says which chart; this says what the group is FOR. Tap a
                 // name to edit it in place — the name is stored by the stable group id,
@@ -2040,6 +1930,17 @@ export class MoreDrawer {
         lib.className = 'vela-md-list vela-md-lib';
         this.renderLibrary(doc, lib, layout);
         this.drawer.body.append(lib);
+    }
+
+    /** A direct drawing-template route does not reopen the old layout-management sheet. */
+    private renderDrawingLibrary(doc: Document): void {
+        const head = doc.createElement('div');
+        head.className = 'vela-md-section';
+        head.textContent = 'Drawing templates';
+        const lib = doc.createElement('div');
+        lib.className = 'vela-md-list vela-md-lib vela-md-drawing-library';
+        this.renderDrawingsPane(doc, lib);
+        this.drawer.body.append(head, lib);
     }
 
     // ── the library ─────────────────────────────────────────────────────────────
@@ -2521,12 +2422,12 @@ export class MoreDrawer {
         }
 
         const all = this.opts.drawingTemplates?.() ?? [];
-        const hint = doc.createElement('div');
-        hint.className = 'vela-md-hint';
-        hint.textContent = all.length
-            ? 'Saved looks per tool — tap one to use it for the next drawing. Save a whole BUNDLE from the object tree → Drawing templates.'
-            : 'No saved looks yet. Select a drawing → Templates → Save as template. To save a whole SET, use the object tree → Drawing templates.';
-        pane.appendChild(hint);
+        if (!all.length && !sets.length) {
+            const empty = doc.createElement('div');
+            empty.className = 'vela-md-hint';
+            empty.textContent = 'No saved drawing templates';
+            pane.appendChild(empty);
+        }
         let lastTool = '';
         for (const t of all) {
             const key = `D:${t.tool}:${t.name}`;

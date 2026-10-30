@@ -1,5 +1,5 @@
 // Drawer VIEW — a bottom sheet: dimmed backdrop, a panel that slides up from the host's
-// bottom edge, a grab handle with drag-to-dismiss. The body is caller-owned. Built for
+// bottom edge and a draggable top edge. The body is caller-owned. Built for
 // the mobile chrome, but host-agnostic like every kit component.
 import { runMachine, spreadProps, type HandleOf } from '../../zag';
 import { injectStyles } from '../../styles';
@@ -8,6 +8,7 @@ import { DRAWER_CSS, DRAWER_STYLE_ID } from './styles';
 import * as zagDialog from '@zag-js/dialog';
 import { announceSurface } from '../../surface-events';
 import { holdForExit, type SurfaceExit } from '../../surface-exit';
+import { linkPanelResizeGrip } from '../../panel-drag';
 
 /** Drag past this fraction of the sheet's height (or this many px, whichever is
  *  smaller) and the release dismisses; anything less springs back. */
@@ -29,7 +30,7 @@ export interface DrawerOptions extends DrawerControllerOptions {
 }
 
 /** What the active pointer gesture has committed to (decided once past the slop). */
-type GestureMode = 'idle' | 'pending' | 'drag' | 'hswipe' | 'scroll';
+type GestureMode = 'idle' | 'pending' | 'drag' | 'move' | 'resize' | 'hswipe' | 'scroll';
 
 /**
  * Classify a pointer gesture over the sheet — PURE. `'pending'` until the movement
@@ -66,6 +67,11 @@ export class Drawer {
     private readonly titleEl: HTMLElement;
     private readonly handle: HandleOf<typeof zagDialog.machine>;
     private readonly ctrl: ReturnType<typeof drawerController>;
+    /** Vertical offset of the whole sheet from its default bottom position. */
+    private sheetOffsetY = 0;
+    private sizeObserver: ResizeObserver | null = null;
+    private viewportCleanup: (() => void) | null = null;
+    private viewportReflow: (() => void) | null = null;
     /** Tears down the stale-click guard armed by {@link guardStaleClick}. */
     private staleClickOff: (() => void) | null = null;
 
@@ -85,8 +91,24 @@ export class Drawer {
         // on-screen keyboard over a surface that just slid in.
         this.panel.tabIndex = -1;
 
+        // The grip resizes. Desktop title rails can move; phone rails remain still
+        // under their own separate resize strip, including in untitled sheets.
+        const top = doc.createElement('div');
+        top.className = 'vela-drawer-top';
+        top.toggleAttribute('data-untitled', !opts.title);
+        top.tabIndex = 0;
+        top.setAttribute('aria-label', `Move ${opts.title ?? 'panel'}`);
+        top.title = 'Drag to move panel';
         const grab = doc.createElement('div');
         grab.className = 'vela-drawer-grab';
+        grab.tabIndex = 0;
+        grab.setAttribute('role', 'separator');
+        grab.setAttribute('aria-orientation', 'horizontal');
+        grab.setAttribute('aria-label', `Resize ${opts.title ?? 'panel'}`);
+        grab.setAttribute('aria-valuemin', '0');
+        grab.setAttribute('aria-valuemax', '100');
+        grab.setAttribute('aria-valuenow', '50');
+        grab.title = 'Drag to resize · use arrow keys';
         this.titleEl = doc.createElement('div');
         this.titleEl.className = 'vela-drawer-title';
         this.titleEl.textContent = opts.title ?? '';
@@ -96,10 +118,11 @@ export class Drawer {
         if (opts.content instanceof Node) this.body.appendChild(opts.content);
         else if (typeof opts.content === 'function') opts.content(this.body);
 
-        this.panel.append(grab, this.titleEl, this.body);
+        top.append(grab, this.titleEl);
+        this.panel.append(top, this.body);
         this.positioner.appendChild(this.panel);
         host.append(this.backdrop, this.positioner);
-        this.wireGestures(grab, opts.onSwipe);
+        this.wireGestures(grab, top, opts.onSwipe);
 
         this.ctrl = drawerController({ ...opts, initialFocusEl: () => this.panel });
         const mid = String(this.ctrl.props.id);
@@ -107,7 +130,9 @@ export class Drawer {
             const api = this.ctrl.connect(service);
             // Close announces while the panel still shows (before the close props land), open once it does.
             const closing = this.wasOpen && !api.open;
-            if (closing) this.announce(false);
+            if (closing) {
+                this.announce(false);
+            }
             spreadProps(this.backdrop, api.getBackdropProps(), mid);
             spreadProps(this.positioner, api.getPositionerProps(), mid);
             spreadProps(this.panel, api.getContentProps(), mid);
@@ -124,7 +149,12 @@ export class Drawer {
             } else if (!this.exit) {
                 this.setShown(false);
             }
-            if (api.open && !this.wasOpen) this.announce(true);
+            if (api.open && !this.wasOpen) {
+                // The machine reveals the panel asynchronously; fit it only after it
+                // has a box, including when a visual viewport was already narrowed.
+                if (this.panel.hasAttribute('data-grip-row')) this.viewportReflow?.();
+                this.announce(true);
+            }
             if (this.wasOpen && !api.open) this.restoreOpener();
             this.wasOpen = api.open;
         });
@@ -153,25 +183,136 @@ export class Drawer {
     }
 
     /**
-     * One gesture recognizer for the whole sheet. A downward pull dismisses from
-     * anywhere — the grab handle immediately, the content once it is decidedly vertical
-     * and its scroller is at rest (a scrolled list keeps native scrolling). A decidedly
-     * horizontal move becomes an `onSwipe` (tabbed drawers flip pages with it). The
-     * non-passive touchmove hook is what keeps the browser from claiming the pull as a
-     * scroll once the sheet is (or may become) the drag target.
+     * One recognizer for the whole sheet. The grabber resizes at the top edge,
+     * desktop titles move the sheet, and content keeps its own scrolling/swipe behaviour.
      */
-    private wireGestures(grab: HTMLElement, onSwipe?: (dir: 'left' | 'right') => void): void {
+    private wireGestures(grab: HTMLElement, topRail: HTMLElement, onSwipe?: (dir: 'left' | 'right') => void): void {
         let startX = 0;
         let startY = 0;
         let dx = 0;
         let dy = 0;
         let mode: GestureMode = 'idle';
+        let moveTop = 0;
+        let moveOffset = 0;
+        let resizeStart = 0;
+        let resizeBottom = 0;
+        let defaultHeight: number | null = null;
+        let manualSize = false;
+        let activeId: number | null = null;
+        let captureTarget: HTMLElement | null = null;
+        let handleMoved = false;
+
+        const syncGripPlacement = (): void => {
+            const mode = this.panel.closest<HTMLElement>('[data-layout]')?.dataset.layout;
+            const win = this.panel.ownerDocument.defaultView;
+            const mobile = mode ? mode === 'mobile' : !!win?.matchMedia?.('(max-width: 719px)').matches;
+            const enteringMobile = mobile && !this.panel.hasAttribute('data-grip-row');
+            const target = mobile ? this.panel : topRail;
+            this.panel.toggleAttribute('data-grip-row', mobile);
+            if (enteringMobile) {
+                this.sheetOffsetY = 0;
+                this.panel.style.removeProperty('translate');
+            }
+            topRail.tabIndex = mobile ? -1 : 0;
+            if (mobile) {
+                topRail.removeAttribute('aria-label');
+                topRail.removeAttribute('title');
+            } else {
+                topRail.setAttribute('aria-label', `Move ${this.titleEl.textContent || 'panel'}`);
+                topRail.title = 'Drag to move panel';
+            }
+            if (grab.parentElement === target) return;
+            const focused = this.panel.ownerDocument.activeElement === grab;
+            if (mobile) this.panel.insertBefore(grab, topRail);
+            else topRail.prepend(grab);
+            if (focused && win?.getComputedStyle(grab).display !== 'none') grab.focus({ preventScroll: true });
+        };
+        syncGripPlacement();
+        const chromeHeight = (): number => {
+            const panel = this.panel.getBoundingClientRect();
+            const head = topRail.getBoundingClientRect();
+            return grab.parentElement === this.panel ? Math.max(head.height, head.bottom - panel.top) : head.height;
+        };
+
+        const visibleBounds = (): { top: number; bottom: number; height: number } => {
+            const host = this.positioner.getBoundingClientRect();
+            const view = this.panel.ownerDocument.defaultView?.visualViewport;
+            if (!view || view.height <= 0) return host;
+            const top = Math.max(host.top, view.offsetTop);
+            const bottom = Math.min(host.bottom, view.offsetTop + view.height);
+            return bottom > top ? { top, bottom, height: bottom - top } : host;
+        };
+        const reposition = (top: number, initialTop: number, initialOffset: number): void => {
+            const bounds = visibleBounds();
+            const min = bounds.top + 4;
+            const max = Math.max(min, bounds.bottom - chromeHeight() - 4);
+            const safeTop = Math.min(Math.max(top, min), max);
+            this.sheetOffsetY = initialOffset + safeTop - initialTop;
+            this.panel.style.setProperty('translate', `0 ${Math.round(this.sheetOffsetY)}px`);
+        };
+        const limits = (bottom: number): { min: number; max: number } => {
+            const bounds = visibleBounds();
+            const max = Math.max(1, Math.min(bounds.height - 8, bottom - bounds.top - 4));
+            const chrome = chromeHeight();
+            return { min: Math.min(max, Math.max(112, chrome + 48)), max };
+        };
+        const updateGrip = (): void => {
+            const panel = this.panel.getBoundingClientRect();
+            if (!panel.height) return;
+            linkPanelResizeGrip(grab, this.panel);
+            const { min, max } = limits(panel.bottom);
+            grab.setAttribute('aria-valuemin', String(Math.round(min)));
+            grab.setAttribute('aria-valuemax', String(Math.round(max)));
+            grab.setAttribute('aria-valuenow', String(Math.round(panel.height)));
+            grab.setAttribute('aria-valuetext', `${Math.round(panel.height)} pixels high`);
+        };
+        const resizeTo = (height: number, bottom: number): void => {
+            const { min, max } = limits(bottom);
+            const next = Math.min(Math.max(height, min), max);
+            manualSize = true;
+            this.panel.style.maxHeight = `${Math.max(1, visibleBounds().height - 8)}px`;
+            this.panel.style.height = `${Math.round(next)}px`;
+            const after = this.panel.getBoundingClientRect();
+            this.sheetOffsetY += bottom - after.bottom;
+            this.panel.style.setProperty('translate', `0 ${Math.round(this.sheetOffsetY)}px`);
+            updateGrip();
+        };
+        grab.addEventListener('dblclick', () => {
+                if (defaultHeight !== null) resizeTo(defaultHeight, this.panel.getBoundingClientRect().bottom);
+        });
+        grab.addEventListener('focus', updateGrip);
+        topRail.addEventListener('keydown', (e: KeyboardEvent) => {
+            if (e.target !== topRail || this.panel.hasAttribute('data-grip-row')) return;
+            if (e.key === 'Home') {
+                this.sheetOffsetY = 0;
+                this.panel.style.removeProperty('translate');
+            } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                const panel = this.panel.getBoundingClientRect();
+                const step = e.shiftKey ? 80 : 32;
+                reposition(panel.top + (e.key === 'ArrowUp' ? -step : step), panel.top, this.sheetOffsetY);
+            } else return;
+            e.preventDefault();
+        });
+        grab.addEventListener('keydown', (e: KeyboardEvent) => {
+            const panel = this.panel.getBoundingClientRect();
+            if (!panel.height) return;
+            defaultHeight ??= panel.height;
+            const { min, max } = limits(panel.bottom);
+            const step = e.shiftKey ? 96 : 32;
+            if (e.key === 'ArrowUp') resizeTo(panel.height + step, panel.bottom);
+            else if (e.key === 'ArrowDown') resizeTo(panel.height - step, panel.bottom);
+            else if (e.key === 'Home') resizeTo(min, panel.bottom);
+            else if (e.key === 'End') resizeTo(max, panel.bottom);
+            else return;
+            e.preventDefault();
+        });
 
         const beginDrag = (e: PointerEvent): void => {
             mode = 'drag';
             // Rebase so the sheet tracks from the commit point instead of jumping by the slop.
             startY = e.clientY;
             this.panel.style.transition = 'none';
+            captureTarget = this.panel;
             try {
                 this.panel.setPointerCapture(e.pointerId);
             } catch {
@@ -180,18 +321,42 @@ export class Drawer {
         };
 
         this.panel.addEventListener('pointerdown', (e) => {
-            if (e.isPrimary === false) return;
+            if (e.isPrimary === false || (activeId !== null && (mode === 'move' || mode === 'resize' || mode === 'drag')) || (e.pointerType === 'mouse' && e.button !== 0)) return;
+            activeId = e.pointerId;
             startX = e.clientX;
             startY = e.clientY;
             dx = 0;
             dy = 0;
-            // The handle is a dedicated dismiss affordance (touch-action:none) — no slop.
-            if (grab.contains(e.target as Node)) beginDrag(e);
-            else mode = 'pending';
+            const target = e.target instanceof Element ? e.target : null;
+            const paneHead = target?.closest('.vela-md-panehead, .vela-drawer-title, .vela-drawer-top');
+            const interactive = target?.closest('button, input, select, textarea, a, [role="separator"]');
+            if (grab.contains(e.target as Node)) {
+                mode = 'resize';
+                const panel = this.panel.getBoundingClientRect();
+                resizeStart = panel.height;
+                resizeBottom = panel.bottom;
+                defaultHeight ??= panel.height;
+                handleMoved = false;
+                captureTarget = grab;
+                try { grab.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
+            } else if (paneHead && !interactive) {
+                // In portrait, the heading is not a movement or dismiss handle.
+                if (this.panel.hasAttribute('data-grip-row')) {
+                    mode = 'idle';
+                    activeId = null;
+                    return;
+                }
+                mode = 'move';
+                moveTop = this.panel.getBoundingClientRect().top;
+                moveOffset = this.sheetOffsetY;
+                handleMoved = false;
+                captureTarget = this.panel;
+                try { this.panel.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
+            } else mode = 'pending';
         });
 
         this.panel.addEventListener('pointermove', (e) => {
-            if (mode === 'idle' || mode === 'scroll') return;
+            if (e.pointerId !== activeId || mode === 'idle' || mode === 'scroll') return;
             dx = e.clientX - startX;
             dy = e.clientY - startY;
             if (mode === 'pending') {
@@ -204,7 +369,19 @@ export class Drawer {
                 if (intent === 'drag') beginDrag(e);
                 else mode = intent;
             }
-            if (mode === 'drag') {
+            if (mode === 'move') {
+                if (Math.abs(dy) >= 4) handleMoved = true;
+                if (handleMoved) {
+                    reposition(moveTop + dy, moveTop, moveOffset);
+                    e.preventDefault();
+                }
+            } else if (mode === 'resize') {
+                if (Math.abs(dy) >= 4) handleMoved = true;
+                if (handleMoved) {
+                    resizeTo(resizeStart - dy, resizeBottom);
+                    e.preventDefault();
+                }
+            } else if (mode === 'drag') {
                 dy = Math.max(0, e.clientY - startY);
                 this.panel.style.transform = dy > 0 ? `translateY(${dy}px)` : '';
             }
@@ -217,7 +394,7 @@ export class Drawer {
         this.panel.addEventListener(
             'touchmove',
             (e) => {
-                if (mode === 'drag' || mode === 'hswipe') {
+                if (mode === 'drag' || mode === 'move' || mode === 'resize' || mode === 'hswipe') {
                     e.preventDefault();
                     return;
                 }
@@ -231,25 +408,83 @@ export class Drawer {
             { passive: false },
         );
 
-        const settle = (): void => {
-            if (mode === 'idle') return;
+        const settle = (e: PointerEvent): void => {
+            if (mode === 'idle' || e.pointerId !== activeId) return;
             const finished = mode;
             mode = 'idle';
-            if (finished === 'drag') {
+            activeId = null;
+            try { captureTarget?.releasePointerCapture(e.pointerId); } catch { /* capture already lost */ }
+            captureTarget = null;
+            if (finished === 'move' || finished === 'resize') {
+
+            } else if (finished === 'drag') {
                 this.panel.style.transition = '';
                 this.panel.style.transform = '';
-                if (dragDismisses(dy, this.panel.getBoundingClientRect().height)) this.hide();
-            } else if (finished === 'hswipe') {
+                if (e.type !== 'pointercancel' && dragDismisses(dy, this.panel.getBoundingClientRect().height)) this.hide();
+            } else if (finished === 'hswipe' && e.type !== 'pointercancel') {
                 const dir = swipeDirection(dx, dy);
                 if (dir) onSwipe?.(dir);
             }
         };
         this.panel.addEventListener('pointerup', settle);
         this.panel.addEventListener('pointercancel', settle);
+        if (typeof ResizeObserver !== 'undefined') {
+            this.sizeObserver = new ResizeObserver(() => { syncGripPlacement(); updateGrip(); });
+            this.sizeObserver.observe(this.panel);
+        }
+        const win = this.panel.ownerDocument.defaultView;
+        const reflow = (): void => {
+            syncGripPlacement();
+            let panel = this.panel.getBoundingClientRect();
+            if (!panel.height) return;
+            const bounds = visibleBounds();
+            const max = Math.max(1, bounds.height - 8);
+            if (manualSize) this.panel.style.maxHeight = `${max}px`;
+            else {
+                this.panel.style.removeProperty('max-height');
+                panel = this.panel.getBoundingClientRect();
+                if (panel.height > max) this.panel.style.maxHeight = `${max}px`;
+            }
+            panel = this.panel.getBoundingClientRect();
+            if (this.panel.hasAttribute('data-grip-row')) {
+                // Do not mistake the entry animation (or a dismiss swipe) for the
+                // preferred position when fitting the sheet to a visual viewport.
+                const transform = win?.getComputedStyle(this.panel).transform;
+                let animatedY = 0;
+                if (transform && transform !== 'none' && typeof DOMMatrixReadOnly !== 'undefined') {
+                    try { animatedY = new DOMMatrixReadOnly(transform).m42; } catch { /* non-matrix transform */ }
+                }
+                // A keyboard or zoom can shrink the visible viewport. Keep the
+                // phone sheet at its visible bottom, then return when it recovers.
+                this.sheetOffsetY += bounds.bottom - (panel.bottom - animatedY);
+            } else {
+                const minTop = bounds.top + 4;
+                const maxTop = Math.max(minTop, bounds.bottom - chromeHeight() - 4);
+                const safeTop = Math.min(Math.max(panel.top, minTop), maxTop);
+                this.sheetOffsetY += safeTop - panel.top;
+            }
+            this.panel.style.setProperty('translate', `0 ${Math.round(this.sheetOffsetY)}px`);
+            updateGrip();
+        };
+        this.viewportReflow = reflow;
+        const onResize = (): void => { reflow(); win?.requestAnimationFrame(reflow); };
+        win?.addEventListener('resize', onResize);
+        win?.visualViewport?.addEventListener('resize', reflow);
+        win?.visualViewport?.addEventListener('scroll', reflow);
+        this.viewportCleanup = () => {
+            this.viewportReflow = null;
+            win?.removeEventListener('resize', onResize);
+            win?.visualViewport?.removeEventListener('resize', reflow);
+            win?.visualViewport?.removeEventListener('scroll', reflow);
+        };
     }
 
     setTitle(title: string): void {
         this.titleEl.textContent = title;
+        this.panel.querySelector('.vela-drawer-grab')?.setAttribute('aria-label', `Resize ${title || 'panel'}`);
+        const top = this.panel.querySelector('.vela-drawer-top');
+        if (!this.panel.hasAttribute('data-grip-row')) top?.setAttribute('aria-label', `Move ${title || 'panel'}`);
+        top?.toggleAttribute('data-untitled', !title);
     }
 
     private opener: HTMLElement | null = null;
@@ -309,6 +544,10 @@ export class Drawer {
     }
 
     show(): void {
+        if (!this.open) {
+            this.sheetOffsetY = 0;
+            this.panel.style.removeProperty('translate');
+        }
         this.opener = this.panel.ownerDocument.activeElement as HTMLElement | null;
         this.ctrl.connect(this.handle.service).setOpen(true);
         this.guardStaleClick();
@@ -352,6 +591,10 @@ export class Drawer {
     }
 
     destroy(): void {
+        this.sizeObserver?.disconnect();
+        this.sizeObserver = null;
+        this.viewportCleanup?.();
+        this.viewportCleanup = null;
         // Closed but not projected yet — an owner disposing of the sheet as it reports
         // closing: project the close now, so it animates out like any other close and
         // leaves the DOM when its exit ends. A teardown while open leaves at once.

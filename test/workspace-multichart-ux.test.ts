@@ -69,41 +69,49 @@ const PAGE = {
 const openPicker = (ws: VelaWorkspace): void => {
     ws.root.querySelector<HTMLElement>('button[aria-label^="Layout"]')!.click();
 };
-/** Desktop management is a separate popover on the layout-name chip (R86 T9). */
+/** Exercise the retained rich manager's programmatic API; the visible chip uses the compact menu. */
 const openManager = (ws: VelaWorkspace): void => {
-    ws.root.querySelector<HTMLElement>('.vela-widget-layoutname')!.click();
+    (ws as unknown as { topbar: { openLayoutMenu(): void } }).topbar.openLayoutMenu();
+};
+const openSync = (ws: VelaWorkspace): void => {
+    openPicker(ws);
+    [...ws.root.querySelectorAll<HTMLElement>('.vela-ls-tab')].find((tab) => tab.textContent === 'Chart syncing')!.click();
 };
 const syncRow = (ws: VelaWorkspace, label: string): HTMLElement | null =>
-    [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-sync-row')].find((r) => r.textContent?.startsWith(label)) ?? null;
+    [...ws.root.querySelectorAll<HTMLElement>('.vela-ls-syncrows [role="switch"]')].find((r) => r.textContent?.startsWith(label)) ?? null;
 
-describe('the layout dropdown exposes every link and reads grouped links as ON', () => {
+describe('the Layout Setup pane exposes every link and reads grouped links as ON', () => {
     it('keeps desktop Layout setup separate from Manage layouts', () => {
         const ws = mountWorkspace(PAGE);
         openPicker(ws);
-        expect(ws.root.querySelector('.vela-lp[data-setup-only]')).not.toBeNull();
+        expect(ws.root.querySelector('.vela-layout-setup[data-standard-pane]')).not.toBeNull();
+        expect(ws.root.querySelector('.vela-lp[data-setup-only]')).toBeNull();
         expect(ws.root.querySelector('.vela-lp-auto')).toBeNull();
         expect(ws.root.querySelector('.vela-lp-save')).toBeNull();
         expect(ws.root.querySelector('.vela-lp-csv')).toBeNull();
         expect(ws.root.querySelector('.vela-lp-grouphead')).toBeNull();
-        const door = ws.root.querySelector<HTMLElement>('.vela-lp-managerdoor')!;
+        const door = ws.root.querySelector<HTMLElement>('.vela-ls-manager')!;
         expect(door.textContent).toContain('Manage layouts');
         door.click();
-        expect(ws.root.querySelector('.vela-lm')).not.toBeNull();
-        expect(ws.root.querySelector('.vela-lm-switch')).not.toBeNull();
-        expect([...ws.root.querySelectorAll('.vela-lm-row')].some((r) => r.textContent?.includes('Export chart data'))).toBe(true);
+        const manager = ws.root.querySelector<HTMLElement>('.vela-lmp')!;
+        expect(manager.closest('.vela-popover')).not.toBeNull();
+        expect(ws.root.querySelector('button[aria-label^="Layout"]')?.getAttribute('aria-expanded')).toBe('true');
+        expect(manager.querySelector('[data-action="autosave"]')).not.toBeNull();
+        manager.querySelector<HTMLElement>('[data-action="files"]')!.click();
+        expect(manager.textContent).toContain('Export chart data');
     });
 
     it('lists all seven links, in TradingView order', () => {
         const ws = mountWorkspace(PAGE);
-        openPicker(ws);
-        const rows = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-sync-row')].map((r) => r.querySelector('.vela-lp-label')?.textContent);
+        openSync(ws);
+        const rows = [...ws.root.querySelectorAll<HTMLElement>('.vela-ls-syncrows [role="switch"]')].map((r) => r.querySelector('.vela-ls-row-label')?.textContent);
         expect(rows).toEqual(['Date range', 'Time', 'Symbol', 'Interval', 'Crosshair', 'Drawings', 'Style']);
     });
 
     it('a group record renders its switch ON (the old picker compared with === true)', () => {
         const ws = mountWorkspace(PAGE);
         ws.sync.set('symbol', { btc: 'A', eth: 'A', sol: 'B', bnb: 'B' }, false);
-        openPicker(ws);
+        openSync(ws);
         expect(syncRow(ws, 'Symbol')!.getAttribute('aria-checked')).toBe('true');
         expect(syncRow(ws, 'Interval')!.getAttribute('aria-checked')).toBe('false');
     });
@@ -111,7 +119,7 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
     it('clicking a switch off a grouped link turns the link off — one visible flip, not a silent no-op', () => {
         const ws = mountWorkspace(PAGE);
         ws.sync.set('symbol', { btc: 'A', eth: 'A' }, false);
-        openPicker(ws);
+        openSync(ws);
         syncRow(ws, 'Symbol')!.click();
         expect(ws.sync.state().symbol).toBeUndefined();
         expect(syncRow(ws, 'Symbol')!.getAttribute('aria-checked')).toBe('false');
@@ -120,7 +128,7 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
     it('the table cycles a chart through all ten groups, then unlinks it — TV\'s uncheck', () => {
         const ws = mountWorkspace(PAGE);
         ws.sync.set('symbol', true, false); // all-cells form
-        openPicker(ws);
+        openSync(ws);
         const chip = (): HTMLElement => ws.root.querySelector<HTMLElement>('.vela-md-chip[data-kind="symbol"][data-cell="btc"]')!;
         // The all-cells form is the IMPLICIT group — every chart follows, so the cell
         // names it ('A', dashed). It used to read '–' while the switch said ON, which is
@@ -151,11 +159,11 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         expect(badge.hasAttribute('data-empty')).toBe(true);
     });
 
-    it('the desktop popover has the SAME table — any chart is marked without activating it', async () => {
+    it('the shared pane has the SAME table — any chart is marked without activating it', async () => {
         const ws = mountWorkspace(PAGE);
         ws.sync.set('symbol', true, false); // all-cells form
-        openPicker(ws);
-        const table = ws.root.querySelector<HTMLElement>('.vela-lp-charts')!;
+        openSync(ws);
+        const table = ws.root.querySelector<HTMLElement>('.vela-ls-matrix')!;
         expect(table.hidden).toBe(false);
         // Slot numbers, never tickers: the chart called 'btc' may be showing XRPUSDT.
         const heads = [...table.querySelectorAll<HTMLElement>('.vela-md-matrix-head[data-cell]')];
@@ -166,8 +174,8 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         ws.cell('eth')!.setSymbol('XRPUSDT');
         await settle(ws);
         ws.root.querySelector<HTMLElement>('button[aria-label^="Layout"]')!.click(); // close
-        openPicker(ws); // reopen: the table re-reads every chart
-        expect(ws.root.querySelector<HTMLElement>('.vela-lp-charts .vela-md-matrix-head[data-cell="eth"]')!.title).toContain('XRPUSDT');
+        openSync(ws); // reopen: the table re-reads every chart
+        expect(ws.root.querySelector<HTMLElement>('.vela-ls-matrix .vela-md-matrix-head[data-cell="eth"]')!.title).toContain('XRPUSDT');
         // One cell per chart, for the Symbol link — no strip, no row chip: one surface.
         const cell = (id: string): HTMLElement => table.querySelector<HTMLElement>(`.vela-md-chip[data-kind="symbol"][data-cell="${id}"]`)!;
         expect(ws.root.querySelector('.vela-lp-target')).toBeNull();
@@ -187,6 +195,15 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         expect(cell('eth').textContent).toBe('A');
     });
 
+    it('the desktop badge opens its chart column without silently changing the active chart', () => {
+        const ws = mountWorkspace(PAGE);
+        expect(ws.active.id).toBe('btc');
+        ws.cell('eth')!.host.querySelector<HTMLElement>('.vela-sl-marks')!.click();
+        expect(ws.root.querySelector<HTMLElement>('.vela-ls-sync-view')!.hidden).toBe(false);
+        expect(ws.root.querySelector<HTMLElement>('.vela-md-matrix-head[data-cell="eth"]')!.hasAttribute('data-focus')).toBe(true);
+        expect(ws.active.id).toBe('btc');
+    });
+
     it('opening the table numbers the charts — column 3 IS the chart wearing 3', () => {
         const ws = mountWorkspace(PAGE);
         const nos = (): Array<string | null> =>
@@ -194,7 +211,7 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         expect(nos()).toEqual(['1', '2', '3', '4']);
         // …but a number is only shown while the surface that uses it is up.
         expect(ws.root.hasAttribute('data-sync-open')).toBe(false);
-        openPicker(ws);
+        openSync(ws);
         expect(ws.root.getAttribute('data-sync-open')).toBe('1');
         // After a layout change the numbers follow the NEW slots, not the old ids.
         ws.setLayout('8');
@@ -205,8 +222,8 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
 
     it('a cell offers the WHOLE palette on right-click — one pick, not seven taps', () => {
         const ws = mountWorkspace(PAGE);
-        openPicker(ws);
-        const cell = ws.root.querySelector<HTMLElement>('.vela-lp-charts .vela-md-chip[data-kind="symbol"][data-cell="eth"]')!;
+        openSync(ws);
+        const cell = ws.root.querySelector<HTMLElement>('.vela-ls-matrix .vela-md-chip[data-kind="symbol"][data-cell="eth"]')!;
         cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 40, clientY: 40 }));
         // The list portals to the floating layer (the document body here), so it is
         // found from the document, not from the mount.
@@ -237,11 +254,11 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
 
     it('the table is ONE tab stop and the arrow keys walk it', () => {
         const ws = mountWorkspace(PAGE);
-        openPicker(ws);
-        const chips = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-charts .vela-md-chip[data-cell]')];
+        openSync(ws);
+        const chips = [...ws.root.querySelectorAll<HTMLElement>('.vela-ls-matrix .vela-md-chip[data-cell]')];
         // Exactly one cell is reachable with Tab; the rest are reached by arrow keys.
         expect(chips.filter((c) => c.tabIndex === 0)).toHaveLength(1);
-        const wrap = ws.root.querySelector<HTMLElement>('.vela-lp-charts .vela-md-matrixwrap')!;
+        const wrap = ws.root.querySelector<HTMLElement>('.vela-ls-matrix .vela-md-matrixwrap')!;
         expect(wrap.getAttribute('role')).toBe('grid');
         expect(chips[0]!.tabIndex).toBe(0);
         const press = (k: string): void => {
@@ -252,9 +269,9 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
             return `${el.dataset.kind}/${el.dataset.cell}`;
         };
         // Column order comes from the workspace (slot order), not from the test.
-        const cols = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-charts .vela-md-chip[data-kind="viewport"][data-cell]')].map((c) => c.dataset.cell);
+        const cols = [...ws.root.querySelectorAll<HTMLElement>('.vela-ls-matrix .vela-md-chip[data-kind="viewport"][data-cell]')].map((c) => c.dataset.cell);
         expect(cols).toHaveLength(4);
-        ws.root.querySelector<HTMLElement>(`.vela-lp-charts .vela-md-chip[data-kind="viewport"][data-cell="${cols[0]}"]`)!.focus();
+        ws.root.querySelector<HTMLElement>(`.vela-ls-matrix .vela-md-chip[data-kind="viewport"][data-cell="${cols[0]}"]`)!.focus();
         // Right moves along the row; Down moves down the column (the row order is the
         // workspace's: Date range, Time, Symbol, …).
         press('ArrowRight');
@@ -263,7 +280,7 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
         press('ArrowDown');
         press('ArrowDown');
         expect(focused()).toBe(`symbol/${cols[2]}`);
-        expect(ws.root.querySelector<HTMLElement>(`.vela-lp-charts .vela-md-chip[data-kind="symbol"][data-cell="${cols[2]}"]`)!.tabIndex).toBe(0);
+        expect(ws.root.querySelector<HTMLElement>(`.vela-ls-matrix .vela-md-chip[data-kind="symbol"][data-cell="${cols[2]}"]`)!.tabIndex).toBe(0);
         // Home/End jump to the row's ends.
         press('Home');
         expect(focused()).toBe(`symbol/${cols[0]}`);
@@ -274,11 +291,11 @@ describe('the layout dropdown exposes every link and reads grouped links as ON',
 
     it('the drawable scope chip flips the drawing scope in place', () => {
         const ws = mountWorkspace(PAGE);
-        openPicker(ws);
-        const chip = (): HTMLElement => syncRow(ws, 'Drawings')!.querySelector<HTMLElement>('.vela-lp-scope')!;
-        expect(chip().textContent).toBe('layout');
-        chip().click(); // the row is re-rendered, so re-query
-        expect(chip().textContent).toBe('global');
+        openSync(ws);
+        const chip = (): HTMLElement => ws.root.querySelector<HTMLElement>('[data-action="drawing-scope"]')!;
+        expect(chip().textContent).toContain('This layout');
+        chip().click();
+        expect(chip().textContent).toContain('Global');
         expect(ws.getState().drawingsScope).toBe('global');
     });
 });
@@ -932,18 +949,18 @@ describe('splitters', () => {
 });
 
 describe('hidden charts (the pool)', () => {
-    it('shrinking the layout pools the surplus charts, and the footer row drops them', () => {
+    it('shrinking the layout pools the surplus charts, and the setup action drops them', () => {
         const ws = mountWorkspace(PAGE);
         ws.setLayout('1');
         expect(ws.hiddenChartCount).toBe(3);
         openPicker(ws);
-        const row = (): HTMLElement => ws.root.querySelector<HTMLElement>('.vela-lp-pool:not(.vela-lp-undo)')!;
+        const row = (): HTMLElement => ws.root.querySelector<HTMLElement>('[data-action="clear-hidden-charts"]')!;
         expect(row().textContent).toBe('Remove 3 hidden charts');
         row().click(); // arms, does not destroy
-        expect(row().textContent).toBe('Remove 3 hidden charts — click to confirm');
+        expect(row().textContent).toBe('Remove 3 hidden charts — confirm');
         row().click();
         expect(ws.hiddenChartCount).toBe(0);
-        expect(ws.root.querySelector('.vela-lp-pool:not(.vela-lp-undo)')).toBeNull();
+        expect(ws.root.querySelector<HTMLElement>('[data-action="clear-hidden-charts"]')!.hidden).toBe(true);
     });
 
     it('removing hidden charts takes two clicks and can be undone', () => {
@@ -951,17 +968,17 @@ describe('hidden charts (the pool)', () => {
         ws.setLayout('1');
         expect(ws.hiddenChartCount).toBe(3);
         openPicker(ws);
-        const row = (): HTMLElement => ws.root.querySelector<HTMLElement>('.vela-lp-pool:not(.vela-lp-undo)')!;
+        const row = (): HTMLElement => ws.root.querySelector<HTMLElement>('[data-action="clear-hidden-charts"]')!;
 
         row().click(); // arm
         expect(ws.hiddenChartCount).toBe(3);
-        expect(row().dataset.armed).toBe('1');
+        expect(row().dataset.danger).toBe('1');
         row().click(); // commit
         expect(ws.hiddenChartCount).toBe(0);
         expect(ws.clearedChartCount).toBe(3);
 
-        const undo = ws.root.querySelector<HTMLElement>('.vela-lp-undo')!;
-        expect(undo.textContent).toContain('bring back 3');
+        const undo = ws.root.querySelector<HTMLElement>('[data-action="undo-hidden-charts"]')!;
+        expect(undo.textContent).toContain('restore 3');
         undo.click();
         expect(ws.hiddenChartCount).toBe(3);
         expect(ws.clearedChartCount).toBe(0);
@@ -975,11 +992,11 @@ describe('hidden charts (the pool)', () => {
         const ws = mountWorkspace(PAGE);
         ws.setLayout('1');
         openPicker(ws);
-        ws.root.querySelector<HTMLElement>('.vela-lp-pool:not(.vela-lp-undo)')!.click();
-        expect(ws.root.querySelector<HTMLElement>('.vela-lp-pool:not(.vela-lp-undo)')!.dataset.armed).toBe('1');
-        ws.setLayout('4'); // the picker's footer re-reads live state
+        ws.root.querySelector<HTMLElement>('[data-action="clear-hidden-charts"]')!.click();
+        expect(ws.root.querySelector<HTMLElement>('[data-action="clear-hidden-charts"]')!.dataset.danger).toBe('1');
+        ws.setLayout('4'); // the pane re-reads live state
         expect(ws.hiddenChartCount).toBe(0);
-        expect(ws.root.querySelector<HTMLElement>('.vela-lp-pool:not(.vela-lp-undo)')).toBeNull();
+        expect(ws.root.querySelector<HTMLElement>('[data-action="clear-hidden-charts"]')!.hidden).toBe(true);
     });
 
     it('growing back before removal still restores the pooled charts', () => {

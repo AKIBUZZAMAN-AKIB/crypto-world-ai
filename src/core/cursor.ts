@@ -19,6 +19,9 @@
  *  - `magic`  — a sparkle trail follows the pointer and fades.
  *  - `eraser` — a ring cursor; a click or drag deletes the drawing under it.
  *  - `none`   — nothing drawn at all (a clean chart to screenshot or present).
+ * Phone long-press inspection temporarily displays the configured crosshair even for
+ * non-line choices when no drawing tool owns the gesture, without changing the selected
+ * cursor or its normal hover behavior.
  */
 import { registerIcon, svg24, svg24Solid } from './icons';
 

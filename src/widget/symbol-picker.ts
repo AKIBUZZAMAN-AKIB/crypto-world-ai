@@ -9,6 +9,7 @@ import { iconEl } from '../ui/icons';
 import { tickerIconEl, baseOf } from './symbol-icon';
 import { symbolRanking } from './contributions';
 import { isGroupRow, groupKeyOf, groupMembers, defaultMemberOf } from '../data/symbol-groups';
+import type { WorkspaceToolPanel } from './workspace-tool-panel';
 
 /** First occurrence wins, keyed by venue+ticker — a ranking hook may inject an entry
  *  that also exists later in the pool; the injected one keeps position AND data. */
@@ -226,6 +227,11 @@ const CSS = `
     font-size: var(--vela-font-size-md);
     font-weight: 700;
 }
+.vela-sp-pick { all: unset; box-sizing: border-box; display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 10px; cursor: pointer; }
+.vela-sp-pick:focus-visible, .vela-sp-tab:focus-visible, .vela-sp-star:focus-visible,
+.vela-sp-expander:focus-visible, .vela-sp-watchpick:focus-visible, .vela-sp-watchall:focus-visible {
+    outline: 2px solid var(--vela-accent); outline-offset: 2px;
+}
 .vela-sp-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .vela-sp-ticker { font-weight: 700; color: var(--vela-fg-bright); font-size: 14px; text-transform: uppercase; }
 .vela-sp-desc { color: var(--vela-fg-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -274,6 +280,31 @@ const CSS = `
 [data-sp-sheet='1'] .vela-sp-list { flex: 1 1 auto; max-height: none; margin-bottom: 0; }
 /* One row per pair, 44 px tall at the least: a list you can flick at. */
 [data-sp-sheet='1'] .vela-sp-row { min-height: 44px; padding-top: 0; padding-bottom: 0; }
+.vela-symbol-panel .vela-panel-body { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.vela-symbol-panel .vela-sp-content { flex: 1 1 auto; min-width: 0; }
+.vela-symbol-panel .vela-sp-head { position: relative; min-width: 0; }
+.vela-symbol-panel .vela-sp-tabs { min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; gap: 6px; }
+.vela-symbol-panel .vela-sp-tabs::-webkit-scrollbar { display: none; }
+.vela-symbol-panel .vela-sp-tab { flex: none; white-space: nowrap; }
+.vela-symbol-panel .vela-sp-row { gap: 6px; flex-wrap: wrap; }
+.vela-symbol-panel .vela-sp-pick { min-width: min(80px, 100%); }
+.vela-symbol-panel .vela-sp-ticker { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vela-symbol-panel .vela-sp-badge { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vela-symbol-panel .vela-sp-input { min-width: 0; }
+.vela-symbol-panel .vela-sp-list { flex: 1 1 auto; min-height: 0; max-height: none; margin-bottom: 0; overscroll-behavior: contain; }
+.vela-symbol-panel[data-compact-height] .vela-panel-body { overflow: auto; }
+.vela-symbol-panel[data-compact-height] .vela-sp-content { flex: none; height: 235px; min-height: 235px; }
+.vela-symbol-panel[data-compact-height] .vela-sp-list { min-height: 120px; }
+
+[data-layout='mobile'] .vela-symbol-panel .vela-sp-row { min-height: 44px; }
+[data-layout='mobile'] .vela-symbol-panel .vela-sp-input { font-size: 16px; }
+[data-layout='mobile'] .vela-symbol-panel .vela-sp-tab { min-height: 36px; box-sizing: border-box; display: inline-flex; align-items: center; }
+[data-layout='mobile'] .vela-symbol-panel .vela-sp-star,
+[data-layout='mobile'] .vela-symbol-panel .vela-sp-expander { width: 40px; height: 40px; }
+[data-layout='mobile'] .vela-symbol-panel .vela-sp-watchpick,
+[data-layout='mobile'] .vela-symbol-panel .vela-sp-watchall { min-height: 40px; }
+.vela-sp-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
 `;
 
 export interface SymbolPickerOptions {
@@ -296,6 +327,8 @@ export interface SymbolPickerOptions {
     onToggleWatch?: (symbol: string, on: boolean) => void;
     /** Put a watchlist symbol on EVERY chart (multi-chart shells only). */
     onApplyAll?: (symbol: string) => void;
+    /** Hide the primary-market bulk action when this picker serves another purpose. */
+    canApplyAll?: () => boolean;
     /** Dialog title — the Compare sheet reuses this picker for a second series. */
     title?: string;
     /**
@@ -317,6 +350,9 @@ const FIRST_PAINT_ROWS = 16;
 
 export class SymbolPicker {
     private readonly dialog: Dialog;
+    private pane: WorkspaceToolPanel | null = null;
+    /** Dialog machines project their open state asynchronously; keep fast typing intact. */
+    private opening = false;
     /** The sheet the picker becomes on a phone; built on first use, so a desktop shell
      *  never pays for it. Destroyed and rebuilt when the title changes (Compare reuses us). */
     private sheetView: { drawer: Drawer; title: string } | null = null;
@@ -330,6 +366,7 @@ export class SymbolPicker {
     private source: () => readonly SymbolDescriptor[] = () => [];
     /** The header the dialog was built with — restored after a titled opening. */
     private readonly baseTitle: string;
+    private readonly resultsStatus: HTMLElement;
     private rows: SymbolDescriptor[] = [];
     /** Bumped on every fill so a superseded one (a newer keystroke) stops appending. */
     private fillToken = 0;
@@ -354,6 +391,7 @@ export class SymbolPicker {
         this.input = doc.createElement('input');
         this.input.className = 'vela-sp-input';
         this.input.placeholder = 'Search symbol…';
+        this.input.setAttribute('aria-label', 'Search symbols');
         this.input.setAttribute('spellcheck', 'false');
         const searchRow = doc.createElement('div');
         searchRow.className = 'vela-sp-searchrow';
@@ -367,15 +405,22 @@ export class SymbolPicker {
             b.className = 'vela-sp-tab';
             b.textContent = t;
             if (t === this.activeTab) b.dataset.active = '1';
+            b.type = 'button';
+            b.setAttribute('aria-pressed', String(t === this.activeTab));
             b.addEventListener('click', () => {
                 this.activeTab = t;
-                for (const c of this.tabs.children) delete (c as HTMLElement).dataset.active;
+                for (const c of this.tabs.children) { delete (c as HTMLElement).dataset.active; c.setAttribute('aria-pressed', 'false'); }
                 b.dataset.active = '1';
+                b.setAttribute('aria-pressed', 'true');
                 this.refresh();
             });
             this.tabs.appendChild(b);
         }
-        head.append(searchRow, this.tabs);
+        this.resultsStatus = doc.createElement('span');
+        this.resultsStatus.className = 'vela-sp-status';
+        this.resultsStatus.setAttribute('role', 'status');
+        this.resultsStatus.setAttribute('aria-live', 'polite');
+        head.append(searchRow, this.tabs, this.resultsStatus);
         this.list = doc.createElement('div');
         this.list.className = 'vela-sp-list';
         // Infinite scroll: nearing the bottom grows the page and APPENDS the new rows —
@@ -403,10 +448,8 @@ export class SymbolPicker {
                 body.appendChild(this.content);
             },
             onOpenChange: (open) => {
+                this.opening = false;
                 if (open) {
-                    this.input.value = this.seed.toUpperCase();
-                    this.seed = '';
-                    this.refresh();
                     // Focus after the machine settles its own focus management.
                     setTimeout(() => {
                         this.input.focus();
@@ -458,6 +501,11 @@ export class SymbolPicker {
         this.source = source;
     }
 
+    /** Repaint an open search after a provider's asynchronous symbol index arrives. */
+    sync(): void {
+        if (this.isOpen) this.refresh();
+    }
+
     /**
      * Open the search. `title` overrides the header for the lifetime of one opening — the
      * Compare flow reuses this dialog for a SECOND series, and a picker that still says
@@ -465,6 +513,12 @@ export class SymbolPicker {
      */
     open(initialQuery = '', title?: string): void {
         this.seed = initialQuery;
+        if (this.pane) {
+            this.pane.setTitle(title ?? this.baseTitle);
+            if (this.pane.open) this.preparePane(true);
+            else this.pane.showFrom();
+            return;
+        }
         if (this.opts.sheet?.() === true) {
             this.openSheet(title ?? this.baseTitle);
             return;
@@ -474,6 +528,10 @@ export class SymbolPicker {
         this.sheetView?.drawer.hide();
         this.dialog.titleEl.textContent = title ?? this.baseTitle;
         if (this.dialogBody && this.content.parentElement !== this.dialogBody) this.dialogBody.appendChild(this.content);
+        this.input.value = this.seed.toUpperCase();
+        this.seed = '';
+        this.refresh();
+        this.opening = true;
         this.dialog.show();
     }
 
@@ -492,10 +550,8 @@ export class SymbolPicker {
                 host,
                 content: (body) => body.appendChild(this.content),
                 onOpenChange: (open) => {
-                    if (open) {
-                        this.refresh();
-                        return;
-                    }
+                    this.opening = false;
+                    if (open) return;
                     this.input.blur();
                     this.opts.onOpenChange?.(false);
                 },
@@ -505,12 +561,41 @@ export class SymbolPicker {
             if (panel) panel.dataset.spSheet = '1';
             this.sheetView = { drawer, title };
         }
+        this.input.value = this.seed.toUpperCase();
+        this.seed = '';
+        this.refresh();
+        this.opening = true;
         this.sheetView.drawer.show();
         this.opts.onOpenChange?.(true);
     }
 
+    /** Move the shared search content into the workspace pane, keeping standalone fallbacks. */
+    attachPanel(pane: WorkspaceToolPanel): void {
+        this.pane = pane;
+        pane.content.appendChild(this.content);
+        pane.onVisibilityChange = (open, userOpening) => {
+            if (open) this.preparePane(userOpening);
+            else this.input.blur();
+            this.opts.onOpenChange?.(open);
+        };
+    }
+
+    private preparePane(userOpening: boolean): void {
+        this.input.value = this.seed.toUpperCase();
+        this.seed = '';
+        this.refresh();
+        // Do not summon a phone keyboard or take focus when restoring persisted panes.
+        if (userOpening && !this.input.closest('[data-layout="mobile"]')) {
+            setTimeout(() => {
+                if (!this.pane?.open || !this.input.isConnected) return;
+                this.input.focus({ preventScroll: true });
+                this.input.setSelectionRange(this.input.value.length, this.input.value.length);
+            }, 0);
+        }
+    }
+
     get isOpen(): boolean {
-        return this.dialog.open || this.sheetView?.drawer.open === true;
+        return this.opening || this.pane?.open === true || this.dialog.open || this.sheetView?.drawer.open === true;
     }
 
     /** Text typed at the picker that never reached its field: closed, it opens seeded
@@ -526,14 +611,21 @@ export class SymbolPicker {
     }
 
     close(): void {
-        this.dialog.hide(); // onOpenChange(false) blurs the field (iOS focus-zoom)
-        this.sheetView?.drawer.hide();
+        this.opening = false;
+        if (this.pane) this.pane.toggle(false);
+        else {
+            this.dialog.hide(); // onOpenChange(false) blurs the field (iOS focus-zoom)
+            this.sheetView?.drawer.hide();
+        }
     }
 
     destroy(): void {
+        this.opening = false;
         this.dialog.destroy();
         this.sheetView?.drawer.destroy();
         this.sheetView = null;
+        this.pane?.destroy();
+        this.pane = null;
     }
 
     /** Route a row activation: a GROUP row loads its default member (the root itself is
@@ -573,7 +665,7 @@ export class SymbolPicker {
         this.highlighted = Math.min(this.rows.length - 1, Math.max(0, this.highlighted + delta));
         // The arrow keys can outrun the streaming fill; the row it moves to must exist.
         if (!this.list.querySelector(`[data-i="${this.highlighted}"]`)) this.fillNow();
-        this.renderHighlight();
+        this.renderHighlight(true);
     }
 
     /**
@@ -585,7 +677,8 @@ export class SymbolPicker {
     private fill(): void {
         const gen = ++this.fillToken;
         const win = this.list.ownerDocument.defaultView;
-        const from = this.list.children.length;
+        // The watchlist is a separate block, not a result row.
+        const from = this.list.querySelectorAll('.vela-sp-row[data-i]').length;
         let i = from;
         const step = (first: boolean): void => {
             if (gen !== this.fillToken) return;
@@ -607,15 +700,15 @@ export class SymbolPicker {
     /** Finish the fill now — the keyboard is moving to a row that has not been appended. */
     private fillNow(): void {
         this.fillToken++;
-        for (let i = this.list.children.length; i < this.rows.length; i++) this.list.appendChild(this.rowEl(this.rows[i]!, i));
+        for (let i = this.list.querySelectorAll('.vela-sp-row[data-i]').length; i < this.rows.length; i++) this.list.appendChild(this.rowEl(this.rows[i]!, i));
     }
 
-    private renderHighlight(): void {
-        [...this.list.children].forEach((el, i) => {
-            if (i === this.highlighted) {
-                (el as HTMLElement).dataset.highlighted = '1';
-                (el as HTMLElement).scrollIntoView({ block: 'nearest' });
-            } else delete (el as HTMLElement).dataset.highlighted;
+    private renderHighlight(reveal = false): void {
+        this.list.querySelectorAll<HTMLElement>('.vela-sp-row[data-i]').forEach((el) => {
+            if (Number(el.dataset.i) === this.highlighted) {
+                el.dataset.highlighted = '1';
+                if (reveal) el.scrollIntoView({ block: 'nearest' });
+            } else delete el.dataset.highlighted;
         });
     }
 
@@ -683,6 +776,9 @@ export class SymbolPicker {
         this.visible = PAGE; // a new query/tab starts back at one page
         this.rows = this.computeRows();
         this.highlighted = 0;
+        this.resultsStatus.textContent = this.rows.length
+            ? `${this.rows.length}${this.exhausted ? '' : ' or more'} matching symbols`
+            : 'No matching symbols';
         this.list.replaceChildren();
         // The watchlist greets an empty query: the trader's own shortlist before the
         // venue's 13k rows. Typing anything puts it away — the list is a STARTING point,
@@ -691,7 +787,9 @@ export class SymbolPicker {
         if (!this.rows.length) {
             const empty = doc.createElement('div');
             empty.className = 'vela-sp-empty';
-            empty.textContent = this.input.value ? 'No symbols match.' : 'No symbols indexed (provider still loading?).';
+            empty.textContent = this.activeTab !== 'All'
+                ? `No symbols match in ${this.activeTab}. Try All or another search.`
+                : this.input.value ? 'No symbols match.' : 'No symbols indexed (provider still loading?).';
             this.list.appendChild(empty);
             return;
         }
@@ -737,7 +835,7 @@ export class SymbolPicker {
                 this.opts.onSelect(symbol);
             });
             row.appendChild(btn);
-            if (this.opts.onApplyAll) {
+            if (this.opts.onApplyAll && (this.opts.canApplyAll?.() ?? true)) {
                 const all = doc.createElement('button');
                 all.type = 'button';
                 all.className = 'vela-sp-watchall';
@@ -789,14 +887,21 @@ export class SymbolPicker {
         d.className = 'vela-sp-desc';
         d.textContent = s.description ?? (s.type ?? '');
         main.append(t, d);
-        row.append(av, main);
+        const pick = doc.createElement('button');
+        pick.type = 'button';
+        pick.className = 'vela-sp-pick';
+        pick.setAttribute('aria-label', `Select ${[s.ticker, s.description, s.type, venue].filter(Boolean).join(', ')}`);
+        pick.append(av, main);
+        row.appendChild(pick);
         if (isGroupRow(s)) {
             // The chevron unfolds the members inline; the row itself LOADS (the default
             // member) — a root must never be a dead click.
             row.dataset.group = '1';
             const expander = doc.createElement('button');
+            expander.type = 'button';
             expander.className = 'vela-sp-expander';
             expander.setAttribute('aria-label', 'Show contracts');
+            expander.setAttribute('aria-expanded', String(this.expanded.has(groupKeyOf(s))));
             expander.appendChild(iconEl(this.expanded.has(groupKeyOf(s)) ? 'chevron-down' : 'chevron-right', doc));
             row.appendChild(expander);
         } else if (s.group != null && this.expanded.has(groupKeyOf(s))) row.dataset.member = '1';

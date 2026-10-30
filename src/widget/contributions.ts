@@ -27,9 +27,9 @@ export interface WidgetContext {
     setTimeframe(tf: string): void;
     setPriceStyle(style: string): void;
     openSymbolSearch(query?: string): void;
-    /** Open/close a docked side panel by id (built-in or contributed) — a bare call flips
-     *  it. The dock stays exclusive: opening one closes whichever was showing. Unknown ids
-     *  are ignored. The seam a plugin uses to open ITS OWN panel programmatically. */
+    /** Open/close a side panel by id (built-in or contributed) — a bare call flips it.
+     *  One panel occupies the side dock; desktop floating panels may stay open alongside it.
+     *  Unknown ids are ignored. A plugin can open ITS OWN panel through this seam. */
     togglePanel(id: string, open?: boolean): void;
     /** Dock `el` as a full-width strip in the shell's layout, between the chart area and
      *  the bottom bar — the charts shrink to make room. Strips stack in docking order.
@@ -214,14 +214,14 @@ export interface SidePanelDescriptor {
     order?: number;
     /** Declared width in px (default 280). */
     width?: number;
-    /** Let the user drag the panel's inner edge (default false — a fixed column). */
+    /** Let the user drag the dock's inner edge (default false — a fixed column). All
+     *  desktop floating cards can be resized; declared bounds apply when resizable. */
     resizable?: boolean;
     minWidth?: number;
     maxWidth?: number;
-    /** Float over the chart's right edge instead of docking beside it: the chart keeps its
-     *  width and layout, and the panel covers its right-hand part (default false — a docked
-     *  column that shrinks the chart). For panels wide enough that a column would crush
-     *  the plot. The dock stays exclusive either way. */
+    /** Start anchored over the chart's right edge instead of beside it (default false).
+     *  The legacy pin switches the anchor to a side column. The desktop Float/Dock action
+     *  can also make either placement a freely movable card; multiple cards can coexist. */
     overlay?: boolean;
     /** A header button that maximizes the panel over every chart of the shell, and restores
      *  it (default false). For panels that are sometimes the main work surface, like an

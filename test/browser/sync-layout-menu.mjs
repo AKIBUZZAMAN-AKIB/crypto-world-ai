@@ -1,4 +1,5 @@
-// The layout menu (R55): the name chip after undo/redo, and the panel it opens.
+// The retained rich layout-menu API (R55), plus name-chip status and toolbar placement.
+// The actual chip now opens the compact menu, exercised in sync-floating-layout-manager.mjs.
 //
 // jsdom (test/layout-menu.test.ts) proves the model contract; only Chromium can prove the
 // things that make this TradingView-grade: the chip sits in the toolbar's own row, the
@@ -30,10 +31,15 @@ const openPanel = async () => {
     // Idempotent: some verbs leave the panel open (autosave, delete, a rename's error), and
     // the chip TOGGLES, so a blind click would shut it again.
     if (await page.locator('.vela-lm').count()) return;
-    await page.locator('.vela-widget-layoutname').click();
+    await page.evaluate(() => window.__ws.topbar.openLayoutMenu());
     await page.waitForSelector('.vela-lm', { timeout: 5000 });
 };
 const closePanel = async () => {
+    // Focus may have opened a tooltip; Escape dismisses that topmost surface first.
+    if (await page.locator('.vela-tooltip[data-state="open"]').count()) {
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(80);
+    }
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('.vela-lm'), null, { timeout: 5000 });
 };
@@ -178,8 +184,7 @@ try {
 
     // ── 9. Escape hands focus back to the chip ──────────────────────────────────
     await openPanel();
-    await page.keyboard.press('Escape');
-    await page.waitForFunction(() => !document.querySelector('.vela-lm'), null, { timeout: 5000 });
+    await closePanel();
     const focused = await page.evaluate(() => document.activeElement?.className ?? '');
     assert(focused.includes('vela-widget-layoutname'), 'focus returns to the chip', focused);
 

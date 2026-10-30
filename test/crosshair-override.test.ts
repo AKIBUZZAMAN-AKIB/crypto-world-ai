@@ -81,7 +81,7 @@ describe('CrosshairRenderer under an override', () => {
         return { ctx, segments, texts, strokes, fills };
     }
 
-    function paint(override: unknown, opts: { external?: { x: number; y: number | null; time: number; price?: number | null } } = {}) {
+    function paint(override: unknown, opts: { external?: { x: number; y: number | null; time: number; price?: number | null }; barCount?: number; tracking?: boolean; cursor?: 'cross' | 'arrow' | 'none' } = {}) {
         const rec = recorder();
         const canvas = { width: 400, height: 300, getContext: () => rec.ctx } as unknown as HTMLCanvasElement;
         const cr = new CrosshairRenderer();
@@ -89,18 +89,20 @@ describe('CrosshairRenderer under an override', () => {
         const scene = new SceneGraph();
         scene.crosshair = opts.external ? null : { x: 100, y: 120 };
         scene.crosshairOverride = sanitizeCrosshairOverride(override);
+        if (opts.cursor) scene.cursorStyle = opts.cursor;
         scene.panes.set('price', { id: 'price', kind: 'price', bounds: { top: 0, height: 280 }, scale: { min: 0, max: 100 }, axisFormat: 'price' } as never);
         const coords = {
             dpr: 1,
             width: 380,
             height: 280,
+            barCount: opts.barCount ?? 20,
             barInterval: 3_600_000,
             xToLogical: (x: number) => x / 10,
             logicalToX: (l: number) => l * 10,
             logicalToTime: (l: number) => 1_700_000_000_000 + l * 3_600_000,
             yToPrice: () => 50,
         } as unknown as CoordinateSystem;
-        cr.render(scene, coords, DARK_THEME, null, opts.external ?? null);
+        cr.render(scene, coords, DARK_THEME, null, opts.external ?? null, opts.tracking ?? false);
         return rec;
     }
 
@@ -113,6 +115,23 @@ describe('CrosshairRenderer under an override', () => {
         expect(rec.segments.some(isHorizontal)).toBe(true);
         expect(rec.texts.length).toBe(2); // price chip + time chip
         expect(rec.strokes[0]!.dash).toEqual([6, 4]); // the configured dashed style
+    });
+
+    it('touch tracking paints a crosshair for Arrow and None without changing desktop cursor semantics', () => {
+        for (const cursor of ['arrow', 'none'] as const) {
+            expect(paint(null, { cursor }).segments).toEqual([]);
+            const tracked = paint(null, { cursor, tracking: true });
+            expect(tracked.segments.some(isHorizontal)).toBe(true);
+            expect(tracked.segments.some(isVertical)).toBe(true);
+            expect(tracked.texts).toHaveLength(2);
+        }
+    });
+
+    it('without bars it still paints the lines, but never fabricates price or time chips', () => {
+        const rec = paint(null, { barCount: 0 });
+        expect(rec.segments.some(isVertical)).toBe(true);
+        expect(rec.segments.some(isHorizontal)).toBe(true);
+        expect(rec.texts).toEqual([]);
     });
 
     it('horizontal: false drops the level line and its price chip; the style fields apply', () => {

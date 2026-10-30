@@ -101,12 +101,13 @@ export interface PriceAxisState {
 
 export function priceAxisItems(s: PriceAxisState): MenuItemDescriptor[] {
     return [
-        { id: 'auto', label: 'Auto (fits data to screen)', checked: s.auto },
-        { id: 'invert', label: 'Invert scale', checked: s.invert },
+        { id: 'auto', label: 'Auto (fits data to screen)', checked: s.auto, checkRole: 'menuitemcheckbox' },
+        { id: 'invert', label: 'Invert scale', checked: s.invert, checkRole: 'menuitemcheckbox' },
         ...SCALE_CHOICES.map(([choice, label], i) => ({
             id: `scale:${choice}`,
             label,
             checked: s.choice === choice,
+            checkRole: 'menuitemradio' as const,
             separatorBefore: i === 0,
         })),
         {
@@ -114,15 +115,15 @@ export function priceAxisItems(s: PriceAxisState): MenuItemDescriptor[] {
             label: 'Labels',
             separatorBefore: true,
             submenu: [
-                { id: 'toggle:axisLabels', label: 'Price axis labels', checked: s.axisLabels },
-                { id: 'toggle:priceLabel', label: 'Last price label', checked: s.priceLabel },
-                { id: 'toggle:countdown', label: 'Countdown to bar close', checked: s.countdown },
+                { id: 'toggle:axisLabels', label: 'Price axis labels', checked: s.axisLabels, checkRole: 'menuitemcheckbox' },
+                { id: 'toggle:priceLabel', label: 'Last price label', checked: s.priceLabel, checkRole: 'menuitemcheckbox' },
+                { id: 'toggle:countdown', label: 'Countdown to bar close', checked: s.countdown, checkRole: 'menuitemcheckbox' },
             ],
         },
         {
             id: 'levels',
             label: 'Levels',
-            submenu: [{ id: 'toggle:currentPriceLine', label: 'Last Price Line', checked: s.priceLine }],
+            submenu: [{ id: 'toggle:currentPriceLine', label: 'Last Price Line', checked: s.priceLine, checkRole: 'menuitemcheckbox' }],
         },
         settingsItem('price-axis', 'More settings…'),
     ];

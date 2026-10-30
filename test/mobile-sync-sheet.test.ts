@@ -501,20 +501,20 @@ describe('the kebab drawer’s Sync view', () => {
 });
 
 /** Through the real workspace: the sheet reads and drives the live links. */
-describe('the workspace’s Sync sheet', () => {
+describe('the workspace’s shared Sync pane', () => {
     const openSheet = (ws: VelaWorkspace): void => {
         ws.openSyncDrawer();
-        // The sheet opens on the Sync tab (the status line's door); pin it for every
-        // query below, because a plain `openMoreDrawer('layout')` lands on Layout.
-        expect(ws.root.querySelector<HTMLElement>('.vela-md-sec:last-of-type')!.hidden).toBe(false);
+        // A chart-specific door lands on the shared pane's Sync tab.
+        expect(ws.root.querySelector<HTMLElement>('.vela-ls-sync-view')!.hidden).toBe(false);
+        expect(ws.root.querySelector<HTMLElement>('.vela-ls-layout-view')!.hidden).toBe(true);
     };
 
     it('lists the seven links, with the all-cells form showing the implicit group', () => {
         const ws = mount();
         ws.sync.set('symbol', true, false);
         openSheet(ws);
-        const rows = [...ws.root.querySelectorAll<HTMLElement>('.vela-md-sync')];
-        expect(rows.map((r) => r.querySelector('.vela-md-row-label')?.textContent)).toEqual([
+        const rows = [...ws.root.querySelectorAll<HTMLElement>('.vela-ls-syncrows [role="switch"]')];
+        expect(rows.map((r) => r.querySelector('.vela-ls-row-label')?.textContent)).toEqual([
             'Date range',
             'Time',
             'Symbol',
@@ -522,8 +522,8 @@ describe('the workspace’s Sync sheet', () => {
             'Crosshair',
             'Drawings',
             'Style',
-            'Drawing scope',
         ]);
+        expect(ws.root.querySelector('[data-action="drawing-scope"]')?.textContent).toContain('Drawing scope');
         const symbol = rows[2]!;
         expect(symbol.getAttribute('aria-checked')).toBe('true');
         // The all-cells form reads as the implicit 'A' on every chart's chip.
@@ -559,7 +559,7 @@ describe('the workspace’s Sync sheet', () => {
         const ws = mount();
         ws.sync.set('symbol', { btc: '🔴', eth: '🟢' }, false);
         openSheet(ws);
-        const symbol = (): HTMLElement => [...ws.root.querySelectorAll<HTMLElement>('.vela-md-sync')][2]!;
+        const symbol = (): HTMLElement => [...ws.root.querySelectorAll<HTMLElement>('.vela-ls-syncrows [role="switch"]')][2]!;
         symbol().click(); // off
         expect(ws.sync.state().symbol).toBeUndefined();
         expect(symbol().getAttribute('aria-checked')).toBe('false');

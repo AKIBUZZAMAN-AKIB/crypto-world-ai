@@ -109,7 +109,7 @@ const CSS = `
 }
 .vela-al-create:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: 2px; }
 .vela-al-state { flex: 0 0 auto; width: 16px; text-align: center; font-size: 11px; color: var(--vela-fg-muted); }
-.vela-al-state[data-state='active'] { color: var(--vela-accent); }
+.vela-al-state[data-state='active'] { color: var(--vela-accent-ink, var(--vela-accent)); }
 .vela-al-empty { padding: 18px 6px; text-align: center; color: var(--vela-fg-muted); font-size: 12.5px; }
 .vela-al-foot { display: flex; justify-content: flex-end; padding-top: 6px; border-top: 1px solid var(--vela-border-soft, var(--vela-border)); }
 `;
@@ -158,6 +158,16 @@ export interface ArmedAlertRow {
     /** The alert's own symbol when its chart currently shows a DIFFERENT one — the row
      *  stays armed but cannot fire until that symbol is back on the cell. */
     offChart?: string | null;
+    /** The owning chart is pooled or unavailable, so no prices are being watched. */
+    waitingChart?: boolean;
+    /** A drawing-backed alert cannot currently resolve its source line. */
+    waitingDrawing?: boolean;
+    /** The owner is switching/loading a market; no incoming tick is judged yet. */
+    waitingMarket?: boolean;
+    frequency?: 'once' | 'each';
+    drawingSource?: boolean;
+    /** Explain why the editor must wait for its original chart/market/drawing. */
+    editUnavailable?: string;
     onDelete: () => void;
 }
 

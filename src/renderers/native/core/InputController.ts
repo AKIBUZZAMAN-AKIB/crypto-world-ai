@@ -15,6 +15,8 @@ export interface InputControllerDeps {
     fling(rightOffsetVelocity: number): void;
     /** Pointer moved over the chart (for the crosshair); null when it leaves. */
     onPointerMove(x: number | null, y: number | null): void;
+    /** The actually painted crosshair after magnet snapping, if the host has one. */
+    getAppliedCrosshair?(): { x: number; y: number } | null;
     onClick(x: number, y: number, alt: boolean): void;
     /** Grab the price axis at (`x`,`y`) — record the scale column there + its window (for a rescale drag). */
     beginPriceScale(x: number, y: number): void;
@@ -253,6 +255,10 @@ export class InputController {
     /** The current gesture is the long press that TURNED TRACKING ON (its lift must not read
      *  as the "single tap to exit"). */
     private trackingEntered = false;
+    /** Re-contact uses the applied cursor as its origin and never jumps under the finger. */
+    private trackOrigin = { x: 0, y: 0 };
+    private trackContact = { x: 0, y: 0 };
+    private lastTrackPoint = { x: 0, y: 0 };
     // Whether the last two primary presses were claimed by the drawings layer. A double-click
     // is the last press plus the one before it; a tool-driven click pair must never fall through
     // to the pane maximize toggle, even when the tool disarmed itself between the two clicks
@@ -403,7 +409,7 @@ export class InputController {
             // other press — an axis, a gutter, a control — leaves tracking first, so a tap
             // somewhere else is the "single tap to exit" the reference documents.
             const at = this.regionAt(x, y);
-            if (at === 'data' && !this.deps.drawingsClaim?.(x, y)) {
+            if (at === 'data' && (!this.drawings || !this.deps.drawingsClaim?.(x, y))) {
                 this.touches.set(e.pointerId, { x, y });
                 this.dragging = true;
                 this.moved = false;
@@ -411,7 +417,8 @@ export class InputController {
                 this.region = 'crosshair';
                 this.startX = x;
                 this.startY = y;
-                this.deps.onPointerMove(x, y);
+                this.trackContact = { x, y };
+                this.trackOrigin = this.deps.getAppliedCrosshair?.() ?? this.lastTrackPoint;
                 this.capture(e.pointerId);
                 return;
             }
@@ -476,7 +483,7 @@ export class InputController {
         // On an axis strip the same hold opens the host's timezone / price-scale sheet
         // (the mobile substitute for a right-click), unless the finger moves into a drag.
         if (e.pointerType === 'touch' && (this.region === 'data' || this.region === 'price' || this.region === 'time')) {
-            this.startLongPress(x, y, this.region);
+            this.startLongPress(e.pointerId, this.region);
         }
         this.lastX = x;
         this.lastT = e.timeStamp;
@@ -486,24 +493,37 @@ export class InputController {
 
     /** Arm the long-press timer for a data-area → crosshair or axis → sheet hold;
      *  movement past TOUCH_SLOP or a second finger cancels it. */
-    private startLongPress(x: number, y: number, region: 'data' | 'price' | 'time'): void {
+    private startLongPress(pointerId: number, region: 'data' | 'price' | 'time'): void {
         this.cancelLongPress();
         this.lpTimer = setTimeout(() => {
             this.lpTimer = null;
-            if (!this.dragging || this.region !== region) return;
+            const point = this.touches.get(pointerId);
+            if (!point || !this.dragging || this.region !== region) return;
             if (region === 'data') {
                 this.region = 'crosshair';
                 this.tracking = true;
                 this.trackingEntered = true;
-                this.deps.onPointerMove(x, y);
+                // Use the live contact, not the touchdown point: even a stationary finger
+                // naturally shifts a few pixels before the timer expires.
+                this.moveCrosshair(point.x, point.y);
+                this.trackContact = { ...point };
+                this.trackOrigin = { ...point };
                 this.deps.onTrackingChange?.(true);
                 return;
             }
             // Axis sheet: freeze the gesture so a later wobble cannot rescale/zoom.
             this.region = 'axis-sheet';
             this.moved = true; // not a click / not a pending drag
-            this.deps.onAxisLongPress?.(region, x, y);
+            this.deps.onAxisLongPress?.(region, point.x, point.y);
         }, LONG_PRESS_MS);
+    }
+
+    /** Captured touches can leave the plot. Keep inspection on its closest edge instead
+     *  of dropping the crosshair as the finger passes over a scale or off the canvas. */
+    private moveCrosshair(x: number, y: number): void {
+        const coords = this.deps.getCoords();
+        this.lastTrackPoint = { x: Math.max(0, Math.min(coords.width, x)), y: Math.max(0, Math.min(coords.height, y)) };
+        this.deps.onPointerMove(this.lastTrackPoint.x, this.lastTrackPoint.y);
     }
 
     /** Turn tracking off: the crosshair clears and the next press pans again. */
@@ -522,6 +542,20 @@ export class InputController {
 
     /** Programmatic exit — a layout change, a teardown, a sheet opening over the chart. */
     endTracking(): void {
+        if (!this.tracking) return;
+        if (this.dragging && this.region === 'crosshair') {
+            // A host can switch cells while the old finger is still down. Release its
+            // capture and ownership so later events cannot resurrect the old crosshair.
+            this.dragging = false;
+            for (const id of this.touches.keys()) {
+                try {
+                    this.el?.releasePointerCapture(id);
+                } catch {
+                    // A cancelled/already-released contact has no capture to release.
+                }
+            }
+            this.touches.clear();
+        }
         this.exitTracking();
     }
 
@@ -533,8 +567,7 @@ export class InputController {
     /** Two fingers down: freeze the view and re-base the gesture as an anchored pinch. */
     private beginPinch(e: PointerEvent): void {
         this.cancelLongPress();
-        if (this.region === 'crosshair') this.tracking = false; // a pinch is navigation, not inspection
-        if (this.region === 'crosshair') this.deps.onPointerMove(null, null); // inspection ends; the pinch owns the gesture
+        if (this.tracking) this.exitTracking(); // a pinch is navigation, not inspection
         const coords = this.deps.getCoords();
         const vp = coords.getViewport();
         this.deps.apply(vp); // freeze any in-flight fling/zoom before grabbing
@@ -578,10 +611,13 @@ export class InputController {
     }
 
     private readonly onMove = (e: PointerEvent): void => {
+        // An ignored extra contact or a cancelled pointer must not steer a gesture
+        // owned by the primary contact(s).
+        if (e.pointerType === 'touch' && !this.touches.has(e.pointerId)) return;
         const { x, y } = this.local(e);
         this.cursorX = x;
         this.cursorY = y;
-        if (e.pointerType === 'touch' && this.touches.has(e.pointerId)) this.touches.set(e.pointerId, { x, y });
+        if (e.pointerType === 'touch') this.touches.set(e.pointerId, { x, y });
         if (this.dragging && this.region === 'pinch') {
             this.applyPinch();
             return; // no crosshair while pinching — two fingers name no single point
@@ -591,19 +627,27 @@ export class InputController {
             // below, and a crosshair drag that reads as "not moved" would turn the lift
             // into the exit tap.
             if (Math.hypot(x - this.startX, y - this.startY) > TOUCH_SLOP) this.moved = true;
-            this.deps.onPointerMove(x, y); // inspect: the finger drives the crosshair, the view stays put
+            // Initial contact is anchored at the hold point; later contacts are relative to
+            // the last *applied* cursor (including magnet), so the line stays out from under
+            // the finger. Clamp at plot edges without panning the viewport.
+            this.moveCrosshair(this.trackOrigin.x + x - this.trackContact.x, this.trackOrigin.y + y - this.trackContact.y);
             return;
         }
         if (this.dragging && this.region === 'axis-sheet') {
             return; // sheet already opened — ignore further motion for this gesture
         }
-        // Once a touch travels past the wobble slop it is a pan, not a nascent long-press.
-        if (this.lpTimer !== null && Math.hypot(x - this.startX, y - this.startY) > TOUCH_SLOP) this.cancelLongPress();
+        // A small resting-finger wobble must neither pan nor scale the chart before a
+        // hold activates. Once it exceeds the slop, commit the whole displacement to
+        // navigation and never mistake its later release for a tap.
+        if (this.lpTimer !== null && e.pointerType === 'touch') {
+            if (Math.hypot(x - this.startX, y - this.startY) <= TOUCH_SLOP) return;
+            this.cancelLongPress();
+            this.moved = true;
+        }
         // Click/tap-vs-drag classification: a resting finger wobbles far more than a
         // mouse, so a touch keeps its tap-hood through TOUCH_SLOP of travel — with the
         // 2px mouse slop, most real taps read as micro-pans and double-taps almost
-        // never paired. (The view still pans by those few px either way; `moved` only
-        // decides what the RELEASE means.)
+        // never paired. An armed hold absorbs that small motion before reaching here.
         const slop = e.pointerType === 'touch' ? TOUCH_SLOP : DRAG_SLOP;
         if (this.dragging) {
             if (this.region === 'price') {
@@ -659,26 +703,10 @@ export class InputController {
     };
 
     private readonly onUp = (e: PointerEvent): void => {
-        if (e.pointerType === 'touch') this.touches.delete(e.pointerId);
+        if (e.pointerType === 'touch' && !this.touches.delete(e.pointerId)) return;
         this.cancelLongPress();
         if (this.dragging && this.region === 'pinch') {
-            if (this.touches.size === 1) {
-                // One finger lifted: the survivor continues as a plain pan, re-based at
-                // its current position so the view doesn't jump.
-                const rest = [...this.touches.values()][0]!;
-                const vp = this.deps.getCoords().getViewport();
-                this.region = 'data';
-                this.verticalPan = false;
-                this.startX = rest.x;
-                this.startY = rest.y;
-                this.startRightOffset = vp.rightOffset;
-                this.startBarSpacing = vp.barSpacing;
-                this.lastX = rest.x;
-                this.lastT = e.timeStamp;
-                this.vx = 0;
-                return; // still dragging with the remaining finger
-            }
-            this.endGesture(e);
+            this.finishPinchContact(e);
             return;
         }
         if (this.dragging && this.region === 'crosshair') {
@@ -741,6 +769,25 @@ export class InputController {
         this.lastTapY = y;
     }
 
+    /** After either contact ends, the surviving finger can pan without a viewport jump. */
+    private finishPinchContact(e: PointerEvent): void {
+        if (this.touches.size === 1) {
+            const rest = [...this.touches.values()][0]!;
+            const vp = this.deps.getCoords().getViewport();
+            this.region = 'data';
+            this.verticalPan = false;
+            this.startX = rest.x;
+            this.startY = rest.y;
+            this.startRightOffset = vp.rightOffset;
+            this.startBarSpacing = vp.barSpacing;
+            this.lastX = rest.x;
+            this.lastT = e.timeStamp;
+            this.vx = 0;
+            return;
+        }
+        this.endGesture(e);
+    }
+
     private endGesture(e: PointerEvent): void {
         this.dragging = false;
         try {
@@ -753,14 +800,22 @@ export class InputController {
     /** The browser took the pointer back (system gesture, palm rejection, tab switch):
      *  drop the gesture where it is — no click, no fling, no stuck `dragging`. */
     private readonly onCancel = (e: PointerEvent): void => {
-        if (e.pointerType === 'touch') this.touches.delete(e.pointerId);
+        if (e.pointerType === 'touch' && !this.touches.delete(e.pointerId)) return;
         this.cancelLongPress();
         if (!this.dragging) return;
+        if (this.region === 'pinch') {
+            this.finishPinchContact(e);
+            return;
+        }
         if (this.region === 'drawing' && !Number.isNaN(this.cursorX)) this.deps.drawingsPointerUp?.(this.cursorX, this.cursorY, this.snapMode(e));
-        // A cancelled gesture ends the crosshair it was driving — unless the cancel is the
-        // browser reclassifying a touch that entered TRACKING, which keeps its readout.
-        if (this.tracking && this.trackingEntered) return;
-        if (this.region === 'crosshair' || e.pointerType === 'touch') this.deps.onPointerMove(null, null);
+        // Like a lift, cancellation ends the contact but preserves an established
+        // tracking readout. Never leave a cancelled pointer dragging the crosshair.
+        if (this.region === 'crosshair' && this.tracking) {
+            this.trackingEntered = false;
+            this.endGesture(e);
+            return;
+        }
+        if (e.pointerType === 'touch') this.deps.onPointerMove(null, null);
         this.endGesture(e);
     };
 

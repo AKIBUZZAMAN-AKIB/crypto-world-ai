@@ -21,11 +21,12 @@ export interface IndicatorController {
 export class IndicatorHandleImpl implements IndicatorHandle {
     readonly id: string;
     title: string;
-    /** The script source (see {@link IndicatorHandle.source}); undefined for natives.
-     *  Revised by the orchestrator when {@link updateCode} lands (never before). */
+    /** Readable source where available, including some natives. Revised by the
+     *  orchestrator when {@link updateCode} lands (never before). */
     source?: string;
     /** The native type (see {@link IndicatorHandle.nativeType}); undefined for scripts. */
     readonly nativeType?: string;
+    readonly language?: string;
     private schema: InputSchema[] = [];
     private propsSchema: InputSchema[] = [];
     private visibleState = true;
@@ -37,11 +38,13 @@ export class IndicatorHandleImpl implements IndicatorHandle {
         private readonly controller: IndicatorController,
         source?: string,
         nativeType?: string,
+        language?: string,
     ) {
         this.id = id;
         this.title = title;
         if (source !== undefined) this.source = source;
         if (nativeType !== undefined) this.nativeType = nativeType;
+        if (language !== undefined) this.language = language;
     }
 
     get inputs(): readonly InputSchema[] {

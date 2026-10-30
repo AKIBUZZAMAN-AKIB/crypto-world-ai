@@ -6,6 +6,140 @@ All notable changes to Vela, newest first.
 
 ### Added
 
+- **Compact contextual phone controls.** More no longer has a search box in either workspace
+  or legacy hosts. Manage layouts, Cursor, Time zone and Chart actions open as anchored
+  floating children without replacing or closing More; Escape returns to the parent. The
+  timezone menu retains its own search and the same zones as the desktop picker.
+  The phone chart-type chooser has square corners, responsive favorites and keyboard movement.
+  Selected drawings keep a one-line toolbar; controls that do not fit remain available in
+  its existing ellipsis menu, which can escape the chart; hidden controls retain their
+  contextual glyphs, while the viewport-bounded menu suppresses horizontal pan/scroll and
+  sizes to its contents. On desktop, drawing settings use the Chart Settings floating-card
+  pattern with direct two-axis resize and full-card viewport clamping. On phones they use the
+  Data Window bottom-pane pattern, with a separate resize grip and maximize/restore; the pane
+  stays within the workspace and visible viewport. The bottom-bar Drawings entry opens a
+  square bottom-attached picker pane with separate resize, maximize/restore and Close controls;
+  Object tree remains under its own name in More. Every color picker may escape chart/workspace clipping while staying
+  inside the visible viewport. Horizontal and vertical drawing-settings content can scroll. Alerts'
+  condition and status-filter dropdowns are compact themed comboboxes with keyboard and
+  disabled-option support; the existing alert model, creation, editing and frequencies remain.
+
+- **Visible phone crosshair tracking.** A plot long-press now visibly paints the configured
+  crosshair even with Arrow, None or other non-line cursor choices when no drawing tool owns
+  the gesture. Its default touch ink is legible on light and dark charts without changing saved preferences; other configured
+  color/opacity values, shapes and overrides stay in force.
+  The crosshair and values remain after lift; re-contact moves by finger displacement from
+  the applied (including magnet-snapped) position instead of jumping under the finger. Tap
+  exits; pinch, navigation, drawings, linked charts and desktop hover keep their behavior.
+- **Compact phone price-scale menu and standard More pane.** A price-axis hold opens a
+  square touch-sized menu using the desktop scale model, with bounded nested Labels/Levels
+  and per-pane targeting rather than a full-height sheet. More is a non-modal, bottom-attached
+  standard pane with title, separate grip, Close and fullscreen/restore; its flat grouped
+  content retains actions, subviews, persisted geometry, phone exclusivity and rotation.
+  Touch submenu activation also works in WebKit, where a non-native menu trigger may not
+  generate a click.
+
+- **Professional discovery panes.** Indicators, Indicator templates, Compare and Symbol
+  Search now use the standard desktop dock/float/direct-resize chrome and portrait-phone
+  bottom-attached grip/fullscreen behavior. Indicators and templates remain separate panes;
+  the familiar Templates entry inside Indicators opens the separate pane. Desktop floating
+  cards coexist, minimum-size content remains scrollable, and phone actions have larger touch
+  targets. The template pane uses a flat, unified surface, with a compact Save/Import toolbar
+  above its independently scrolling list; keyboard focus, save drafts and list position survive
+  relevant row actions and imports. Catalog, favorites/recents, on-chart controls, template management, symbol ranking,
+  filters/watchlist and all three Compare modes remain functional. Indicator settings retain
+  their parent pane. Keyboard tabs, focus return, empty-filter guidance, provider-index refresh
+  and restoration are improved; Compare cancellation cannot override a newer search, and its
+  watchlist cannot bulk-replace primary chart symbols. Restored Compare symbols and display
+  modes now match their actual chart placement; a percent axis switched by Compare returns to
+  price on removal while a user-chosen percent axis is preserved. During a symbol change, the
+  previous prices clear immediately, display switches share the pending request, and stale
+  provider results cannot repaint a removed or destroyed chart. Standalone fallbacks remain.
+
+- **Unified Layout setup pane.** Desktop opens a Data Window-style right dock with Layout
+  and Chart syncing tabs, Float/Dock, Close and direct resize; phone More offers one
+  bottom-attached Layout setup pane with the same tabs and fullscreen/restore. The square
+  grid, grouped presets, seven sync switches, chart matrix, group names/marks, drawing
+  scope, hidden-chart confirmation/Undo, link tabs, share and layout-wide actions remain
+  available. Chart-specific badges open the relevant matrix column; live updates preserve
+  focus and scroll. Manage layouts stays a separate compact floating menu, and generic
+  hosts retain the legacy picker and drawer fallback. Matrix live-region positioning no
+  longer expands the phone page beyond its internal scroller.
+
+- **Phone panes remain bottom-attached.** Drag only the separate strip above a portrait
+  panel's header to change its height; dragging the header or its actions no longer moves
+  the pane. Settings and phone drawers follow the same rule, while desktop movement remains
+  unchanged. Fullscreen restores the chosen height, and legacy saved phone offsets no longer
+  detach a restored pane. A temporarily shortened visual viewport keeps the sheet at its
+  visible bottom without losing its preferred height.
+- **Desktop dock / floating side panels.** The action beside Close switches a panel between
+  the chart-side column and a square movable card. Multiple cards can stay open alongside one
+  dock; activation raises the chosen panel without remounting its live content or editor.
+  Headers drag, support keyboard movement and offer context-menu or touch-tap positioning
+  without dragging. A button immediately after Close directly resizes a floating card in two
+  axes, replacing its separate height strip and edge handle. Keyboard arrows resize without
+  opening size popups. Compact headers, tabs and bodies scroll, and built-ins can shrink to
+  160 × 112 px; resizable plugins retain their declared bounds. The entire header stays in
+  the visible host while the body can extend outside. Portrait phone chrome keeps one pane and
+  restores suspended cards on returning to desktop, including after a persisted phone-first
+  boot. Undo/redo restores panel mode, placement, size and default or user-set width. The legacy
+  contributed-panel overlay pin still works.
+- **Monaco Pine editor.** Desktop and phone now use the same lazily loaded Monaco 0.45.0
+  editing surface inside the square Data Window-style pane, retaining the existing heading,
+  script library, drafts, versions, execution, built-in working copies and console. The
+  Pine v6 reference snapshot supplies namespace, argument and signature suggestions alongside
+  local symbols, simple user types/fields and type-matched methods. Engine-reported lines can
+  be navigated and are marked for the latest run; editing clears those markers, and late
+  results cannot annotate a newer draft or version the wrong source. Desktop
+  right-click retains Monaco's menu; long-press and the Actions button expose working editing,
+  search, selection and command-palette actions with explicit clipboard-denial feedback.
+  The minimap hides in phone portrait. Monaco does not officially support mobile, and the
+  reference is an editor aid, not a compiler or a guarantee of host-engine support. The
+  standalone embeds Monaco CSS, font and a Blob worker; CSP restrictions may require a
+  host-provided worker. Production package builds emit the same JS and all declarations
+  sequentially to avoid exhausting the declaration worker's heap.
+- **Responsive Alerts pane.** A visible desktop/landscape and phone bell opens the same
+  square docked or bottom-attached height-adjustable pane as the other chart panels, with
+  Create, Alerts and Log tabs. Manage created price/drawing alerts with Edit, Pause/Resume,
+  Re-arm, chart navigation, status filtering and confirmed deletion. Edits keep the original
+  chart and source, preserve stopped state/history and do not overwrite a Create draft;
+  shared source lines survive another alert's edit or deletion. Durable line ownership
+  prevents a matching manually drawn line from being taken over or deleted; legacy matches
+  are protected. Resuming uses the current crossing side, including in replay, and a missing source does not produce a retroactive
+  crossing when it returns. Drafts cannot submit after a chart/market switch without review;
+  missing drawings and off-chart/pooled alerts are reported honestly. Live rows and logs
+  preserve touch momentum, focus and scroll anchors. Price alerts remain local/chart-driven;
+  layout state persists, while the bounded log is session-only. The Create button now pairs
+  its theme fill with the matching inverse text/icon, including legible disabled states.
+- **Responsive Strategy tester.** Overview, Performance, Trades and Properties use a square
+  desktop dock or a full-width, height-adjustable bottom pane on a portrait phone. Touch
+  landscape uses desktop chrome. Tables scroll within the pane with pinned headers and
+  expandable trade details; large ledgers render only visible rows. Live updates retain scroll,
+  focus and active-chart binding, and loading/unavailable states do not reuse old market data.
+  If the engine's broker net differs from the supplied trade P&Ls, the report shows both
+  the ledger result and a broker-net discrepancy rather than altering either calculation.
+- **Candle table navigation and sticky polish.** Date/time width follows the actual text,
+  including subsecond stamps, and a pinned row keeps an opaque background on hover. Clicking,
+  tapping or keyboard-activating a loaded row reveals its candle on the active chart without
+  changing zoom; a temporary background marker fades away (or stays static for reduced motion).
+  Replay and transformed series resolve their displayed bars, and existing drawings/highlights
+  remain untouched. Other renderers may opt in through `revealTableCandle`.
+- **Mixed Object tree groups and live indicator links.** Drawing-only, indicator-only and
+  mixed nested groups expose the relevant actions and can organize objects across panes
+  without changing their physical stack. Save selected studies as a new indicator template
+  or append them to an existing one. Opt-in bidirectional settings/style links target all or
+  chosen charts in the current layout and survive pooling and restoration; unrelated studies
+  are not silently adopted. The compact child forms keep Object tree open. Template apply
+  skips charts with a missing script engine or drawings that would otherwise be stranded in a
+  removed indicator pane. The separate **Manage layout drawings** surface is removed;
+  **Manage layouts** remains.
+- **Live Data window with candle table.** The Data tab follows the active chart's local,
+  synced or latest bar without a hold. The Table tab virtualizes loaded candles newest first,
+  with full candle OHLC/volume and supported visible indicator plots, respecting timezone,
+  plot display precision and replay. Object tree and Data window are square desktop docks and
+  height-adjustable, bottom-attached phone panes, with phone fullscreen/restore immediately
+  beside Close. Other movable/maximizable panels keep their controls. Renderers can optionally implement
+  `getDataWindowTable`; `chart.loading` and `market:requested` expose in-flight identity.
 - **Indicator templates are their own tab.** TradingView's labelled *Templates* button has
   no room on a phone topbar, so the indicator sheet grew a labelled **Templates** tab —
   placed BEFORE the family tabs, where a 390px strip can actually show it. It carries the
@@ -21,7 +155,7 @@ All notable changes to Vela, newest first.
   rebuilds the bundle as a group in the object tree, and selects it for an immediate drag.
   Save from any drawing/group/bulk context menu → **Drawing templates → Save as
   template…**; insert from the price row even on an empty chart; manage (insert / export /
-  import / delete) from **Manage layouts → Drawings**. The set travels in
+  import / delete) from **Manage layouts → More actions → Drawing templates**. The set travels in
   `WorkspaceState.drawingSetTemplates` and is sanitized on import.
 - **Pine source for every plottable built-in.** 72 classic studies already opened their v6
   scripts from the legend's `{ }`. Volume and Compare now ship readable Pine v6 sources too
@@ -30,11 +164,10 @@ All notable changes to Vela, newest first.
   the single deliberate exception, exactly as TradingView's own volume profile has no
   source code. The engine still uses the core-computed path for the two layer-backed
   natives, so their columns and second-symbol feed are unchanged.
-- **Layout setup and Manage layouts are literal phone tabs.** The sheet's sticky nav is now
-  three stops — **Layout setup** (grid + presets), **Manage layouts** (saved layouts,
-  autosave, indicator templates, drawing sets), **Sync** — each its own pane. The old
-  full-page *Manage layouts* route and its back button still work for deep links; the
-  More sheet's door opens the Manage tab.
+- **Layout setup, management and templates stay separate.** Layout setup combines the chart
+  grid and Chart syncing in tabs. Manage layouts is a compact anchored menu for saved
+  layouts, autosave and sharing; Indicator templates has its own surface. Chart actions
+  likewise uses a minimal anchored menu rather than a separate panel.
 - **Undo / redo on the phone's own bar.** The two most-tapped verbs of an edit session sat
   one drawer deep in More; they are now stops in the bar's scrolling band, right after the
   chart type (a 390px band shows about three stops, so the head of the band is where a
@@ -63,9 +196,8 @@ All notable changes to Vela, newest first.
   at any depth; headers indent per level, the eye/padlock/count speak for the whole branch,
   ungrouping lifts the children one level instead of dissolving them, an emptied container
   disappears, and **Duplicate group** copies the branch (drawings cloned as one undo step,
-  nesting and names rebuilt). Group rows are pickable in their own right, rename on
-  double-click, and the header carries **Manage layout drawings** — every cell's drawings
-  in one list with show / lock / remove, instead of one chart at a time.
+  nesting and names rebuilt). Group rows are pickable in their own right and rename on
+  double-click. The later mixed-group update above supersedes the old layout-drawings manager.
 - **Changing the pair on a phone is a scroll, not a panel visit.** The symbol picker opens
   as a **bottom sheet** (62% of the screen, the chart still visible above it) with the
   search row and the asset tabs sticky and the list scrolling under a finger — the field
@@ -293,6 +425,26 @@ All notable changes to Vela, newest first.
 
 ### Changed
 
+- **Chart Settings, colors and tooltips.** Desktop Settings has header dragging and a
+  Close-adjacent direct two-axis resize button. Phone portrait starts as a square,
+  bottom-attached pane with a separate height-resize strip above its stationary header,
+  fullscreen/restore, keyboard resize, independent scrolling and an interactive chart behind
+  it. Grip and resize-button taps do not open size popups. Temporary viewport constraints do
+  not overwrite the preferred geometry; cancelled touch resizing restores the prior size.
+  Templates moves to the phone header, with Apply to all in
+  its menu, so short panes retain more room for settings. Orientation changes preserve the
+  selected section and phone height. Color pickers are compact and square, fit the visible
+  viewport and embedded host, and scroll on tight screens. Recents update immediately for
+  palette, custom and mixed-drawing picks; a current-color edit well replaces the separate
+  plus while retaining the native chooser. Crosshair opacity is edited inside its color
+  picker, with legacy color-alpha × opacity preserved and live external updates reflected. Hiding the legacy
+  opacity setting also hides that picker control without changing either opacity source.
+  Indicator/template buttons and other icon controls use the same themed, hoverable and
+  keyboard-dismissible tooltip; drawing toolbar labels no longer create a second tooltip.
+- **Colored UI accents remain legible.** Alert and hidden-chart counts, selected controls,
+  switches and favorite stars use contrasting theme-aware colors rather than white-on-white.
+  Neutral surfaces and independent candle and drawing colors are preserved; primary button
+  hover treatments no longer dim or brighten their foreground along with the fill.
 - **A chart cell carries only what it is showing.** Four containers sat in every cell from
   construction, invisible: the cell's own drawing-rail mount (a workspace shares ONE rail),
   its attribution mark (the grid mounts one for the whole workspace), the timeline-marks'

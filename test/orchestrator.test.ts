@@ -372,6 +372,127 @@ const testNativeDescriptor: NativeIndicatorDescriptor = {
     create: () => (lastNative = new TestNativeIndicator()),
 };
 
+describe('EngineOrchestrator — pending work after destruction', () => {
+    it('never starts native, script, or chart-type engines after a pending initial load resolves', async () => {
+        let finish!: (bars: OHLCV[]) => void;
+        const dataFeed: MarketDataFeed = { load: () => new Promise((resolve) => { finish = resolve; }), subscribe: () => () => {} };
+        const renderer = new FakeRenderer();
+        const engine = new MockEngine();
+        const prepare = vi.spyOn(engine, 'prepare');
+        const styleStarts = vi.fn();
+        registerNativeIndicator(testNativeDescriptor);
+        registerChartType({ id: 'pending-destroy-style', dataEngine: () => ({ start: styleStarts, suspend() {}, resume() {}, stop() {} }) });
+        try {
+            const chart = new Vela({} as unknown as HTMLElement, { live: false, volume: false }, { renderer, engines: [engine], dataFeed });
+            chart.addNativeIndicator('test-native');
+            chart.addIndicator('indicator("pending")');
+            renderer.firePriceStyle('pending-destroy-style');
+            const native = lastNative;
+            chart.destroy();
+            finish(makeBars(3));
+            await chart.ready();
+            await flush();
+            expect(native.calls.start).toBe(0);
+            expect(prepare).not.toHaveBeenCalled();
+            expect(styleStarts).not.toHaveBeenCalled();
+            expect(renderer.mountedModels).toHaveLength(0);
+        } finally {
+            unregisterNativeIndicator('test-native');
+            unregisterChartType('pending-destroy-style');
+        }
+    });
+
+    it.each(['destroy', 'remove'] as const)('stops a native torn down synchronously during its first emit: %s', async (how) => {
+        registerNativeIndicator(testNativeDescriptor);
+        try {
+            const renderer = new FakeRenderer();
+            const chart = new Vela({} as unknown as HTMLElement, { live: false, volume: false }, { renderer, engines: [], dataFeed: new MockDataFeed() });
+            await chart.ready();
+            chart.on('indicator:added', ({ id }) => {
+                const h = chart.indicators().find(x => x.id === id && x.nativeType === 'test-native');
+                if (!h) return;
+                if (how === 'destroy') chart.destroy();
+                else h.remove();
+            });
+            chart.addNativeIndicator('test-native');
+            const native = lastNative;
+            await flush();
+            expect(native.calls.start).toBe(1);
+            expect(native.calls.stop).toBe(1);
+            chart.destroy();
+        } finally { unregisterNativeIndicator('test-native'); }
+    });
+
+    it('rejects callbacks from a native instance after a market restart or destruction', async () => {
+        const contexts: NativeIndicatorContext[] = [];
+        class LateNative extends TestNativeIndicator {
+            override start(ctx: NativeIndicatorContext): void { contexts.push(ctx); super.start(ctx); }
+            override stop(): void { /* a poorly behaved async extension still invokes its old context */ }
+        }
+        registerNativeIndicator({ ...testNativeDescriptor, type: 'late-native', create: () => new LateNative() });
+        try {
+            const renderer = new FakeRenderer();
+            const chart = new Vela({} as unknown as HTMLElement, { live: false, volume: false }, { renderer, engines: [], dataFeed: new MockDataFeed() });
+            const handle = chart.addNativeIndicator('late-native');
+            await chart.ready(); await flush();
+            expect(contexts).toHaveLength(1);
+            await chart.setMarket({ symbol: 'NEXT' }); await flush();
+            expect(contexts).toHaveLength(2);
+            const models = renderer.mountedModels.length, updates = renderer.updatedIds.length, pushes = renderer.nativePushes.length;
+            contexts[0]!.emit({}); contexts[0]!.pushData('stale'); contexts[0]!.setStatus('idle');
+            expect(renderer.mountedModels).toHaveLength(models);
+            expect(renderer.updatedIds).toHaveLength(updates);
+            expect(renderer.nativePushes).toHaveLength(pushes);
+            contexts[1]!.pushData('current');
+            expect(renderer.nativePushes[renderer.nativePushes.length - 1]).toEqual(['late-native', 'current']);
+            chart.destroy();
+            const after = renderer.nativePushes.length;
+            contexts[1]!.emit({}); contexts[1]!.pushData('after-destroy');
+            expect(renderer.nativePushes).toHaveLength(after);
+            expect(handle.nativeType).toBe('late-native');
+        } finally { unregisterNativeIndicator('late-native'); }
+    });
+
+    it('settles pending updateCode on destruction without mounting its late preparation', async () => {
+        const renderer = new FakeRenderer(), engine = new MockEngine();
+        const chart = new Vela({} as unknown as HTMLElement, { live: false, volume: false }, { renderer, engines: [engine], dataFeed: new MockDataFeed() });
+        await chart.ready();
+        const h = chart.addIndicator('indicator("first")');
+        await flush();
+        const original = engine.prepare.bind(engine);
+        let finish!: (prepared: PreparedScript) => void;
+        vi.spyOn(engine, 'prepare').mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+        const execute = vi.spyOn(engine, 'execute');
+        const update = h.updateCode('indicator("later")');
+        const before = renderer.mountedModels.length;
+        chart.destroy();
+        expect((await update).ok).toBe(false);
+        finish(await original('indicator("later")', h.id));
+        await flush();
+        expect(execute).not.toHaveBeenCalled();
+        expect(renderer.mountedModels).toHaveLength(before);
+    });
+
+    it('never mounts or executes a script whose prepare finishes after destruction', async () => {
+        const renderer = new FakeRenderer();
+        const engine = new MockEngine();
+        const prepareOriginal = engine.prepare.bind(engine);
+        let finish!: (prepared: PreparedScript) => void;
+        vi.spyOn(engine, 'prepare').mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+        const execute = vi.spyOn(engine, 'execute');
+        const chart = new Vela({} as unknown as HTMLElement, { live: false, volume: false }, { renderer, engines: [engine], dataFeed: new MockDataFeed() });
+        await chart.ready();
+        const h = chart.addIndicator('indicator("pending")');
+        await flush();
+        expect(finish).toBeDefined();
+        chart.destroy();
+        finish(await prepareOriginal('indicator("pending")', h.id));
+        await flush();
+        expect(execute).not.toHaveBeenCalled();
+        expect(renderer.mountedModels).toHaveLength(0);
+    });
+});
+
 describe('EngineOrchestrator', () => {
     it('loads bars, routes overlay to price + study to its own pane, and re-runs on setInput', async () => {
         const renderer = new FakeRenderer();

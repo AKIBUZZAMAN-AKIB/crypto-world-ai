@@ -27,6 +27,7 @@ export const DRAWER_CSS = `
     border-radius: 14px 14px 0 0;
     box-shadow: var(--vela-shadow-dialog);
     font-size: 13px;
+    box-sizing: border-box;
     width: 100%;
     max-height: 85%;
     display: flex;
@@ -51,33 +52,51 @@ export const DRAWER_CSS = `
     from { transform: translateY(100%); }
     to { transform: translateY(0); }
 }
-/* The grab zone owns its touches (drag-to-dismiss), so the browser must not scroll it. */
+/* Desktop keeps its compact inline rail; phones get a separate resize strip. */
+.vela-drawer-top {
+    flex: none; min-height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 12px;
+    cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.vela-drawer-top:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: -2px; }
 .vela-drawer-grab {
     flex: none;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 10px 0 6px;
-    cursor: grab;
+    width: 32px;
+    height: 26px;
+    padding: 0;
+    cursor: ns-resize;
     touch-action: none;
     user-select: none;
 }
+.vela-drawer[data-grip-row] { width: 100%; margin-bottom: 0; border-bottom: none; border-radius: 14px 14px 0 0; }
+.vela-drawer[data-grip-row] > .vela-drawer-grab {
+    flex: 0 0 24px; width: 100%; height: 24px; align-self: stretch;
+}
+.vela-drawer[data-grip-row] .vela-drawer-top,
+.vela-drawer[data-grip-row] .vela-drawer-title { cursor: default; }
+.vela-drawer[data-grip-row] .vela-drawer-top[data-untitled] { min-height: 24px; }
 .vela-drawer-grab::before {
     content: '';
-    width: 36px;
-    height: 4px;
+    width: 26px;
+    height: 3px;
     border-radius: 2px;
     background: var(--vela-border-strong);
 }
 .vela-drawer-title {
-    flex: none;
-    padding: 0 16px 10px;
-    font-size: 15px;
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0;
+    font-size: 13px;
     font-weight: 600;
     letter-spacing: 0.2px;
     color: var(--vela-fg-bright);
     user-select: none;
+    touch-action: none;
+    cursor: grab;
 }
+.vela-drawer-grab:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: -2px; }
 .vela-drawer-title:empty { display: none; }
 .vela-drawer-body {
     flex: 1 1 auto;

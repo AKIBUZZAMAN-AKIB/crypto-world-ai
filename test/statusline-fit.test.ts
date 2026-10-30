@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The status line re-walks its width ladder only when the readout's width can change:
 // a crosshair move that changes digits alone rewrites the values in place, unmeasured.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Statusline } from '../src/widget/statusline';
 import type { Vela } from '../src/Vela';
 
@@ -42,6 +42,34 @@ function make() {
     const close = () => line.el.querySelectorAll('.vela-sl-ohlc b')[3]?.textContent;
     return { line, hover: (ohlc: Bar | null) => move({ ohlc }), measures: () => measures, close };
 }
+
+describe('Statusline market loading', () => {
+    it('clears the previous market OHLC while new data loads and restores the new bar', () => {
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const line = new Statusline(host, 'BTCUSDT');
+        const handlers = new Map<string, (payload: unknown) => void>();
+        const current = { time: 2000, open: 20, high: 23, low: 19, close: 22 };
+        const barAt = vi.fn(() => current);
+        const chart = {
+            on: (name: string, cb: (payload: unknown) => void) => { handlers.set(name, cb); return () => {}; },
+            getVisibleRange: () => ({ from: 1000, to: 2000 }),
+            renderer: { onCrosshairMove: () => () => {}, barAt },
+            replay: { state: { active: false } },
+        } as unknown as Vela;
+        line.onChart(chart);
+        const old = { time: 1000, open: 10, high: 12, low: 9, close: 11 };
+        handlers.get('bar')?.(old);
+        line.setSyncedCrosshair(old);
+        expect(line.el.querySelector('.vela-sl-ohlc')?.textContent).not.toBe('');
+        handlers.get('load:start')?.({ symbol: 'NEW', timeframe: '60', firstLoad: false });
+        expect(line.el.querySelector('.vela-sl-ohlc')?.textContent).toBe('');
+        handlers.get('load:end')?.({ bars: 1 });
+        expect(barAt).toHaveBeenCalledWith(2000); // range.to is an inclusive bar time
+        expect(line.el.querySelectorAll('.vela-sl-ohlc b')[3]?.textContent).toBe('22.00');
+        line.destroy();
+    });
+});
 
 describe('Statusline fit — the phone rungs', () => {
     // A chip that only fits once the bar delta has left the values row: the measured

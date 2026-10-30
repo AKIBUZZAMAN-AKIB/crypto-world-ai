@@ -55,7 +55,18 @@ const CSS = `
     color: var(--vela-fg-muted);
     font-size: 12px;
     flex: none;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+    scrollbar-width: none;
 }
+.vela-widget-bottombar::-webkit-scrollbar { display: none; }
+.vela-widget-bottombar > :not(.vela-bb-spacer) { flex-shrink: 0; }
 .vela-bb-range {
     all: unset;
     height: 24px;

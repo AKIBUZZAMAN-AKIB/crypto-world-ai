@@ -1,4 +1,4 @@
-import type { AxisLongPressEvent, ClickEvent, CrosshairEvent, DataWindowReadout, IChartRenderer, LegendActionView, LegendCalloutView, RendererCapabilities, VisibleRange } from './ports/IChartRenderer';
+import type { AxisLongPressEvent, ClickEvent, CrosshairEvent, DataWindowReadout, DataWindowTableSlice, IChartRenderer, LegendActionView, LegendCalloutView, RendererCapabilities, VisibleRange } from './ports/IChartRenderer';
 import type { Unsubscribe } from './util/types';
 import type { WallClock } from './util/wall-clock';
 import type { SymbolPickerFn } from './model/inputs';
@@ -189,6 +189,11 @@ export class RendererControl {
         return this.renderer.onCrosshairMove(cb);
     }
 
+    /** End local touch inspection if the renderer supports it. */
+    endTouchTracking(): void {
+        this.renderer.endTouchTracking?.();
+    }
+
     /** A click — or a touch tap — on the plot, never the end of a pan: the open time of
      *  the bar under it (`null` off the bars). On touch, where a tap moves no crosshair,
      *  this is how an interaction learns which bar was chosen. */
@@ -202,13 +207,33 @@ export class RendererControl {
     }
 
     /**
-     * The current data-window readout — the hovered bar's date/time and OHLCV plus every
-     * indicator's value there, each already formatted on its pane's scale (the latest bar when
-     * the cursor is off the plot). Pair it with {@link onCrosshairMove} to drive a data-window
-     * panel. Null on a renderer that doesn't provide the readout.
+     * The formatted data-window readout: time, OHLCV and indicator values on their pane's
+     * scale. The native renderer resolves a local or synced crosshair bar, falling back to
+     * its latest bar. Pair it with {@link onCrosshairMove} and {@link onDataWindowChange}.
+     * Null on a renderer that does not provide the readout.
      */
     dataWindowReadout(): DataWindowReadout | null {
         return this.renderer.getDataWindowReadout?.() ?? null;
+    }
+
+    /** Bounded newest-first rows for the candle table, or null when unsupported. */
+    dataWindowTable(offset: number, count: number): DataWindowTableSlice | null {
+        return this.renderer.getDataWindowTable?.(offset, count) ?? null;
+    }
+
+    /** Whether this renderer can reveal and temporarily mark a table candle. */
+    get supportsCandleNavigation(): boolean {
+        return typeof this.renderer.revealTableCandle === 'function';
+    }
+
+    /** Reveal a loaded table candle; false when it is missing or the renderer cannot do so. */
+    revealTableCandle(timestamp: number, newestOffset: number): boolean {
+        return this.renderer.revealTableCandle?.(timestamp, newestOffset) ?? false;
+    }
+
+    /** Readout-only changes (such as a synced crosshair or timezone); silent on older renderers. */
+    onDataWindowChange(cb: () => void): Unsubscribe {
+        return this.renderer.onDataWindowChange?.(cb) ?? (() => undefined);
     }
 
     /**
@@ -252,8 +277,8 @@ export class RendererControl {
      * gear) — for keeping host dialogs mutually exclusive with the renderer's. Silent no-op if
      * the renderer has no such dialogs; safe to call speculatively.
      */
-    closeDialogs(): this {
-        this.renderer.closeDialogs?.();
+    closeDialogs(options?: { preserveSettings?: boolean }): this {
+        this.renderer.closeDialogs?.(options);
         return this;
     }
 

@@ -333,6 +333,12 @@ export class Vela {
         return this.orchestrator.marketSnapshot();
     }
 
+    /** True while the current market's first candles are loading. Backfilling after the
+     * first paint is reported separately by the history events. */
+    get loading(): boolean {
+        return this.orchestrator.isLoading;
+    }
+
     /** Resolves once the chart is painted and interactive. For a symbol-backed chart this
      *  awaits a provider being registered that resolves the symbol (the parked load). On a
      *  ranged feed the first paint is a small recent head (~200 bars) and the rest of the

@@ -22,12 +22,13 @@ import { downloadText } from '../ui/download';
 import { iconEl } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
 import { floatingLayerHost } from '../ui/tokens';
+import { panelResizeGrip } from '../ui/panel-drag';
 
 export const LAYOUT_MENU_STYLE_ID = 'vela-layout-menu';
 
 export const LAYOUT_MENU_CSS = `
 .vela-lm {
-    width: 316px;
+    width: min(316px, calc(100vw - 16px));
     max-height: min(78vh, 620px);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -42,7 +43,7 @@ export const LAYOUT_MENU_CSS = `
     border-radius: 12px;
     box-shadow: var(--vela-shadow-dialog);
 }
-.vela-lm-head { display: flex; align-items: center; gap: 10px; padding: 8px 8px 6px; }
+.vela-lm-head { position: sticky; top: -6px; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: var(--vela-surface-elev); }
 .vela-lm-mark {
     flex: none;
     display: grid;
@@ -51,10 +52,10 @@ export const LAYOUT_MENU_CSS = `
     height: 30px;
     border-radius: 9px;
     background: var(--vela-hover-strong);
-    color: var(--vela-accent);
+    color: var(--vela-accent-ink, var(--vela-accent));
     font-size: 16px;
 }
-.vela-lm-id { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vela-lm-id { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .vela-lm-title {
     font-size: 14px;
     font-weight: 650;
@@ -84,7 +85,7 @@ export const LAYOUT_MENU_CSS = `
     color: var(--vela-fg-muted);
 }
 .vela-lm-state .vela-lm-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vela-accent); flex: none; }
-.vela-lm-state[data-dirty='1'] { color: var(--vela-accent); font-weight: 550; }
+.vela-lm-state[data-dirty='1'] { color: var(--vela-accent-ink, var(--vela-accent)); font-weight: 550; }
 .vela-lm-state[data-tone='ok'] { color: var(--vela-up); }
 .vela-lm-state .vela-icon { font-size: 12px; }
 
@@ -104,7 +105,7 @@ export const LAYOUT_MENU_CSS = `
     font-weight: 600;
     cursor: pointer;
 }
-.vela-lm-primary:hover { filter: brightness(1.07); }
+.vela-lm-primary:hover { background: color-mix(in srgb, var(--vela-accent) 92%, #000); }
 .vela-lm-primary:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: 2px; }
 .vela-lm-primary[disabled] { background: var(--vela-hover); color: var(--vela-fg-muted); cursor: default; filter: none; }
 .vela-lm-primary .vela-lm-kbd {
@@ -237,7 +238,7 @@ export const LAYOUT_MENU_CSS = `
 }
 .vela-lm-srow[data-active='1'] .vela-lm-sname { font-weight: 650; }
 .vela-lm-smeta { margin-left: auto; flex: none; font-size: 11px; color: var(--vela-fg-muted); font-variant-numeric: tabular-nums; }
-.vela-lm-check { flex: none; font-size: 13px; color: var(--vela-accent); }
+.vela-lm-check { flex: none; font-size: 13px; color: var(--vela-accent-ink, var(--vela-accent)); }
 .vela-lm-srow .vela-lm-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vela-accent); flex: none; }
 .vela-lm-kebab {
     all: unset;
@@ -307,7 +308,7 @@ export const LAYOUT_MENU_CSS = `
 .vela-lm-btn:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
 .vela-lm-btn:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: 1px; }
 .vela-lm-btn[data-primary='1'] { background: var(--vela-accent); border-color: var(--vela-accent); color: var(--vela-fg-on-fill); }
-.vela-lm-btn[data-primary='1']:hover { filter: brightness(1.07); background: var(--vela-accent); color: #fff; }
+.vela-lm-btn[data-primary='1']:hover { background: color-mix(in srgb, var(--vela-accent) 92%, #000); color: var(--vela-fg-on-fill); }
 .vela-lm-btn[disabled] { opacity: 0.5; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
     .vela-lm-pill, .vela-lm-pill::after { transition: none; }
@@ -485,12 +486,13 @@ export class LayoutMenu {
         // ── head: what this is, and how big it is ──
         const head = this.doc.createElement('div');
         head.className = 'vela-lm-head';
+        head.tabIndex = 0;
+        head.setAttribute('aria-label', 'Move layouts panel');
         const mark = this.doc.createElement('span');
         mark.className = 'vela-lm-mark';
         mark.appendChild(iconEl('layout', this.doc));
         const id = this.doc.createElement('div');
         id.className = 'vela-lm-id';
-        id.setAttribute('data-kicker', 'Workspace'); // R87 premium eyebrow (see ui/premium.ts)
         const title = this.doc.createElement('b');
         title.className = 'vela-lm-title';
         title.textContent = name ?? 'Untitled layout';
@@ -508,7 +510,7 @@ export class LayoutMenu {
             meta.textContent = 'Not saved yet — name it to keep this workspace';
         }
         id.append(title, meta);
-        head.append(mark, id);
+        head.append(mark, id, panelResizeGrip(this.doc, 'layouts panel'));
         card.appendChild(head);
 
         // ── the status line — the panel's first answer ──

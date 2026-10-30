@@ -19,7 +19,10 @@ import { TIMEZONES, tzMenuLabel, normalizeTimezone } from '../../../core/timezon
 import { closeOpenPopovers, Popover } from '../../../ui/components/popover';
 import { closeWidthPopover } from '../../../ui/components/glyph-select';
 import { Dialog } from '../../../ui/components/dialog';
+import { combineColor, splitColor } from '../../../ui/components/color-picker';
+import { makePanelDraggable, panelResizeGrip, type PanelDrag } from '../../../ui/panel-drag';
 import { overlayScrollbarCss } from '../../../ui/styles';
+import { nextUid } from '../../../ui/zag';
 import {
     fieldGrid,
     fieldRow,
@@ -103,7 +106,8 @@ function styleLabel(id: string): string {
 }
 
 const SD_STYLE_ID = 'vela-settings-controls';
-const SD_STYLE_REV = '7';
+const SD_STYLE_REV = '10';
+const MOBILE_SETTINGS_MIN_HEIGHT = 200;
 
 /**
  * The dialog's surface palette. It follows the STABLE chrome surface (the tokens written on
@@ -124,13 +128,57 @@ function ensureControlStyles(): void {
     st.dataset.rev = SD_STYLE_REV;
     st.textContent = `
 ${overlayScrollbarCss('.vela-sd-pane')}
+/* The desktop card stays draggable; the phone presentation shares the docked pane edge. */
+html .vela-dialog--settings, html.vela-premium .vela-dialog--settings {
+    background:var(--vela-surface);border-radius:0;box-shadow:var(--vela-shadow-dialog);
+}
+.vela-dialog--settings .vela-dialog-footer{border-top:1px solid var(--vela-border);}
+[data-layout='mobile'] .vela-dialog-positioner.vela-sd-mobile {
+    padding:0;align-items:flex-end;pointer-events:none;
+}
+[data-layout='mobile'] .vela-dialog-backdrop.vela-sd-mobile-backdrop { pointer-events:none; }
+[data-layout='mobile'] .vela-dialog-positioner.vela-sd-mobile .vela-dialog--settings {
+    width:100%;min-width:0;max-width:none;min-height:min(${MOBILE_SETTINGS_MIN_HEIGHT}px,100%);max-height:100%;
+    flex:0 0 auto;pointer-events:auto;background:var(--vela-bg);border:0;
+    border-top:1px solid var(--vela-border-strong);border-radius:0;box-shadow:none;
+}
+.vela-dialog--settings .vela-sd-pane-grip {
+    width:100%;height:24px;flex:0 0 24px;align-self:stretch;border-radius:0;
+}
+.vela-dialog--settings .vela-sd-pane-grip::before { width:32px; }
+.vela-dialog--settings .vela-sd-pane-grip:hover,.vela-dialog--settings .vela-sd-pane-grip:focus-visible { background:transparent; }
+
+/* The full-screen action occupies the same header row; previous inline geometry stays intact. */
+.vela-sd-mobile .vela-dialog-max {
+    all:unset;box-sizing:border-box;display:inline-flex;flex:none;width:44px;height:44px;
+    align-items:center;justify-content:center;cursor:pointer;color:var(--vela-fg-muted);
+}
+.vela-sd-mobile .vela-dialog-max:hover,.vela-sd-mobile .vela-dialog-max:focus-visible { background:var(--vela-hover);color:var(--vela-fg-bright); }
+.vela-sd-mobile .vela-dialog-max:focus-visible { outline:2px solid var(--vela-fg-bright);outline-offset:-2px; }
+[data-layout='mobile'] .vela-dialog-positioner.vela-sd-mobile .vela-dialog--settings[data-maximized] {
+    position:absolute;left:var(--vela-dialog-max-left,0);top:var(--vela-dialog-max-top,0);
+    width:var(--vela-dialog-max-width,100%) !important;height:var(--vela-dialog-max-height,100%) !important;
+    max-height:none !important;translate:none !important;z-index:10;
+}
+.vela-dialog--settings[data-maximized] .vela-sd-pane-grip { display:none; }
+/* Desktop Settings can shrink like any floating pane. The tab rail and content keep
+   independent scrolling; footer actions stay reachable rather than forcing a large minimum. */
+.vela-dialog--settings .vela-dialog-body > div { min-height:0 !important;max-height:none !important; }
+[data-layout='desktop'] .vela-dialog--settings .vela-sd-pane { min-width:0;overflow:auto !important; }
+[data-layout='desktop'] .vela-dialog--settings[data-compact-width] .vela-sd-rail { flex-basis:86px !important;min-width:0; }
+[data-layout='desktop'] .vela-dialog--settings[data-compact-width] .vela-sd-pane { padding:6px 8px 12px !important; }
+[data-layout='desktop'] .vela-dialog--settings[data-compact-height] .vela-dialog-footer {
+    flex-wrap:nowrap !important;max-height:34px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;padding:2px 6px !important;
+}
+[data-layout='desktop'] .vela-dialog--settings[data-compact-height] .vela-dialog-footer::-webkit-scrollbar { display:none; }
+[data-layout='desktop'] .vela-dialog--settings[data-compact-height] .vela-dialog-footer > * { flex:none; }
 /* Tab rail / footer button / header close: base styles live HERE, not inline on the
    elements — inline declarations always beat stylesheet :hover rules, which is exactly
    what killed these hovers before. Active tab state is the .on class,
    hover fills follow the app convention (--vela-hover + --vela-fg-bright, fast transition). */
 .vela-sd-tab{text-align:left;padding:9px 12px;background:transparent;border:none;border-radius:var(--vela-radius-md);color:var(--vela-fg-muted);font-weight:600;font-size:13px;font-family:inherit;cursor:pointer;transition:background var(--vela-dur-fast) ease,color var(--vela-dur-fast) ease;}
 .vela-sd-tab:hover{background:var(--vela-hover);color:var(--vela-fg-bright);}
-.vela-sd-tab.on{background:var(--vela-active);color:var(--vela-fg-bright);}
+.vela-sd-tab.on,html.vela-premium .vela-dialog--settings .vela-sd-tab.on{background:var(--vela-selected-bg);color:var(--vela-selected-fg);border-color:var(--vela-selected-bg);box-shadow:none;}
 .vela-sd-btn{height:30px;padding:0 14px;font-size:var(--vela-font-size-md);color:var(--vela-fg);background:var(--vela-surface-sunken);border:1px solid var(--vela-border);border-radius:var(--vela-radius-md);cursor:pointer;font-family:inherit;transition:background var(--vela-dur-fast) ease,border-color var(--vela-dur-fast) ease,color var(--vela-dur-fast) ease;}
 .vela-sd-btn:hover{background:var(--vela-hover);border-color:var(--vela-border-strong);color:var(--vela-fg-bright);}
 .vela-sd-close{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:none;color:var(--vela-fg-muted);line-height:0;width:30px;height:30px;border-radius:var(--vela-radius-sm);transition:background var(--vela-dur-fast) ease,color var(--vela-dur-fast) ease;}
@@ -174,8 +222,24 @@ ${overlayScrollbarCss('.vela-sd-pane')}
    The tab rail becomes a burger-opened overlay sidebar; the group TOC becomes a sticky
    row of horizontally scrollable tabs; the instance strip scrolls instead of wrapping;
    controls grow to touch size and labels may wrap (the grid gives them a flexible track). */
-.vela-sd-mobile .vela-sd-burger{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:none;color:var(--vela-fg);line-height:0;width:36px;height:36px;border-radius:var(--vela-radius-sm);margin-right:2px;}
+html .vela-sd-mobile .vela-dialog-header,html.vela-premium .vela-sd-mobile .vela-dialog-header{min-height:45px;padding:0 4px;gap:2px;}
+.vela-sd-mobile .vela-dialog-titlewrap{flex:1 1 0;min-width:0;}
+.vela-sd-mobile .vela-dialog-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.vela-sd-mobile .vela-dialog-close,html.vela-premium .vela-sd-mobile .vela-dialog-close{box-sizing:border-box;flex:none;width:44px;height:44px;border-radius:0;}
+.vela-sd-mobile .vela-sd-burger{cursor:pointer;display:inline-flex;flex:none;align-items:center;justify-content:center;background:transparent;border:none;color:var(--vela-fg);line-height:0;width:40px;height:44px;border-radius:0;}
 .vela-sd-mobile .vela-sd-burger:active{background:var(--vela-hover);}
+.vela-sd-mobile .vela-sd-btn.vela-sd-header-action{display:inline-flex;flex:0 1 auto;align-items:center;justify-content:center;min-width:44px;max-width:min(138px,40%);height:44px;padding:0 7px;border:0;border-radius:0;background:transparent;white-space:nowrap;}
+.vela-sd-mobile .vela-sd-header-action:focus-visible{outline:2px solid var(--vela-accent);outline-offset:-2px;}
+/* An unusually narrow embedded phone or zoomed visual viewport still keeps every
+   action and title visible; all targets remain at least 24 CSS px wide. */
+html .vela-sd-mobile .vela-dialog--settings[data-compact-width] .vela-dialog-header,
+html.vela-premium .vela-sd-mobile .vela-dialog--settings[data-compact-width] .vela-dialog-header{padding:0 2px;gap:1px;}
+.vela-sd-mobile .vela-dialog--settings[data-compact-width] .vela-sd-burger,
+.vela-sd-mobile .vela-dialog--settings[data-compact-width] .vela-dialog-max,
+html .vela-sd-mobile .vela-dialog--settings[data-compact-width] .vela-dialog-close,
+html.vela-premium .vela-sd-mobile .vela-dialog--settings[data-compact-width] .vela-dialog-close{width:28px;}
+.vela-sd-mobile .vela-dialog--settings[data-compact-width] .vela-sd-btn.vela-sd-header-action{min-width:40px;max-width:40px;padding:0 2px;overflow:hidden;}
+
 .vela-sd-mobile .vela-sd-railscrim{position:absolute;inset:0;z-index:2;background:var(--vela-backdrop);display:none;}
 .vela-sd-mobile .vela-sd-railscrim.open{display:block;}
 .vela-sd-mobile .vela-sd-rail{position:absolute;left:0;top:0;bottom:0;z-index:3;width:min(240px,80%);box-sizing:border-box;background:var(--vela-surface);border-right:1px solid var(--vela-border);box-shadow:var(--vela-shadow-dialog);transform:translateX(-105%);transition:transform var(--vela-dur-med) var(--vela-ease);}
@@ -216,7 +280,7 @@ ${overlayScrollbarCss('.vela-sd-pane')}
 .vela-sd-tpl-item:hover{background:var(--vela-hover);}
 .vela-sd-tpl-row{all:unset;box-sizing:border-box;flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:7px;cursor:pointer;font-size:12.5px;}
 .vela-sd-tpl-row:focus-visible{outline:2px solid var(--vela-accent);outline-offset:-2px;}
-.vela-sd-tpl-tick{flex:none;display:grid;place-items:center;width:14px;height:14px;color:var(--vela-accent);}
+.vela-sd-tpl-tick{flex:none;display:grid;place-items:center;width:14px;height:14px;color:var(--vela-accent-ink, var(--vela-accent));}
 .vela-sd-tpl-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--vela-fg-bright);}
 .vela-sd-tpl-del{all:unset;flex:none;display:grid;place-items:center;width:26px;height:26px;margin-right:3px;border-radius:6px;color:var(--vela-fg-muted);cursor:pointer;}
 .vela-sd-tpl-del:hover,.vela-sd-tpl-del[data-armed='1']{background:var(--vela-hover-strong);color:var(--vela-down,#e5484d);}/* palette-exempt: var() fallback — this panel can render outside the token scope */
@@ -232,7 +296,14 @@ ${overlayScrollbarCss('.vela-sd-pane')}
 .vela-sd-tpl-ok{flex:none;height:30px;padding:0 12px;border:none;border-radius:6px;background:var(--vela-accent);color:var(--vela-fg-on-fill);font:inherit;font-weight:600;cursor:pointer;}
 .vela-sd-tpl-flash{min-height:15px;margin:2px 8px 3px;font-size:11.5px;color:var(--vela-fg-muted);}
 .vela-sd-tpl-flash[data-tone='ok']{color:var(--vela-up);}
-.vela-sd-tpl-flash[data-tone='bad']{color:var(--vela-down,#e5484d);}/* palette-exempt: var() fallback — this panel can render outside the token scope */`;
+.vela-sd-tpl-flash[data-tone='bad']{color:var(--vela-down,#e5484d);}/* palette-exempt: var() fallback — this panel can render outside the token scope */
+/* A phone keeps these secondary actions in one small, scrollable floating surface. */
+.vela-sd-tpl--mobile{border-radius:0;max-width:calc(100vw - 8px);}
+.vela-sd-tpl--mobile .vela-sd-tpl-row,.vela-sd-tpl--mobile .vela-sd-tpl-act{min-height:44px;height:auto;}
+.vela-sd-tpl--mobile .vela-sd-tpl-del{width:40px;height:40px;}
+.vela-sd-tpl--mobile .vela-sd-tpl-input{height:40px;box-sizing:border-box;}
+.vela-sd-tpl--mobile .vela-sd-tpl-ok{min-height:40px;}
+.vela-sd-tpl--mobile .vela-sd-applyall{margin:0;}`;
     if (!existing) document.head.appendChild(st);
 }
 
@@ -264,6 +335,7 @@ export class SettingsDialog {
     private templateHost: SettingsTemplatesHost | null = null;
     private templatePop: Popover | null = null;
     private templateBtn: HTMLButtonElement | null = null;
+    private templateMenuId: string | null = null;
     /** Inline feedback inside the Templates menu, cleared on the next render. */
     private templateFlash: { text: string; tone?: 'ok' | 'bad' } | null = null;
     /** Save-as form unfolded, and the template whose delete is armed (one at a time). */
@@ -290,8 +362,12 @@ export class SettingsDialog {
     private readonly typeActiveGroup = new Map<string, string>();
     /** The tab currently shown, so a theme change (which rebuilds) lands back on it. */
     private activeSection: string | null = null;
-    /** Mobile chrome: fullscreen card, burger-opened section sidebar, TOC as top tabs. */
+    /** Mobile chrome: bottom-attached pane, section sidebar and horizontal TOC. */
     private mobileLayout = false;
+    private mobilePaneHeight = 0.4;
+    private mobilePaneDrag: PanelDrag | null = null;
+    private mobileViewportCleanup: (() => void) | null = null;
+    private settingsResizeObserver: ResizeObserver | null = null;
     /** Opens/closes the mobile section sidebar of the CURRENT build (the burger in the
      *  shell header outlives pane rebuilds, so it reaches the rail through here). */
     private toggleRail: ((open?: boolean) => void) | null = null;
@@ -353,7 +429,8 @@ export class SettingsDialog {
         btn.append(name, caret);
         const label = host.activeName();
         btn.title = label ? `Template: ${label}` : 'Chart templates';
-        btn.addEventListener('click', () => this.openTemplates(btn, host));
+        if (this.mobileLayout) btn.setAttribute('aria-label', label ? `Templates and chart actions: ${label}` : 'Templates and chart actions');
+        btn.addEventListener('click', (event) => this.openTemplates(btn, host, event.detail === 0));
         return btn;
     }
 
@@ -365,9 +442,34 @@ export class SettingsDialog {
         const span = btn.querySelector('.vela-sd-tplname');
         if (span) span.textContent = label ?? 'Templates';
         btn.title = label ? `Template: ${label}` : 'Chart templates';
+        if (this.mobileLayout) btn.setAttribute('aria-label', label ? `Templates and chart actions: ${label}` : 'Templates and chart actions');
     }
 
-    private openTemplates(anchor: HTMLElement, host: SettingsTemplatesHost): void {
+    /** The visible part of the workspace, including an on-screen keyboard or zoom. */
+    private templateBounds(): DOMRect {
+        const host = this.container.getBoundingClientRect();
+        const win = this.container.ownerDocument.defaultView;
+        const view = win?.visualViewport;
+        const left = Math.max(host.left, view?.offsetLeft ?? 0, 0);
+        const top = Math.max(host.top, view?.offsetTop ?? 0, 0);
+        const right = Math.min(host.right, (view?.offsetLeft ?? 0) + (view?.width ?? win?.innerWidth ?? host.right), win?.innerWidth ?? host.right);
+        const bottom = Math.min(host.bottom, (view?.offsetTop ?? 0) + (view?.height ?? win?.innerHeight ?? host.bottom), win?.innerHeight ?? host.bottom);
+        return new DOMRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top));
+    }
+
+    private fitTemplateCard(card: HTMLElement): void {
+        if (!this.mobileLayout) return;
+        const bounds = this.templateBounds();
+        card.style.maxWidth = `${Math.max(1, Math.floor(bounds.width - 8))}px`;
+        card.style.maxHeight = `${Math.max(1, Math.min(460, Math.floor(bounds.height - 8)))}px`;
+        const active = card.ownerDocument.activeElement;
+        if (!(active instanceof HTMLElement) || !card.contains(active)) return;
+        const a = active.getBoundingClientRect(), c = card.getBoundingClientRect();
+        if (a.bottom > c.bottom - 4) card.scrollTop += a.bottom - c.bottom + 4;
+        else if (a.top < c.top + 4) card.scrollTop -= c.top + 4 - a.top;
+    }
+
+    private openTemplates(anchor: HTMLElement, host: SettingsTemplatesHost, keyboard: boolean): void {
         if (this.templatePop) {
             this.closeTemplates();
             return;
@@ -376,24 +478,55 @@ export class SettingsDialog {
         this.templateFlash = null;
         this.templateSaving = false;
         this.templateArmed = null;
+        this.templateMenuId = nextUid('vela-settings-actions');
+        let geometryCleanup: (() => void) | null = null;
         const pop = new Popover({
             trigger: anchor,
             host: this.container,
             gap: 6,
             align: 'start',
+            boundary: this.mobileLayout ? () => this.templateBounds() : 'viewport',
+            restoreFocusOnEscape: true,
             content: (body) => this.renderTemplates(body, host),
             onClose: () => {
+                geometryCleanup?.();
+                geometryCleanup = null;
                 this.templatePop = null;
+                this.templateMenuId = null;
                 this.templateSaving = false;
                 this.templateArmed = null;
                 anchor.dataset.open = '0';
                 anchor.setAttribute('aria-expanded', 'false');
+                anchor.removeAttribute('aria-controls');
             },
         });
         this.templatePop = pop;
         anchor.dataset.open = '1';
         anchor.setAttribute('aria-expanded', 'true');
+        anchor.setAttribute('aria-controls', this.templateMenuId);
         pop.show();
+        if (this.mobileLayout) {
+            const win = this.container.ownerDocument.defaultView;
+            const view = win?.visualViewport;
+            const sync = (): void => {
+                const card = pop.el.querySelector<HTMLElement>('.vela-sd-tpl');
+                if (card) this.fitTemplateCard(card);
+                pop.reposition();
+            };
+            win?.addEventListener('resize', sync);
+            view?.addEventListener('resize', sync);
+            view?.addEventListener('scroll', sync);
+            const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(sync) : null;
+            observer?.observe(this.container);
+            geometryCleanup = () => {
+                observer?.disconnect();
+                win?.removeEventListener('resize', sync);
+                view?.removeEventListener('resize', sync);
+                view?.removeEventListener('scroll', sync);
+            };
+            sync();
+        }
+        if (keyboard) pop.el.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus({ preventScroll: true });
     }
 
     private closeTemplates(): void {
@@ -405,12 +538,29 @@ export class SettingsDialog {
         const active = host.activeName();
         const house = host.defaultName();
         const card = document.createElement('div');
-        card.className = 'vela-sd-tpl';
-
-        const head = document.createElement('div');
-        head.className = 'vela-sd-tpl-head';
-        head.textContent = 'Chart templates';
-        card.appendChild(head);
+        card.className = 'vela-sd-tpl' + (this.mobileLayout ? ' vela-sd-tpl--mobile' : '');
+        card.id = this.templateMenuId ?? '';
+        card.setAttribute('role', 'dialog');
+        card.setAttribute('aria-label', this.mobileLayout ? 'Templates and chart actions' : 'Chart templates');
+        if (this.mobileLayout && host.chartCount() > 1) {
+            const applyAll = this.templateAction('style-copy', 'Apply to all charts', () => {
+                const focus = card.contains(card.ownerDocument.activeElement) && card.ownerDocument.activeElement?.matches(':focus-visible');
+                host.applyToAll();
+                host.changed();
+                if (focus && this.templateBtn?.isConnected) this.templateBtn.focus({ preventScroll: true });
+            });
+            applyAll.classList.add('vela-sd-applyall');
+            card.appendChild(applyAll);
+            const divider = document.createElement('div');
+            divider.className = 'vela-sd-tpl-sep';
+            card.appendChild(divider);
+        }
+        if (!this.mobileLayout) {
+            const head = document.createElement('div');
+            head.className = 'vela-sd-tpl-head';
+            head.textContent = 'Chart templates';
+            card.appendChild(head);
+        }
 
         const list = document.createElement('div');
         list.className = 'vela-sd-tpl-list';
@@ -440,7 +590,7 @@ export class SettingsDialog {
             if (house === row.name) {
                 const badge = document.createElement('span');
                 badge.className = 'vela-sd-tpl-name';
-                badge.style.cssText = 'flex:none;font-size:10.5px;font-weight:600;color:var(--vela-accent);';
+                badge.style.cssText = 'flex:none;font-size:10.5px;font-weight:600;color:var(--vela-accent-ink, var(--vela-accent));';
                 badge.textContent = 'default';
                 btn.appendChild(badge);
             }
@@ -564,7 +714,9 @@ export class SettingsDialog {
         }
         card.appendChild(flash);
 
+        this.fitTemplateCard(card);
         body.replaceChildren(card);
+        this.templatePop?.reposition();
     }
 
     private templateAction(icon: string, label: string, run: () => void): HTMLButtonElement {
@@ -605,7 +757,11 @@ export class SettingsDialog {
      *  dialog is open, and the rebuilt controls must show the live ones, not the open-time
      *  snapshot. */
     refreshConfig(config: ChartConfig): void {
-        if (this.config) this.config = config;
+        if (!this.config) return;
+        this.config = config;
+        // The combined crosshair color/opacity has two legacy source fields. Refresh its
+        // swatch and any open picker in place when a host applies either field externally.
+        this.ui?.body.querySelector('[data-sd-id="crosshair.style.color"] .vela-color-field')?.dispatchEvent(new Event('vela-sync'));
     }
 
     constructor(
@@ -620,9 +776,8 @@ export class SettingsDialog {
         this.reopenIfLive();
     }
 
-    /** The host shell's chrome size class — mobile presents the dialog fullscreen with
-     *  the tab rail behind a burger sidebar and the TOC as top tabs. An open dialog
-     *  re-presents in place, on the same tab. */
+    /** The host shell's chrome size class — mobile uses a resizable bottom pane with
+     *  a section sidebar and top TOC. An open dialog re-presents on the same tab. */
     setLayoutMode(mode: 'mobile' | 'desktop'): void {
         const mobile = mode === 'mobile';
         if (mobile === this.mobileLayout) return;
@@ -672,17 +827,30 @@ export class SettingsDialog {
         // to catch the click-outside-to-close.
         ensureControlStyles();
         const mobile = this.mobileLayout;
+        const paneHost = mobile ? (this.container.querySelector<HTMLElement>(':scope > [data-vela-pane-host]') ?? this.container) : this.container;
         let burger: HTMLButtonElement | undefined;
+        let mobileAction: HTMLButtonElement | undefined;
+        const tpl = this.templateHost;
         if (mobile) {
             burger = document.createElement('button');
             burger.type = 'button';
             burger.className = 'vela-sd-burger';
             burger.innerHTML = iconAt('burger', 16);
-            burger.title = 'Sections';
+            burger.setAttribute('aria-label', 'Chart settings sections');
+            burger.setAttribute('aria-expanded', 'false');
             burger.addEventListener('click', () => this.toggleRail?.());
+            if (tpl) {
+                this.templateBtn = this.templatesControl(tpl);
+                mobileAction = this.templateBtn;
+            } else {
+                mobileAction = this.resetControl('Reset');
+                mobileAction.title = 'Reset defaults';
+                mobileAction.setAttribute('aria-label', 'Reset defaults');
+            }
+            mobileAction.classList.add('vela-sd-header-action');
         }
         const ui = new Dialog({
-            host: this.container,
+            host: paneHost,
             title: 'Chart settings',
             // Non-modal: a live-edit dialog must leave the page interactive — a modal
             // machine locks pointer events on the whole body, killing the chart, the
@@ -691,18 +859,17 @@ export class SettingsDialog {
             contained: true,
             align: 'top',
             draggable: !mobile,
+            resizable: false,
+            cornerResizable: !mobile,
             flush: true,
             className: 'vela-dialog--settings',
             headerStart: burger,
-            closeOnBackdrop: true,
-            footer: (foot) => {
-                // Wraps: on a phone the footer carries the Templates control, Apply to all
-                // and the reset verb, and a 360px dialog cannot hold three labels in one row.
-                foot.style.cssText = `padding:10px 14px;display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-start;gap:8px;`;
-                const tpl = this.templateHost;
+            closeOnBackdrop: !mobile,
+            // On a short phone pane, a pinned footer can consume most of the content.
+            // Keep Templates in the header and its secondary actions in that popover.
+            footer: mobile ? undefined : (foot) => {
+                foot.style.cssText = 'padding:10px 14px;display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-start;gap:8px;';
                 if (tpl) {
-                    // TradingView's chart settings carry the TEMPLATES dropdown at the
-                    // footer's left; "Apply to all" rides the right edge of the same row.
                     this.templateBtn = this.templatesControl(tpl);
                     foot.appendChild(this.templateBtn);
                     if (tpl.chartCount() > 1) foot.appendChild(this.applyAllControl(tpl));
@@ -715,7 +882,30 @@ export class SettingsDialog {
             // old instance's signal tear down the freshly opened one.
             onOpenChange: (open) => { if (!open && this.ui === ui) this.close(); },
         });
-        if (mobile) ui.positioner.classList.add('vela-sd-mobile');
+        if (mobile) {
+            ui.positioner.classList.add('vela-sd-mobile');
+            ui.backdrop.classList.add('vela-sd-mobile-backdrop');
+            if (mobileAction) ui.panel.querySelector('.vela-dialog-close')?.before(mobileAction);
+            const grip = panelResizeGrip(ui.panel.ownerDocument, 'chart settings');
+            grip.classList.add('vela-sd-pane-grip');
+            const header = ui.panel.querySelector<HTMLElement>('.vela-dialog-header');
+            if (header) {
+                // The separate strip resizes the bottom-attached pane. Its heading
+                // and actions do not move it on phones.
+                header.before(grip);
+                header.style.cursor = 'default';
+                header.style.touchAction = 'none';
+            }
+            const max = ui.panel.ownerDocument.createElement('button');
+            max.type = 'button';
+            max.className = 'vela-dialog-max';
+            max.setAttribute('aria-label', 'Maximize');
+            max.setAttribute('aria-pressed', 'false');
+            max.title = 'Maximize';
+            max.innerHTML = iconAt('maximize', 16);
+            ui.panel.querySelector('.vela-dialog-close')?.before(max);
+            ui.panel.style.height = `${this.mobilePaneHeight * 100}%`;
+        }
         ui.positioner.style.paddingTop = mobile ? '0' : '8vh';
 
         this.root = ui.positioner;
@@ -726,6 +916,86 @@ export class SettingsDialog {
         const panes = this.buildContent(ui, config, section, mobile);
         ui.show();
         this.layoutPanes(panes);
+        if (typeof ResizeObserver !== 'undefined') {
+            this.settingsResizeObserver = new ResizeObserver(() => {
+                const r = ui.panel.getBoundingClientRect();
+                ui.panel.toggleAttribute('data-compact-width', r.width < (mobile ? 230 : 400));
+                ui.panel.toggleAttribute('data-compact-height', r.height < 180);
+            });
+            this.settingsResizeObserver.observe(ui.panel);
+        }
+        if (mobile) this.mountMobilePane(ui, paneHost);
+    }
+
+    private mountMobilePane(ui: Dialog, host: HTMLElement): void {
+        const win = host.ownerDocument.defaultView;
+        const viewport = win?.visualViewport;
+        const max = ui.panel.querySelector<HTMLButtonElement>('.vela-dialog-max');
+        const syncMaxBounds = (): void => {
+            if (!ui.panel.hasAttribute('data-maximized')) return;
+            const root = host.closest<HTMLElement>('[data-layout="mobile"]') ?? host;
+            const r = root.getBoundingClientRect();
+            const p = ui.positioner.getBoundingClientRect();
+            const left = viewport ? Math.max(r.left, viewport.offsetLeft) : r.left;
+            const top = viewport ? Math.max(r.top, viewport.offsetTop) : r.top;
+            const right = viewport ? Math.min(r.right, viewport.offsetLeft + viewport.width) : r.right;
+            const bottom = viewport ? Math.min(r.bottom, viewport.offsetTop + viewport.height) : r.bottom;
+            if (right <= left || bottom <= top) return;
+            ui.panel.style.setProperty('--vela-dialog-max-left', `${Math.round(left - p.left)}px`);
+            ui.panel.style.setProperty('--vela-dialog-max-top', `${Math.round(top - p.top)}px`);
+            ui.panel.style.setProperty('--vela-dialog-max-width', `${Math.round(right - left)}px`);
+            ui.panel.style.setProperty('--vela-dialog-max-height', `${Math.round(bottom - top)}px`);
+        };
+        max?.addEventListener('click', () => {
+            const expanded = !ui.panel.hasAttribute('data-maximized');
+            ui.panel.toggleAttribute('data-maximized', expanded);
+            max.setAttribute('aria-pressed', String(expanded));
+            max.setAttribute('aria-label', expanded ? 'Restore' : 'Maximize');
+            max.title = expanded ? 'Restore' : 'Maximize';
+            max.innerHTML = iconAt(expanded ? 'restore' : 'maximize', 16);
+            syncMaxBounds();
+            // The visual viewport may have changed while fullscreen ignored movement.
+            if (!expanded) this.mobilePaneDrag?.reflow();
+        });
+        const syncViewport = (): void => {
+            const bounds = host.getBoundingClientRect();
+            const top = viewport ? Math.max(0, viewport.offsetTop - bounds.top) : 0;
+            const bottom = viewport ? Math.max(0, bounds.bottom - viewport.offsetTop - viewport.height) : 0;
+            const left = viewport ? Math.max(0, viewport.offsetLeft - bounds.left) : 0;
+            const right = viewport ? Math.max(0, bounds.right - viewport.offsetLeft - viewport.width) : 0;
+            ui.positioner.style.top = `${top}px`;
+            ui.positioner.style.bottom = `${bottom}px`;
+            ui.positioner.style.left = `${left}px`;
+            ui.positioner.style.right = `${right}px`;
+            syncMaxBounds();
+        };
+        syncViewport();
+        win?.addEventListener('resize', syncViewport);
+        viewport?.addEventListener('resize', syncViewport);
+        viewport?.addEventListener('scroll', syncViewport);
+        const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(syncViewport) : null;
+        observer?.observe(host);
+        this.mobileViewportCleanup = () => {
+            observer?.disconnect();
+            win?.removeEventListener('resize', syncViewport);
+            viewport?.removeEventListener('resize', syncViewport);
+            viewport?.removeEventListener('scroll', syncViewport);
+        };
+        this.mobilePaneDrag = makePanelDraggable(ui.panel, {
+            handle: '.vela-dialog-header',
+            resizeHandle: '.vela-sd-pane-grip',
+            allowMove: false,
+            anchoredBottom: true,
+            minHeight: MOBILE_SETTINGS_MIN_HEIGHT,
+            boundary: () => ui.positioner.getBoundingClientRect(),
+            onResize: (height) => {
+                const available = ui.positioner.getBoundingClientRect().height;
+                if (available > 0) {
+                    this.mobilePaneHeight = Math.min(1, Math.max(0, height / available));
+                    ui.panel.style.height = `${this.mobilePaneHeight * 100}%`;
+                }
+            },
+        });
     }
 
     /**
@@ -1017,7 +1287,26 @@ export class SettingsDialog {
                 (v) => this.emit({ crosshair: { shape: v } }),
             ), 'crosshair.style.shape'),
         );
-        body.append(sid(this.colorRow('Line color', config.crosshair.color, (v) => this.emit({ crosshair: { color: v } })), 'crosshair.style.color'));
+        // Older configurations can carry alpha both in the color and in the independent
+        // line opacity. Present their effective product once; subsequent edits store the
+        // opaque hue and the chosen opacity separately for API/backward compatibility.
+        const crosshairColor = (): string => {
+            const crosshair = this.config?.crosshair ?? config.crosshair;
+            const parts = splitColor(crosshair.color);
+            return combineColor(parts.hex6, parts.alpha * crosshair.opacity);
+        };
+        const opacityHidden = settingsIdHidden('crosshair.style.opacity', this.hiddenSettings);
+        body.append(sid(this.colorRow('Line color', crosshairColor(), (v) => {
+            const next = splitColor(v);
+            if (opacityHidden) {
+                // The host hid the former opacity row: changing the hue must leave both
+                // legacy opacity sources intact, just as that visibility policy promises.
+                const source = this.config?.crosshair ?? config.crosshair;
+                this.emit({ crosshair: { color: combineColor(next.hex6, splitColor(source.color).alpha) } });
+            } else {
+                this.emit({ crosshair: { color: next.hex6, opacity: next.alpha } });
+            }
+        }, crosshairColor, !opacityHidden), 'crosshair.style.color'));
         body.append(sid(this.numberRow('Line width', config.crosshair.width, 0.5, 8, 0.5, (v) => this.emit({ crosshair: { width: v } })), 'crosshair.style.width'));
         body.append(
             sid(this.selectRowLabeled(
@@ -1027,7 +1316,6 @@ export class SettingsDialog {
                 (v) => this.emit({ crosshair: { style: v } }),
             ), 'crosshair.style.line-style'),
         );
-        body.append(sid(this.numberRow('Opacity', Math.round(config.crosshair.opacity * 100), 0, 100, 5, (v) => this.emit({ crosshair: { opacity: v / 100 } }), '%'), 'crosshair.style.opacity'));
         body.append(sid(this.sectionTitle('Labels'), 'crosshair.labels'));
         body.append(sid(this.boolRow('Price label', config.crosshair.priceLabel, (v) => this.emit({ crosshair: { priceLabel: v } })), 'crosshair.labels.price'));
         body.append(sid(this.boolRow('Time label', config.crosshair.timeLabel, (v) => this.emit({ crosshair: { timeLabel: v } })), 'crosshair.labels.time'));
@@ -1128,6 +1416,8 @@ export class SettingsDialog {
             : 'display:flex;min-height:360px;max-height:calc(70vh - 100px);flex:1 1 auto;';
         const rail = document.createElement('div');
         rail.className = 'vela-sd-rail';
+        rail.setAttribute('role', 'navigation');
+        rail.setAttribute('aria-label', 'Chart settings sections');
         // Mobile: the class rules turn the rail into the slide-in sidebar; the inline
         // styles here carry only its inner layout. Desktop keeps the fixed column.
         rail.style.cssText = mobile
@@ -1138,10 +1428,14 @@ export class SettingsDialog {
             railScrim = document.createElement('div');
             railScrim.className = 'vela-sd-railscrim';
             railScrim.addEventListener('click', () => this.toggleRail?.());
+            const burger = ui.panel.querySelector<HTMLButtonElement>('.vela-sd-burger');
+            rail.id = nextUid('vela-settings-sections');
+            burger?.setAttribute('aria-controls', rail.id);
             this.toggleRail = (open?: boolean) => {
                 const on = open ?? !rail.classList.contains('open');
                 rail.classList.toggle('open', on);
                 railScrim?.classList.toggle('open', on);
+                burger?.setAttribute('aria-expanded', String(on));
             };
         }
         const paneHost = document.createElement('div');
@@ -1190,10 +1484,12 @@ export class SettingsDialog {
             panes.forEach((p, i) => {
                 p.el.style.display = i === idx ? 'block' : 'none';
                 p.tab.classList.toggle('on', i === idx);
+                p.tab.setAttribute('aria-pressed', String(i === idx));
             });
             this.activeSection = panes[idx]?.title ?? null;
             if (mobile) {
-                ui.titleEl.textContent = panes[idx]?.title ?? 'Chart settings';
+                const sectionName = panes[idx]?.title;
+                ui.titleEl.textContent = sectionName ? `Chart settings · ${sectionName}` : 'Chart settings';
                 this.toggleRail?.(false);
             }
         };
@@ -1222,6 +1518,12 @@ export class SettingsDialog {
     close(): void {
         closeOpenPopovers();
         closeWidthPopover();
+        this.mobilePaneDrag?.destroy();
+        this.mobilePaneDrag = null;
+        this.mobileViewportCleanup?.();
+        this.mobileViewportCleanup = null;
+        this.settingsResizeObserver?.disconnect();
+        this.settingsResizeObserver = null;
         const ui = this.ui;
         this.ui = null;
         this.root = null;
@@ -1677,8 +1979,14 @@ export class SettingsDialog {
         }).el;
     }
 
+    private nameColorControls(label: string, controls: HTMLElement[]): void {
+        const colors = controls.filter((control) => control.classList.contains('vela-color-field'));
+        colors.forEach((control, index) => control.setAttribute('aria-label', `${label} color${colors.length > 1 ? ` ${index + 1}` : ''}`));
+    }
+
     /** A label row with arbitrary controls in the shared control column (no toggle). */
     private rowWith(label: string, controls: HTMLElement[]): HTMLElement {
+        this.nameColorControls(label, controls);
         return fieldRow({ label, labelSize: 'sm', control: controls, className: 'vela-sd-row' });
     }
 
@@ -1699,20 +2007,17 @@ export class SettingsDialog {
         return el;
     }
 
-    private colorRow(label: string, value: string, onChange: (v: string) => void): HTMLElement {
+    private colorRow(label: string, value: string, onChange: (v: string) => void, getValue?: () => string, showOpacity = true): HTMLElement {
         let current = value;
-        return fieldRow({
-            label,
-            labelSize: 'sm',
-            fit: true,
-            className: 'vela-sd-row',
-            control: buildFieldControl({
-                kind: 'color',
-                theme: this.theme,
-                get: () => current,
-                onChange: (v) => { current = v; onChange(v); },
-            }).el,
-        });
+        const control = buildFieldControl({
+            kind: 'color',
+            theme: this.theme,
+            get: getValue ?? (() => current),
+            showOpacity,
+            onChange: (v) => { current = v; onChange(v); },
+        }).el;
+        control.setAttribute('aria-label', /color/i.test(label) ? label : `${label} color`);
+        return fieldRow({ label, labelSize: 'sm', fit: true, className: 'vela-sd-row', control });
     }
 
     /** A toggle row: the checkbox sits to the LEFT of its label (never in the control area).
@@ -1725,6 +2030,7 @@ export class SettingsDialog {
      *  shared control column; the control group dims and ignores input while the toggle
      *  is off. With `get`, the row re-reads its state on a 'vela-sync' event. */
     private toggleRow(label: string, value: boolean, onToggle: (v: boolean) => void, controls: HTMLElement[], get?: () => boolean, info?: HTMLElement): HTMLElement {
+        this.nameColorControls(label, controls);
         return fieldRow({
             label,
             labelSize: 'sm',

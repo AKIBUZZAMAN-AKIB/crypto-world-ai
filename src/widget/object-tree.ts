@@ -12,20 +12,27 @@
 import type { Vela } from '../Vela';
 import type { DataWindowRow } from '../core/ports/IChartRenderer';
 import type { IndicatorHandle } from '../core/IndicatorHandle';
+import { indicatorReference, resolveIndicatorReference } from '../core/indicator-reference';
 import type { SerializedDrawing } from '../core/drawings/Drawing';
 import { injectStyles } from '../ui/styles';
 import { iconEl } from '../ui/icons';
 import { Menu, type MenuItemDescriptor } from '../ui/components/menu';
-import { Dialog } from '../ui/components/dialog';
+import { Popover } from '../ui/components/popover';
 import { tickerIconEl } from './symbol-icon';
 import { parseSymbol } from '../data/ProviderRegistry';
 import {
     assignToGroup,
+    assignIndicatorsToGroup,
+    removeIndicatorsFromGroups,
+    indicatorGroupOf,
+    groupIndicatorIds,
+    childGroups,
     buildTree,
     canGroup,
     groupById,
     groupDrawingIds,
     groupWithin,
+    subtreeGroupIds,
     liftGroup,
     setGroupParent,
     drawingLabel,
@@ -54,7 +61,7 @@ import {
     type TreeSnapshot,
     type VisualOrderMove,
 } from './object-tree-model';
-import { SidePanel } from './side-panel';
+import { MIN_FLOAT_PANEL_WIDTH, SidePanel } from './side-panel';
 
 const STYLE_ID = 'vela-widget-objtree';
 const CSS = `
@@ -150,7 +157,10 @@ const CSS = `
     visibility: hidden;
 }
 .vela-ot-row:hover .vela-ot-btn,
-.vela-ot-panehead:hover .vela-ot-btn { visibility: visible; }
+.vela-ot-row:focus-within .vela-ot-btn,
+.vela-ot-panehead:hover .vela-ot-btn,
+.vela-ot-panehead:focus-within .vela-ot-btn { visibility: visible; }
+.vela-ot-row:focus-visible { outline: 1px solid var(--vela-fg-muted); outline-offset: -1px; }
 /* An engaged action stays out: hidden and locked are states, and a state the user can only
    see by hovering is a state they will not find. */
 .vela-ot-row .vela-ot-btn[data-engaged] { visibility: visible; color: var(--vela-fg); }
@@ -324,34 +334,12 @@ const CSS = `
 .vela-ot-headerbtn .vela-icon { font-size: 14px; }
 @media (pointer: coarse) { .vela-ot-headerbtn { width: 34px; height: 34px; } }
 
-/* Manage layout drawings: chart sections, one row per drawing. */
-.vela-ot-lg { display: flex; flex-direction: column; gap: 2px; min-width: min(420px, 82vw); }
-.vela-ot-lg-head {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin: 10px 0 4px;
-    padding-bottom: 4px;
-    border-bottom: 1px solid var(--vela-border);
-}
-.vela-ot-lg-head:first-child { margin-top: 0; }
-.vela-ot-lg-name { flex: 1; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--vela-fg-muted); }
-.vela-ot-lg-count { font-size: 11px; color: var(--vela-fg-muted); }
-.vela-ot-lg-row { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 2px; border-radius: 6px; }
-.vela-ot-lg-row:hover { background: var(--vela-hover); }
-.vela-ot-lg-row > .vela-icon { width: 14px; height: 14px; font-size: 14px; color: var(--vela-fg-muted); justify-content: center; flex: none; }
-.vela-ot-lg-row > .vela-icon svg { width: 14px; height: 14px; }
-.vela-ot-lg-row[data-hidden] .vela-ot-lg-label { opacity: 0.5; }
-.vela-ot-lg-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
-.vela-ot-lg-btn { visibility: visible; }
-.vela-ot-lg-empty, .vela-ot-lg-none { padding: 6px 2px 10px; color: var(--vela-fg-muted); font-size: 12px; }
-.vela-ot-lg-none { padding: 18px 2px; text-align: center; }
 /* Manage objects: default scope, per-object scope, specific chart targets. */
-.vela-ot-mo { display: flex; flex-direction: column; gap: 8px; min-width: min(460px, 86vw); max-height: min(66vh, 560px); overflow: auto; }
+.vela-ot-mo { display: flex; flex-direction: column; gap: 8px; width: min(340px, calc(100vw - 12px)); max-height: min(66vh, 480px); overflow: auto; }
 .vela-ot-mo-title { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--vela-fg-muted); margin-top: 4px; }
 .vela-ot-mo-segment { display: flex; flex-wrap: wrap; gap: 6px; }
 .vela-ot-mo-segment button { all: unset; box-sizing: border-box; min-height: 30px; padding: 0 10px; border: 1px solid var(--vela-border); border-radius: 999px; color: var(--vela-fg); font: inherit; font-size: 12px; cursor: pointer; }
-.vela-ot-mo-segment button[data-on='1'] { border-color: var(--vela-accent); color: var(--vela-accent); background: color-mix(in srgb, var(--vela-accent) 10%, transparent); }
+.vela-ot-mo-segment button[data-on='1'] { border-color: var(--vela-accent); color: var(--vela-accent-ink, var(--vela-accent)); background: color-mix(in srgb, var(--vela-accent) 10%, transparent); }
 .vela-ot-mo-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(118px, max-content); align-items: center; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--vela-border); }
 .vela-ot-mo-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
 .vela-ot-mo-row select { width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--vela-border-strong); border-radius: var(--vela-radius-sm); background: var(--vela-surface); color: var(--vela-fg-bright); font: inherit; font-size: 12px; }
@@ -359,17 +347,18 @@ const CSS = `
 .vela-ot-mo-targets label { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--vela-fg-muted); }
 .vela-ot-mo-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; position: sticky; bottom: -8px; background: var(--vela-surface-overlay); }
 .vela-ot-mo-actions button { all: unset; box-sizing: border-box; min-height: 34px; padding: 0 14px; border: 1px solid var(--vela-border); border-radius: 999px; color: var(--vela-fg); font: inherit; font-weight: 600; cursor: pointer; }
-.vela-ot-mo-actions button[data-primary='1'] { border-color: var(--vela-accent); color: var(--vela-accent); }
+.vela-ot-mo-actions button[data-primary='1'] { border-color: var(--vela-accent); color: var(--vela-accent-ink, var(--vela-accent)); }
 .vela-ot-mo-empty { padding: 18px 2px; text-align: center; color: var(--vela-fg-muted); font-size: 12px; }
 .vela-ot-headerbtn:disabled { opacity: 0.38; cursor: default; }
 
 /* Drawing-set template name dialog */
-.vela-ot-setform { display: flex; flex-direction: column; gap: 12px; min-width: 260px; }
+.vela-ot-mini { box-sizing: border-box; background: var(--vela-surface-overlay, var(--vela-surface)); color: var(--vela-fg); border: 1px solid var(--vela-border); border-radius: 0; box-shadow: var(--vela-shadow-dialog); padding: 10px; max-width: calc(100vw - 12px); }
+.vela-ot-setform { display: flex; flex-direction: column; gap: 8px; width: min(250px, calc(100vw - 12px)); }
 .vela-ot-setform label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--vela-fg-muted); }
-.vela-ot-setform input { height: 36px; padding: 0 10px; border: 1px solid var(--vela-border-strong); border-radius: var(--vela-radius-sm); background: var(--vela-surface); color: var(--vela-fg-bright); font: inherit; }
+.vela-ot-setform input { box-sizing: border-box; min-width: 0; width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--vela-border-strong); border-radius: var(--vela-radius-sm); background: var(--vela-surface); color: var(--vela-fg-bright); font: inherit; }
 .vela-ot-setrow { display: flex; justify-content: flex-end; gap: 8px; }
-.vela-ot-setrow button { all: unset; box-sizing: border-box; min-height: 36px; padding: 0 14px; border: 1px solid var(--vela-border); border-radius: 999px; color: var(--vela-fg); font: inherit; font-weight: 600; cursor: pointer; }
-.vela-ot-setrow button[data-primary='1'] { border-color: var(--vela-accent); color: var(--vela-accent); }
+.vela-ot-setrow button { all: unset; box-sizing: border-box; min-height: 36px; padding: 0 14px; border: 1px solid var(--vela-border); border-radius: 0; color: var(--vela-fg); font: inherit; font-weight: 600; cursor: pointer; }
+.vela-ot-setrow button[data-primary='1'] { border-color: var(--vela-accent); color: var(--vela-accent-ink, var(--vela-accent)); }
 
 /* ── drag-and-drop ── */
 .vela-ot-row[data-drag] { cursor: grab; }
@@ -459,7 +448,8 @@ type Drop =
      *  stack, measured from the rendered rows, so it stays correct with nested groups. */
     | { kind: 'intoGroup'; paneId: string; groupId: string; at: number; y: number; rows: HTMLElement[]; el: HTMLElement }
     /** Drop a whole group ON another group's header: nest it inside (TradingView's gesture). */
-    | { kind: 'nest'; paneId: string; groupId: string; el: HTMLElement };
+    | { kind: 'nest'; paneId: string; groupId: string; el: HTMLElement }
+    | { kind: 'fileGroup'; groupId: string; el: HTMLElement };
 
 /** A press on a draggable row, live until the pointer is released. */
 interface DragSession {
@@ -610,7 +600,14 @@ export class ObjectTree extends SidePanel {
 
     /** State/history snapshot of one chart's folders, including nested groups. */
     groupsFor(chart: Vela): DrawGroup[] {
-        return (this.groupsPerChart.get(chart) ?? []).map((g) => ({ ...g, ids: [...g.ids] }));
+        const handles = chart.indicators();
+        return (this.groupsPerChart.get(chart) ?? []).map((g) => {
+            const refs = (g.indicators ?? []).flatMap((id) => {
+                const ref = indicatorReference(handles, id) ?? g.indicatorRefs?.find((r) => r.id === id);
+                return ref ? [{ id, key: ref.key, ordinal: ref.ordinal }] : [];
+            });
+            return { ...g, ids: [...g.ids], ...(g.indicators ? { indicators: [...g.indicators] } : {}), ...(refs.length > 0 ? { indicatorRefs: refs } : {}) };
+        });
     }
 
     /** Restore a folder snapshot without treating it as a fresh user edit. */
@@ -619,7 +616,16 @@ export class ObjectTree extends SidePanel {
         try {
             this.groupsPerChart.set(
                 chart,
-                groups.map((g) => ({ ...g, ids: [...g.ids] })),
+                groups.map((g) => {
+                    const handles = chart.indicators();
+                    const indicators = (g.indicators ?? []).map((id) => {
+                        const ref = g.indicatorRefs?.find((r) => r.id === id);
+                        return (ref && resolveIndicatorReference(handles, ref)?.id) || id;
+                    });
+                    const indicatorRefs = (g.indicatorRefs ?? []).filter((ref) => !resolveIndicatorReference(handles, ref));
+                    const { indicatorRefs: _stored, ...rest } = g;
+                    return { ...rest, ids: [...g.ids], ...(g.indicators ? { indicators } : {}), ...(indicatorRefs.length ? { indicatorRefs } : {}) };
+                }),
             );
             for (const g of groups) {
                 const n = /^grp-(\d+)$/.exec(g.id);
@@ -647,6 +653,8 @@ export class ObjectTree extends SidePanel {
     private readonly blockSpans = new Map<string, HTMLElement[]>();
     private valueFrame = 0;
     private menu: Menu | null = null;
+    private menuAnchor: HTMLElement | null = null;
+    private miniPopover: Popover | null = null;
     private menuActions = new Map<string, () => void>();
     private drag: DragSession | null = null;
     /** Groups the user has picked (a long-press/Ctrl-click on a group header) — a pick of
@@ -655,18 +663,12 @@ export class ObjectTree extends SidePanel {
     /** The tail of the live touch gesture that keeps a held row draggable: while it is set,
      *  `touchmove` is prevented so the list cannot start scrolling under the finger. */
     private touchBlock: ((e: TouchEvent) => void) | null = null;
-    /** The layout-wide drawing manager, built on first use. */
-    private layoutDrawingsDialog: Dialog | null = null;
     /** The one-line "Save drawing template as…" dialog, and the pick it will save. */
-    private setNameDialog: Dialog | null = null;
-    private setNameInput: HTMLInputElement | null = null;
-    private setNameIds: string[] = [];
-    private readonly layoutButton: HTMLButtonElement | null = null;
     /** Header door to TradingView-like Manage objects (sync scopes + specific charts). */
     private readonly objectsButton: HTMLButtonElement | null = null;
     /** Header shortcut for TradingView's group system — visible even without a context menu. */
     private readonly groupButton: HTMLButtonElement | null = null;
-    private manageObjectsDialog: Dialog | null = null;
+    private manageObjectsPopover: Popover | null = null;
     private manageObjectsBody: HTMLElement | null = null;
     /** Which rows the Manage objects dialog is currently editing; empty = all rows. */
     private manageObjectsIds: string[] = [];
@@ -680,10 +682,6 @@ export class ObjectTree extends SidePanel {
          *  phone the only way to a study's code from the tree. */
         private readonly opts: {
             onSource?: (source: string, title: string, readOnly: boolean) => void;
-            /** Every chart in the LAYOUT, for "Manage layout drawings" — TradingView's dialog
-             *  that lists drawings across a multi-chart layout rather than one chart's tree.
-             *  Absent on a single-chart host: the button does not exist without it. */
-            layout?: () => ReadonlyArray<{ label: string; chart: Vela }>;
             /** DRAWING SET templates: save a whole selection/group as one reusable bundle,
              *  and insert one from the tree. The workspace owns persistence + relative
              *  geometry; the tree owns the pick, the group and the name field. */
@@ -692,6 +690,15 @@ export class ObjectTree extends SidePanel {
                 save: (name: string, ids: readonly string[]) => boolean;
                 insert: (name: string) => number;
                 remove?: (name: string) => void;
+            };
+            indicatorTemplates?: {
+                list: () => ReadonlyArray<{ name: string; count: number }>;
+                save: (name: string, ids: readonly string[], append: boolean) => boolean;
+            };
+            indicatorSync?: {
+                charts: () => ReadonlyArray<{ id: string; label: string; active: boolean }>;
+                status: (id: string) => { mode: 'none' | 'layout' | 'charts'; charts: string[]; pending?: string[] };
+                set: (ids: readonly string[], mode: 'none' | 'layout' | 'charts', charts?: readonly string[]) => void;
             };
             /** TradingView-like Manage objects: per-object/group sync scope, specific
              *  chart targets, and on-demand layout synchronization. */
@@ -719,24 +726,11 @@ export class ObjectTree extends SidePanel {
         super(host, 'Object tree', 'vela-ot', {
             resizable: true,
             width: 300,
-            minWidth: 240,
+            minWidth: MIN_FLOAT_PANEL_WIDTH,
             maxWidth: 560,
-            maximizable: true,
+            standardPane: true,
         });
         injectStyles(STYLE_ID, CSS, host.ownerDocument);
-        // Header door to the layout-wide drawing manager (multi-chart hosts only) — the tree
-        // itself is per chart, and TradingView keeps the across-charts view in the header.
-        if (this.opts.layout) {
-            const doc = host.ownerDocument;
-            const b = doc.createElement('button');
-            b.className = 'vela-ot-headerbtn';
-            b.title = 'Manage layout drawings';
-            b.setAttribute('aria-label', 'Manage layout drawings');
-            b.appendChild(iconEl('objects', doc));
-            b.addEventListener('click', () => this.openLayoutDrawings());
-            this.headerSlot.appendChild(b);
-            this.layoutButton = b;
-        }
         // Group system + Manage objects: both are header doors, so a phone never needs a
         // long-press or a right-click to reach them.
         if (this.opts.drawingSync) {
@@ -842,8 +836,10 @@ export class ObjectTree extends SidePanel {
         this.endDrag(false); // a drag in flight has nothing left to drop onto
         this.menu?.destroy();
         this.menu = null;
-        this.setNameDialog?.destroy();
-        this.setNameDialog = null;
+        this.miniPopover?.destroy();
+        this.miniPopover = null;
+        this.manageObjectsPopover?.destroy();
+        this.manageObjectsPopover = null;
         super.destroy();
     }
 
@@ -856,6 +852,10 @@ export class ObjectTree extends SidePanel {
     /** Read the chart into the layout's input. Every chart query happens here, once a pass. */
     private snapshot(chart: Vela, handle: (id: string) => IndicatorHandle | undefined): TreeSnapshot {
         const stackable = chart.renderer.supports('seriesOrder') && chart.renderer.supports('candleZOrder');
+        // Organizational folders are deliberately not physical stack units. Flattening
+        // them here preserves the actual per-pane order when another object is restacked.
+        const logical = this.logicalRoots(chart);
+        const logicalBranches = new Set([...logical].flatMap((id) => subtreeGroupIds(this.groups, id)));
         return {
             panes: chart.panes.list(),
             indicatorVisible: (id) => handle(id)?.visible !== false,
@@ -867,7 +867,7 @@ export class ObjectTree extends SidePanel {
             priceLabel: this.symbolName || 'Price',
             priceVisible: chart.renderer.get('candleVisible') !== false,
             drawings: chart.drawings.supported ? chart.drawings.all() : [],
-            groups: this.groups,
+            groups: this.groups.filter((g) => !logicalBranches.has(g.id)),
         };
     }
 
@@ -950,6 +950,15 @@ export class ObjectTree extends SidePanel {
         this.body.replaceChildren();
 
         const doc = this.el.ownerDocument;
+        // Cross-pane folders are organizational, not a physical pane or a z-order move.
+        // Paint each such folder once, while its members keep their real chart panes.
+        const logical = this.logicalRoots(pass.chart);
+        if (logical.size > 0) {
+            const section = doc.createElement('div');
+            section.className = 'vela-ot-logical-groups';
+            for (const g of this.groups.filter((x) => logical.has(x.id))) section.appendChild(this.logicalGroupEl(pass, g));
+            this.body.appendChild(section);
+        }
         panes.forEach((pane, i) => {
             // Never a band above the first block — the price pane stays pinned to the top.
             if (i > 0) this.body.appendChild(this.gapEl(pass, panes[i - 1]!.id, pane.id));
@@ -974,7 +983,7 @@ export class ObjectTree extends SidePanel {
             .map((r) => ({ id: r.dataset.id ?? '', kind: r.dataset.rowKind ?? '' }))
             .filter((r) => r.id !== '');
         if (this.groupButton) {
-            const count = this.pickedDrawings().length + this.groupPicks.size;
+            const count = this.picked.size + this.selInd.size + this.groupPicks.size;
             this.groupButton.disabled = count < 2;
             this.groupButton.title = count < 2 ? 'Select two or more objects to group' : `Group selection (${count})`;
         }
@@ -982,10 +991,11 @@ export class ObjectTree extends SidePanel {
 
     /** The header group door: picks can contain drawings, nested groups, or both. */
     private createGroupFromSelection(): void {
-        const ids = [...this.pickedDrawings()];
+        const ids = [...this.picked];
+        const indicators = [...this.selInd];
         const groups = [...this.groupPicks];
-        if (ids.length + groups.length < 2) return;
-        this.makeGroup(ids, groups);
+        if (ids.length + indicators.length + groups.length < 2) return;
+        this.makeGroup(ids, groups, undefined, indicators);
     }
 
     /** TradingView's floating selection toolbar, docked to the top of the list: the eye, the
@@ -1039,8 +1049,8 @@ export class ObjectTree extends SidePanel {
         }
         // Grouping and duplicating are the panel's own drawing verbs. A pick holding GROUP
         // headers groups them too — that is how one group is nested inside another.
-        if (ids.length > 0 || groups.length > 0) {
-            const groupable = canGroup(ids, this.groups);
+        if (ids.length > 0 || groups.length > 0 || inds.length > 0) {
+            const groupable = (ids.length === 0 || canGroup(ids, this.groups)) && inds.every((id) => !indicatorGroupOf(this.groups, id));
             if (this.opts.drawingSync && pickedIds.length > 0) {
                 bar.appendChild(
                     this.btn({
@@ -1057,13 +1067,13 @@ export class ObjectTree extends SidePanel {
                         groups.length > 0
                             ? `Group these ${total} items`
                             : groupable
-                              ? `Group ${ids.length === 1 ? 'this drawing' : 'these drawings'}`
+                              ? `Group ${total === 1 ? 'this object' : 'these objects'}`
                               : 'Already in a group',
                     disabled: !groupable,
-                    run: () => this.makeGroup(ids, groups),
+                    run: () => this.makeGroup(ids, groups, undefined, inds),
                 }),
             );
-            bar.appendChild(
+            if (pickedIds.length > 0 && inds.length === 0 && groups.every((id) => groupIndicatorIds(this.groups, id).length === 0)) bar.appendChild(
                 this.btn({
                     icon: 'clone',
                     title: 'Duplicate',
@@ -1117,11 +1127,53 @@ export class ObjectTree extends SidePanel {
         block.appendChild(this.paneHead(pass, pane));
         const stack = doc.createElement('div');
         stack.className = 'vela-ot-stack';
+        const logical = this.logicalRoots(pass.chart);
+        const logicalDrawings = new Set([...logical].flatMap((id) => groupDrawingIds(this.groups, id)));
         for (const item of pane.items) {
+            if (item.kind === 'unit' && item.unit.kind === 'draw' && logicalDrawings.has(item.unit.drawing.id)) continue;
+            if (item.kind === 'row' && item.row.kind === 'indicator' && indicatorGroupOf(this.groups, item.row.id)) continue;
             stack.appendChild(item.kind === 'row' ? this.rowEl(pass, pane, item.row) : this.unitEl(pass, pane, item.unit));
         }
         block.appendChild(stack);
         return block;
+    }
+
+    /** Roots spanning panes or containing indicators have one logical folder, rather than
+     * pretending their members occupy a single pane. Same-pane drawing groups retain their
+     * original in-stack visual-order and drag behavior. */
+    private logicalRoots(chart: Vela): Set<string> {
+        const drawings = chart.drawings.supported ? chart.drawings.all() : [];
+        return new Set(this.groups.filter((g) => g.parent === undefined).filter((g) => {
+            const ids = new Set(groupDrawingIds(this.groups, g.id));
+            const panes = new Set(drawings.filter((d) => ids.has(d.id)).map((d) => d.paneId));
+            return groupIndicatorIds(this.groups, g.id).length > 0 || panes.size > 1;
+        }).map((g) => g.id));
+    }
+
+    private logicalGroupEl(pass: Pass, g: DrawGroup, depth = 0): HTMLElement {
+        const doc = this.el.ownerDocument;
+        const wrap = doc.createElement('div');
+        wrap.className = 'vela-ot-unit vela-ot-logical-unit';
+        wrap.dataset.group = g.id;
+        const pane = pass.panes[0];
+        if (!pane) return wrap;
+        const unit: Extract<DrawUnit, { kind: 'group' }> = { kind: 'group', group: g, members: [], children: [] };
+        wrap.appendChild(this.groupRow(pass, pane, unit, depth, true));
+        if (this.collapsed.has(g.id)) return wrap;
+        const drawings = pass.chart.drawings.supported ? pass.chart.drawings.all() : [];
+        for (const d of drawings.filter((d) => g.ids.includes(d.id))) wrap.appendChild(this.drawRow(pass, d, true, depth + 1));
+        for (const id of g.indicators ?? []) {
+            const ownPane = pass.panes.find((p) => paneRows(p).some((r) => r.kind === 'indicator' && r.id === id));
+            const row = ownPane && paneRows(ownPane).find((r): r is IndicatorRow => r.kind === 'indicator' && r.id === id);
+            if (!ownPane || !row) continue;
+            const member = this.rowEl(pass, ownPane, row);
+            const actual = member.matches('.vela-ot-row') ? member : member.querySelector<HTMLElement>('.vela-ot-row');
+            actual?.classList.add('vela-ot-subrow');
+            if (actual) actual.dataset.depth = String(depth + 1);
+            wrap.appendChild(member);
+        }
+        for (const child of childGroups(this.groups, g.id)) wrap.appendChild(this.logicalGroupEl(pass, child, depth + 1));
+        return wrap;
     }
 
     /** One top-level drawing entry: a lone drawing's row, or a group block — its header plus,
@@ -1188,7 +1240,7 @@ export class ObjectTree extends SidePanel {
                         this.refresh();
                     },
                 },
-            ]);
+            ], undefined, { more: true });
             el.dataset.rowKind = 'price';
             el.dataset.pane = pane.id;
             // The candles can only be restacked — they never leave the main pane.
@@ -1309,7 +1361,7 @@ export class ObjectTree extends SidePanel {
      * The state comes from the whole bundle, not from the members listed under this pane: should
      * a member end up on another pane, the header still speaks for the group its actions affect.
      */
-    private groupRow(pass: Pass, pane: TreePane, unit: Extract<DrawUnit, { kind: 'group' }>, depth = 0): HTMLElement {
+    private groupRow(pass: Pass, pane: TreePane, unit: Extract<DrawUnit, { kind: 'group' }>, depth = 0, logical = false): HTMLElement {
         const doc = this.el.ownerDocument;
         const g = unit.group;
         const folded = this.collapsed.has(g.id);
@@ -1317,8 +1369,11 @@ export class ObjectTree extends SidePanel {
         // padlock and its count report.
         const owned = new Set(groupDrawingIds(this.groups, g.id));
         const members = pass.chart.drawings.all().filter((d) => owned.has(d.id));
-        const { allHidden, allLocked } = groupState(members);
+        const { allLocked } = groupState(members);
         const ids = [...owned];
+        const indicators = groupIndicatorIds(this.groups, g.id);
+        const handles = indicators.map((id) => pass.handle(id)).filter((h): h is IndicatorHandle => h !== undefined);
+        const allHidden = members.length + handles.length > 0 && members.every((d) => !d.visible) && handles.every((h) => !h.visible);
         // The chevron is its own control: folding a group must never be the only thing a tap
         // on its header can do (that is where picking, dragging and renaming start).
         const chev = doc.createElement('button');
@@ -1332,27 +1387,26 @@ export class ObjectTree extends SidePanel {
             else this.collapsed.add(g.id);
             this.render();
         });
-        const el = this.row(chev, g.name, !allHidden, [
-            {
-                icon: allLocked ? 'lock' : 'unlock',
-                title: allLocked ? 'Unlock all' : 'Lock all',
-                engaged: allLocked,
-                run: () => this.setMembers(pass, ids, { locked: !allLocked }),
-            },
-            {
-                icon: allHidden ? 'eye-off' : 'eye',
-                title: allHidden ? 'Show all' : 'Hide all',
-                engaged: allHidden,
-                run: () => this.setMembers(pass, ids, { visible: allHidden }),
-            },
-            { icon: 'trash', title: 'Remove all', run: () => this.removeGroup(pass, g.id, true) },
-        ]);
+        const actions: RowAction[] = [];
+        if (members.length > 0) actions.push({
+            icon: allLocked ? 'lock' : 'unlock',
+            title: handles.length > 0 ? (allLocked ? 'Unlock drawings' : 'Lock drawings') : (allLocked ? 'Unlock all' : 'Lock all'),
+            engaged: allLocked,
+            run: () => this.setMembers(pass, ids, { locked: !allLocked }),
+        });
+        actions.push({
+            icon: allHidden ? 'eye-off' : 'eye',
+            title: allHidden ? 'Show all' : 'Hide all',
+            engaged: allHidden,
+            run: () => this.setGroupVisibility(pass, g.id, allHidden),
+        }, { icon: 'trash', title: 'Remove all', run: () => this.removeGroup(pass, g.id, true) });
+        const el = this.row(chev, g.name, !allHidden, actions, undefined, { more: true });
         el.dataset.rowKind = 'group';
         el.dataset.id = g.id;
         el.dataset.pane = pane.id;
         if (depth > 0) el.dataset.depth = String(depth);
         const kids = unit.children.length;
-        el.title = `${members.length} drawing${members.length === 1 ? '' : 's'}${kids > 0 ? ` in ${kids} nested group${kids === 1 ? '' : 's'}` : ''} — drag to move them together, or onto another group to nest`;
+        el.title = `${members.length} drawing${members.length === 1 ? '' : 's'}, ${handles.length} indicator${handles.length === 1 ? '' : 's'}${kids > 0 ? ` in ${kids} nested group${kids === 1 ? '' : 's'}` : ''}${logical ? '' : ' — drag to move them together, or onto another group to nest'}`;
         if (this.renaming === g.id) {
             // A row being renamed is a text field, not a handle: dragging it would leave the
             // rename open with the tree frozen behind it.
@@ -1378,8 +1432,11 @@ export class ObjectTree extends SidePanel {
             // Clicking away keeps what was typed, the way a rename in a file list does.
             input.addEventListener('blur', () => this.commitRename(g.id, input.value));
         } else {
-            el.dataset.drag = '1';
-            el.prepend(this.gripEl());
+            // A cross-pane folder cannot be dragged into one pane without moving its members.
+            if (!logical) {
+                el.dataset.drag = '1';
+                el.prepend(this.gripEl());
+            }
             if (this.groupPicks.has(g.id)) el.dataset.picked = '1';
             el.addEventListener('click', (e) => this.onRowClick(e, 'group', g.id));
             // Double-click names it, the way a row in a file list does.
@@ -1432,7 +1489,7 @@ export class ObjectTree extends SidePanel {
                     this.refresh();
                 },
             },
-        ]);
+        ], undefined, { more: true });
         el.dataset.rowKind = 'drawing';
         el.dataset.id = d.id;
         el.dataset.pane = d.paneId;
@@ -1456,6 +1513,12 @@ export class ObjectTree extends SidePanel {
     private pickedDrawings(): string[] {
         const out = new Set(this.picked);
         for (const gid of this.groupPicks) for (const id of groupDrawingIds(this.groups, gid)) out.add(id);
+        return [...out];
+    }
+
+    private pickedIndicators(): string[] {
+        const out = new Set(this.selInd);
+        for (const gid of this.groupPicks) for (const id of groupIndicatorIds(this.groups, gid)) out.add(id);
         return [...out];
     }
 
@@ -1549,8 +1612,9 @@ export class ObjectTree extends SidePanel {
         if (!chart || this.selCount === 0) return;
         const handles = new Map(chart.indicators().map((h) => [h.id, h]));
         const drawings = this.pickedDrawings();
+        const indicators = this.pickedIndicators();
         if (what === 'remove') {
-            for (const id of [...this.selInd]) handles.get(id)?.remove();
+            for (const id of indicators) handles.get(id)?.remove();
             for (const id of drawings) chart.drawings.remove(id);
             // Remove a picked GROUP's own bookkeeping too, or its name would linger with
             // nothing under it (prune would catch it a render later; do it now).
@@ -1563,7 +1627,7 @@ export class ObjectTree extends SidePanel {
             this.selectOnChart([]);
         } else {
             const show = what === 'show';
-            for (const id of this.selInd) handles.get(id)?.setVisible(show);
+            for (const id of indicators) handles.get(id)?.setVisible(show);
             for (const id of drawings) chart.drawings.show(id, show);
         }
         this.render();
@@ -1712,6 +1776,7 @@ export class ObjectTree extends SidePanel {
         const doc = this.el.ownerDocument;
         const el = doc.createElement('div');
         el.className = 'vela-ot-row';
+        el.tabIndex = 0; // keyboard focus reveals this row's actions without a mouse hover
         if (!visible) el.dataset.hidden = '1';
         if (extra.disclosure) {
             const fold = doc.createElement('button');
@@ -1773,6 +1838,7 @@ export class ObjectTree extends SidePanel {
         const items = this.itemsForRow(b, pass, el);
         if (items.length === 0) return null;
         this.menuActions = b.actions;
+        this.menuAnchor = el;
         const menu = this.ensureMenu();
         menu.setItems(items);
         const r = el.getBoundingClientRect();
@@ -1788,6 +1854,7 @@ export class ObjectTree extends SidePanel {
         if (a.engaged) b.dataset.engaged = '1';
         if (a.disabled) b.disabled = true;
         b.title = a.title;
+        b.setAttribute('aria-label', a.title);
         b.appendChild(iconEl(a.icon, doc));
         b.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -1802,11 +1869,11 @@ export class ObjectTree extends SidePanel {
 
     /** Bundle drawings (and whole groups, which become NESTED inside the new one) into a fresh
      *  group. The new group takes over the pick, so the next step can nest or name it. */
-    private makeGroup(ids: readonly string[], groupIds: readonly string[] = [], parent?: string): void {
-        if (!canGroup(ids, this.groups)) return;
+    private makeGroup(ids: readonly string[], groupIds: readonly string[] = [], parent?: string, indicators: readonly string[] = []): void {
+        if ((ids.length > 0 && !canGroup(ids, this.groups)) || indicators.some((id) => indicatorGroupOf(this.groups, id))) return;
         // A group cannot be nested inside itself or into its own subtree.
         const kids = groupIds.filter((gid) => parent === undefined || !groupWithin(this.groups, parent, gid));
-        if (kids.length === 0 && ids.length === 0) return;
+        if (kids.length === 0 && ids.length === 0 && indicators.length === 0) return;
         if (groupIds.length > 0 && kids.length === 0) return;
         // TradingView's rule: a group has ONE sync mode, and every member adopts it. When
         // objects with different modes are bundled, the first member's mode wins.
@@ -1823,7 +1890,7 @@ export class ObjectTree extends SidePanel {
         const id = `grp-${this.groupSeq}`;
         let next: DrawGroup[] = [
             ...this.groups,
-            { id, name: nextGroupName(this.groups), ids: [...ids], ...(parent === undefined ? {} : { parent }) },
+            { id, name: nextGroupName(this.groups), ids: [...ids], ...(indicators.length > 0 ? { indicators: [...indicators] } : {}), ...(parent === undefined ? {} : { parent }) },
         ];
         // The picked drawings move out of whatever held them; the picked groups move inside.
         for (const gid of kids) next = setGroupParent(next, gid, id);
@@ -1851,11 +1918,16 @@ export class ObjectTree extends SidePanel {
         const g = groupById(this.groups, id);
         if (!g) return;
         const all = groupDrawingIds(this.groups, id);
+        const indicatorIds = groupIndicatorIds(this.groups, id);
         const subtree = this.groups.filter((x) => x.id === id || groupWithin(this.groups, x.id, id)).map((x) => x.id);
         this.groups = withMembers ? this.groups.filter((x) => !subtree.includes(x.id)) : liftGroup(this.groups, id);
         for (const gid of subtree) this.collapsed.delete(gid);
         if (withMembers) {
             for (const m of all) this.picked.delete(m);
+            for (const m of indicatorIds) {
+                this.selInd.delete(m);
+                pass.handle(m)?.remove();
+            }
             if (all.length > 0) pass.chart.drawings.removeMany(all);
         }
         this.render();
@@ -1890,6 +1962,16 @@ export class ObjectTree extends SidePanel {
         };
         cloneTree(g, g.parent);
         this.groups = [...this.groups, ...copies];
+        this.render();
+    }
+
+    /** Hide/show both kinds without moving their pane or applying drawing-only locks to studies. */
+    private setGroupVisibility(pass: Pass, groupId: string, visible: boolean): void {
+        const ids = groupDrawingIds(this.groups, groupId);
+        const indicators = groupIndicatorIds(this.groups, groupId);
+        // Capture the list before changes; indicator events repaint the tree synchronously.
+        for (const id of indicators) pass.handle(id)?.setVisible(visible);
+        if (ids.length > 0) pass.chart.drawings.updateMany(ids.map((id) => ({ id, patch: { visible } })));
         this.render();
     }
 
@@ -2017,6 +2099,22 @@ export class ObjectTree extends SidePanel {
     private resolveDrop(drag: DragSession, x: number, y: number): Drop | null {
         const pass = this.pass;
         if (!pass) return null;
+        // Filing onto a folder header is organizational: it must not re-pane an indicator
+        // or a drawing merely because the folder has members in another pane.
+        if (drag.kind === 'indicator' || drag.kind === 'drawing' || drag.kind === 'group') {
+            const headers = [...this.body.querySelectorAll<HTMLElement>('.vela-ot-row[data-row-kind="group"]')].reverse();
+            for (const header of headers) {
+                const r = header.getBoundingClientRect();
+                if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
+                const groupId = header.dataset.id;
+                if (!groupId || drag.id === groupId) continue;
+                if (drag.kind === 'group') {
+                    if (!groupWithin(this.groups, groupId, drag.id ?? '')) return { kind: 'nest', paneId: drag.fromPane, groupId, el: header };
+                } else if (drag.kind === 'indicator' || header.closest('.vela-ot-logical-unit')) {
+                    return { kind: 'fileGroup', groupId, el: header };
+                }
+            }
+        }
         // The new-pane bands win: they are deliberately thin and sit between the blocks, so
         // testing them first keeps them reachable.
         if (drag.kind === 'indicator') {
@@ -2115,8 +2213,8 @@ export class ObjectTree extends SidePanel {
             drop.el.dataset.drop = 'target';
             return;
         }
-        if (drop.kind === 'nest') {
-            // Nesting reads differently from joining: the header itself lights up.
+        if (drop.kind === 'nest' || drop.kind === 'fileGroup') {
+            // Organizational membership uses the same visible group-header target.
             drop.el.dataset.drop = 'nest';
             return;
         }
@@ -2185,6 +2283,14 @@ export class ObjectTree extends SidePanel {
                     this.refresh();
                 }
                 return;
+            case 'fileGroup':
+                if (drag.id !== null) {
+                    this.groups = drag.kind === 'indicator'
+                        ? assignIndicatorsToGroup(this.groups, drop.groupId, [drag.id])
+                        : assignToGroup(this.groups, drop.groupId, [drag.id]);
+                    this.refresh();
+                }
+                return;
             case 'slot':
             case 'intoGroup':
                 this.applySlotDrop(pass, drag, drop);
@@ -2217,7 +2323,20 @@ export class ObjectTree extends SidePanel {
             chart.panes.moveIndicator(drag.id!, drop.paneId === PRICE_PANE_ID ? 'price' : { pane: drop.paneId });
         }
         const tokens = paneTokens(target);
-        const at = drop.kind === 'intoGroup' ? drop.at : tokenIndexOfSlot(target, drop.slot);
+        let at: number;
+        if (drop.kind === 'intoGroup') at = drop.at;
+        else {
+            // Logical members are hidden from the physical pane list but remain in its
+            // real stack. Map the visible slot back to the full token list before writing.
+            const roots = this.logicalRoots(chart);
+            const logicalDrawings = new Set([...roots].flatMap((id) => groupDrawingIds(this.groups, id)));
+            const visible = target.items.filter((item) =>
+                !(item.kind === 'unit' && item.unit.kind === 'draw' && logicalDrawings.has(item.unit.drawing.id)) &&
+                !(item.kind === 'row' && item.row.kind === 'indicator' && indicatorGroupOf(this.groups, item.row.id)),
+            );
+            const next = visible[drop.slot];
+            at = tokenIndexOfSlot(target, next ? target.items.indexOf(next) : target.items.length);
+        }
         const placed = placeTokens(tokens, dragged, at);
         // Group bookkeeping for a lone drawing: dropped on a group it joins it; dropped at the
         // top level it leaves whatever group held it.
@@ -2289,7 +2408,7 @@ export class ObjectTree extends SidePanel {
     private selectedStackTokens(pass: Pass): Map<string, StackToken[]> {
         const drawingIds = new Set(this.picked);
         for (const id of this.groupPicks) for (const member of groupDrawingIds(this.groups, id)) drawingIds.add(member);
-        const indicatorIds = new Set(this.selInd);
+        const indicatorIds = new Set(this.pickedIndicators());
         const out = new Map<string, StackToken[]>();
         for (const pane of pass.panes) {
             const selected = paneTokens(pane).filter(
@@ -2313,23 +2432,30 @@ export class ObjectTree extends SidePanel {
 
     /** Move a group's whole run — including nested members — as one contiguous z block. */
     private restackGroup(pass: Pass, g: DrawGroup, move: VisualOrderMove): void {
-        const member = new Set(groupDrawingIds(this.groups, g.id));
-        const mine = pass.chart.drawings.all().filter((d) => member.has(d.id));
-        if (mine.length === 0) return;
-        const paneId = mine[0]!.paneId ?? PRICE_PANE_ID;
-        const dragged: StackToken[] = mine.map((d) => ({ kind: 'drawing' as const, id: d.id }));
-        this.restackTokens(pass, paneId, dragged, move);
+        const drawings = new Set(groupDrawingIds(this.groups, g.id));
+        const indicators = new Set(groupIndicatorIds(this.groups, g.id));
+        let changed = false;
+        for (const pane of pass.panes) {
+            const tokens = paneTokens(pane).filter((t) =>
+                (t.kind === 'drawing' && drawings.has(t.id)) || (t.kind === 'indicator' && pass.stackable && indicators.has(t.id)),
+            );
+            if (tokens.length > 0) changed = this.restackTokens(pass, pane.id, tokens, move, false) || changed;
+        }
+        if (changed) this.refresh();
     }
 
     /** TradingView's four Visual Order verbs, shared by every kind of row. */
     private visualOrderItems(b: MenuBuilder, move: (m: VisualOrderMove) => void, all = false): MenuItemDescriptor[] {
         const q = all ? 'all ' : '';
-        return [
-            b.entry(`Bring ${q}to front`, 'arrow-up', () => move('front'), true),
+        const choices = [
+            b.entry(`Bring ${q}to front`, 'arrow-up', () => move('front')),
             b.entry(`Bring ${q}forward`, 'chevron-up', () => move('forward')),
             b.entry(`Send ${q}backward`, 'chevron-down', () => move('backward')),
             b.entry(`Send ${q}to back`, 'arrow-down', () => move('back')),
         ];
+        // The four commands are different operations, not duplicates. Group them in
+        // one compact submenu rather than removing any of their behaviour.
+        return [b.submenu('Visual order', 'objects', choices, true)];
     }
 
     /** The drawings a session moves: a group carries every member, front-most first, so the
@@ -2362,6 +2488,7 @@ export class ObjectTree extends SidePanel {
         const items = this.itemsForRow(b, pass, rowEl);
         if (items.length === 0) return;
         this.menuActions = b.actions;
+        this.menuAnchor = rowEl;
         const menu = this.ensureMenu();
         menu.setItems(items);
         menu.openAt(e.clientX, e.clientY);
@@ -2383,12 +2510,12 @@ export class ObjectTree extends SidePanel {
             ),
         ];
         const pickedGroups = [...this.groupPicks];
-        if ((ids.length > 0 || pickedGroups.length > 0) && canGroup(ids, this.groups)) {
+        if ((ids.length > 0 || inds.length > 0 || pickedGroups.length > 0) && (ids.length === 0 || canGroup(ids, this.groups)) && inds.every((id) => !indicatorGroupOf(this.groups, id))) {
             items.push(
                 b.entry(
-                    ids.length + pickedGroups.length === 1 ? 'Create a group' : `Group these ${ids.length + pickedGroups.length} items`,
+                    ids.length + inds.length + pickedGroups.length === 1 ? 'Create a group' : `Group these ${ids.length + inds.length + pickedGroups.length} items`,
                     'group',
-                    () => this.makeGroup(ids, pickedGroups, undefined),
+                    () => this.makeGroup(ids, pickedGroups, undefined, inds),
                 ),
             );
         }
@@ -2399,8 +2526,10 @@ export class ObjectTree extends SidePanel {
             items.push(...this.visualOrderItems(b, (move) => this.restackSelection(pass, move)));
         }
         items.push(b.entry('Clear selection', 'close', () => this.clearSelection(), true));
-        const setMenu = this.drawingSetSubmenu(b, ids);
+        const setMenu = this.drawingSetSubmenu(b, this.pickedDrawings());
         if (setMenu) items.push(setMenu);
+        const indicatorTemplates = this.indicatorTemplateSubmenu(b, this.pickedIndicators());
+        if (indicatorTemplates) items.push(indicatorTemplates);
         items.push(b.entry(`Remove ${total}`, 'trash', () => this.applyBulk('remove')));
         return items;
     }
@@ -2438,32 +2567,22 @@ export class ObjectTree extends SidePanel {
         return (this.el.closest('.vela-ui') as HTMLElement | null) ?? this.el;
     }
 
-    // ── manage layout drawings ─────────────────────────────────────────────
-    // The tree speaks for ONE chart. A layout with several charts needs the other view
-    // TradingView offers: every drawing on every chart, in one list, where a drawing can be
-    // shown, hidden, locked or removed without first switching which chart is active.
+    // ── manage drawing synchronization ─────────────────────────────────────
 
-    private layoutDrawingsBody: HTMLElement | null = null;
-
-    /** Open the Manage objects dialog: default scope + one row per object/group member. */
+    /** Open the compact Manage objects popover: default scope and per-object targets. */
     private openManageObjects(ids: readonly string[] = []): void {
-        const sync = this.opts.drawingSync;
-        if (!sync) return;
+        if (!this.opts.drawingSync) return;
         this.manageObjectsIds = [...ids];
-        const host = this.uiHost();
-        if (this.manageObjectsDialog === null) {
-            this.manageObjectsDialog = new Dialog({
-                title: 'Manage objects',
-                host,
-                closeOnInteractOutside: true,
-                content: (body) => {
-                    body.classList.add('vela-ot-mo');
-                    this.manageObjectsBody = body;
-                },
-            });
-        }
+        this.manageObjectsPopover?.destroy();
+        const body = this.el.ownerDocument.createElement('div');
+        body.className = 'vela-ot-mo vela-ot-mini';
+        body.setAttribute('role', 'dialog');
+        body.setAttribute('aria-label', 'Manage drawing sync');
+        this.manageObjectsBody = body;
         this.renderManageObjects();
-        this.manageObjectsDialog.show();
+        const trigger = this.objectsButton ?? this.headerSlot;
+        this.manageObjectsPopover = new Popover({ trigger, content: body, host: this.uiHost(), align: 'end', restoreFocusOnEscape: true });
+        this.manageObjectsPopover.show();
     }
 
     private renderManageObjects(): void {
@@ -2572,7 +2691,7 @@ export class ObjectTree extends SidePanel {
         const close = doc.createElement('button');
         close.type = 'button';
         close.textContent = 'Close';
-        close.addEventListener('click', () => this.manageObjectsDialog?.hide());
+        close.addEventListener('click', () => this.manageObjectsPopover?.hide());
         const apply = doc.createElement('button');
         apply.type = 'button';
         apply.dataset.primary = '1';
@@ -2588,98 +2707,6 @@ export class ObjectTree extends SidePanel {
     }
 
 
-
-    /** Open (building once) the layout-wide drawing manager. */
-    private openLayoutDrawings(): void {
-        const charts = this.opts.layout?.() ?? [];
-        if (charts.length === 0) return;
-        const host = this.uiHost();
-        if (this.layoutDrawingsDialog === null) {
-            this.layoutDrawingsDialog = new Dialog({
-                title: 'Manage layout drawings',
-                host,
-                closeOnInteractOutside: true,
-                content: (body) => {
-                    body.classList.add('vela-ot-lg');
-                    this.layoutDrawingsBody = body;
-                },
-            });
-        }
-        this.renderLayoutDrawings();
-        this.layoutDrawingsDialog.show();
-    }
-
-    /** Paint the manager: one section per chart, one row per drawing. */
-    private renderLayoutDrawings(): void {
-        const body = this.layoutDrawingsBody;
-        if (!body) return;
-        const doc = body.ownerDocument;
-        const charts = this.opts.layout?.() ?? [];
-        body.replaceChildren();
-        let total = 0;
-        for (const { label, chart } of charts) {
-            const drawings = chart?.drawings?.supported ? chart.drawings.all() : [];
-            total += drawings.length;
-            const head = doc.createElement('div');
-            head.className = 'vela-ot-lg-head';
-            const name = doc.createElement('span');
-            name.className = 'vela-ot-lg-name';
-            name.textContent = label;
-            const count = doc.createElement('span');
-            count.className = 'vela-ot-lg-count';
-            count.textContent = `${drawings.length} drawing${drawings.length === 1 ? '' : 's'}`;
-            head.append(name, count);
-            body.appendChild(head);
-            if (drawings.length === 0) {
-                const empty = doc.createElement('div');
-                empty.className = 'vela-ot-lg-empty';
-                empty.textContent = 'No drawings';
-                body.appendChild(empty);
-                continue;
-            }
-            // Front-most first, the same reading order the tree uses.
-            for (const d of drawings.slice().reverse()) {
-                const row = doc.createElement('div');
-                row.className = 'vela-ot-lg-row';
-                if (d.visible === false) row.dataset.hidden = '1';
-                const icon = doc.createElement('span');
-                icon.className = 'vela-icon';
-                const markup = drawingMeta(d.type).icon;
-                if (markup) icon.innerHTML = markup;
-                else icon.appendChild(iconEl('pen', doc));
-                const text = doc.createElement('span');
-                text.className = 'vela-ot-lg-label';
-                text.textContent = drawingLabel(d);
-                row.append(icon, text);
-                const act = (iconName: string, title: string, run: () => void, engaged = false): void => {
-                    const b = this.btn({ icon: iconName, title, run, engaged });
-                    b.classList.add('vela-ot-lg-btn');
-                    row.appendChild(b);
-                };
-                act(d.visible === false ? 'eye-off' : 'eye', d.visible === false ? 'Show' : 'Hide', () => {
-                    chart.drawings.show(d.id, d.visible === false);
-                    this.renderLayoutDrawings();
-                    this.refresh();
-                }, d.visible === false);
-                act(d.locked ? 'lock' : 'unlock', d.locked ? 'Unlock' : 'Lock', () => {
-                    chart.drawings.lock(d.id, !d.locked);
-                    this.renderLayoutDrawings();
-                }, d.locked === true);
-                act('trash', 'Remove', () => {
-                    chart.drawings.remove(d.id);
-                    this.renderLayoutDrawings();
-                    this.refresh();
-                });
-                body.appendChild(row);
-            }
-        }
-        if (total === 0) {
-            const none = doc.createElement('div');
-            none.className = 'vela-ot-lg-none';
-            none.textContent = 'No drawings anywhere in this layout';
-            body.appendChild(none);
-        }
-    }
 
     /** The menu, built on first use — by then the panel is mounted, so the theme host resolves. */
     private ensureMenu(): Menu {
@@ -2748,6 +2775,10 @@ export class ObjectTree extends SidePanel {
         if (pass.stackable) {
             items.push(...this.visualOrderItems(b, (move) => this.restackTokens(pass, paneId, [{ kind: 'indicator', id: row.id }], move)));
         }
+        items.push(...this.indicatorGroupingItems(b, row.id));
+        const templates = this.indicatorTemplateSubmenu(b, [row.id]);
+        if (templates) items.push(templates);
+        items.push(...this.indicatorSyncSubmenu(b, [row.id]));
         items.push(
             b.entry('Remove', 'trash', () => {
                 handle?.remove();
@@ -2817,57 +2848,101 @@ export class ObjectTree extends SidePanel {
         return b.submenu('Drawing templates', 'templates', inner, true);
     }
 
-    /** A one-field dialog — naming a set must not cost a whole settings page. */
+    private indicatorTemplateSubmenu(b: MenuBuilder, ids: readonly string[], suggested?: string): MenuItemDescriptor | null {
+        const templates = this.opts.indicatorTemplates;
+        if (!templates || ids.length === 0) return null;
+        const inner: MenuItemDescriptor[] = [b.entry('Save as new template…', 'plus', () => this.askIndicatorTemplateName(ids, suggested))];
+        const existing = templates.list();
+        if (existing.length > 0) inner.push(b.submenu('Add to existing template', 'folder-plus', existing.map((t) =>
+            b.entry(`${t.name} (${t.count})`, undefined, () => templates.save(t.name, ids, true)),
+        )));
+        return b.submenu('Indicator templates', 'templates', inner, true);
+    }
+
+    private askIndicatorTemplateName(ids: readonly string[], suggested?: string): void {
+        const templates = this.opts.indicatorTemplates;
+        if (!templates || ids.length === 0) return;
+        const doc = this.uiHost().ownerDocument;
+        const form = doc.createElement('form');
+        form.className = 'vela-ot-setform vela-ot-mini';
+        form.setAttribute('role', 'dialog');
+        form.setAttribute('aria-label', 'Save indicator template');
+        const input = doc.createElement('input');
+        input.maxLength = 40;
+        input.placeholder = 'Template name';
+        input.setAttribute('aria-label', 'Indicator template name');
+        input.value = suggested || '';
+        const row = doc.createElement('div');
+        row.className = 'vela-ot-setrow';
+        const cancel = doc.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = 'Cancel';
+        cancel.addEventListener('click', () => this.closeMiniAndRestore(trigger));
+        const save = doc.createElement('button');
+        save.type = 'submit';
+        save.dataset.primary = '1';
+        save.textContent = 'Save';
+        row.append(cancel, save);
+        form.append(input, row);
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const name = input.value.trim();
+            if (!name) { input.focus(); return; }
+            if (templates.save(name, ids, false)) this.closeMiniAndRestore(trigger);
+            else { input.setCustomValidity('Choose a new name and a supported indicator'); input.reportValidity(); }
+        });
+        input.addEventListener('input', () => input.setCustomValidity(''));
+        this.miniPopover?.destroy();
+        const trigger = this.menuAnchor?.isConnected ? this.menuAnchor : this.headerSlot;
+        this.miniPopover = new Popover({ trigger, content: form, host: this.uiHost(), align: 'end', restoreFocusOnEscape: true });
+        this.miniPopover.show();
+        queueMicrotask(() => { input.focus(); input.select(); });
+    }
+
+    /** A compact anchored form; closing it never closes the docked Object Tree. */
     private askSetName(ids: readonly string[], suggested?: string): void {
         const sets = this.opts.drawingSets;
         if (!sets || ids.length === 0) return;
-        this.setNameIds = [...ids];
         const doc = this.uiHost().ownerDocument;
-        if (this.setNameDialog === null) {
-            const form = doc.createElement('div');
-            form.className = 'vela-ot-setform';
-            const label = doc.createElement('label');
-            label.textContent = 'Template name';
-            const input = doc.createElement('input');
-            input.type = 'text';
-            input.maxLength = 40;
-            input.placeholder = 'e.g. Breakout + Fib';
-            input.setAttribute('aria-label', 'Drawing template name');
-            const row = doc.createElement('div');
-            row.className = 'vela-ot-setrow';
-            const cancel = doc.createElement('button');
-            cancel.type = 'button';
-            cancel.textContent = 'Cancel';
-            cancel.addEventListener('click', () => this.setNameDialog?.hide());
-            const save = doc.createElement('button');
-            save.type = 'button';
-            save.textContent = 'Save';
-            save.dataset.primary = '1';
-            const commit = (): void => {
-                const name = input.value.trim();
-                if (!name) { input.focus(); return; }
-                if (sets.save(name, this.setNameIds)) this.setNameDialog?.hide();
-            };
-            save.addEventListener('click', commit);
-            input.addEventListener('keydown', (e) => {
-                e.stopPropagation();
-                if (e.key === 'Enter') commit();
-                if (e.key === 'Escape') this.setNameDialog?.hide();
-            });
-            row.append(cancel, save);
-            label.append(input);
-            form.append(label, row);
-            this.setNameInput = input;
-            this.setNameDialog = new Dialog({
-                title: 'Save drawing template',
-                host: this.uiHost(),
-                closeOnInteractOutside: true,
-                content: (body) => body.append(form),
-            });
-        }
-        if (this.setNameInput) this.setNameInput.value = suggested || `Drawing set ${sets.list().length + 1}`;
-        this.setNameDialog.show();
-        queueMicrotask(() => { this.setNameInput?.focus(); this.setNameInput?.select(); });
+        const form = doc.createElement('form');
+        form.className = 'vela-ot-setform vela-ot-mini';
+        form.setAttribute('role', 'dialog');
+        form.setAttribute('aria-label', 'Save drawing template');
+        const input = doc.createElement('input');
+        input.type = 'text';
+        input.maxLength = 40;
+        input.placeholder = 'Template name';
+        input.setAttribute('aria-label', 'Drawing template name');
+        input.value = suggested || `Drawing set ${sets.list().length + 1}`;
+        const row = doc.createElement('div');
+        row.className = 'vela-ot-setrow';
+        const cancel = doc.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = 'Cancel';
+        cancel.addEventListener('click', () => this.closeMiniAndRestore(trigger));
+        const save = doc.createElement('button');
+        save.type = 'submit';
+        save.textContent = 'Save';
+        save.dataset.primary = '1';
+        row.append(cancel, save);
+        form.append(input, row);
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const name = input.value.trim();
+            if (!name) { input.focus(); return; }
+            if (sets.save(name, ids)) this.closeMiniAndRestore(trigger);
+        });
+        this.miniPopover?.destroy();
+        const trigger = this.menuAnchor?.isConnected ? this.menuAnchor : this.headerSlot;
+        this.miniPopover = new Popover({ trigger, content: form, host: this.uiHost(), align: 'end', restoreFocusOnEscape: true });
+        this.miniPopover.show();
+        queueMicrotask(() => { input.focus(); input.select(); });
+    }
+
+    /** Finish a child form without dismissing the tree or leaving keyboard focus on body. */
+    private closeMiniAndRestore(trigger: HTMLElement): void {
+        this.miniPopover?.hide();
+        (trigger.isConnected ? trigger : this.body).focus({ preventScroll: true });
     }
 
     private drawingMenu(b: MenuBuilder, pass: Pass, d: SerializedDrawing): MenuItemDescriptor[] {
@@ -2896,6 +2971,34 @@ export class ObjectTree extends SidePanel {
         items.push(...this.syncSubmenu(b, pick));
         items.push(b.entry('Remove', 'trash', () => chart.drawings.remove(d.id), true));
         return items;
+    }
+
+    /** Bidirectional settings/style link, separate from drawing sync and one-shot apply. */
+    private indicatorSyncSubmenu(b: MenuBuilder, ids: readonly string[]): MenuItemDescriptor[] {
+        const sync = this.opts.indicatorSync;
+        if (!sync || ids.length === 0) return [];
+        const targets = sync.charts().filter((c) => !c.active);
+        const statuses = ids.map((id) => sync.status(id));
+        const first = statuses[0]!;
+        // A mixed group must not claim that every study has the first member's scope.
+        const current = {
+            mode: statuses.every((s) => s.mode === first.mode) ? first.mode : 'mixed',
+            charts: targets.filter((c) => statuses.every((s) => s.charts.includes(c.id) || s.pending?.includes(c.id))).map((c) => c.id),
+        };
+        const choices: MenuItemDescriptor[] = [
+            b.entry(current.mode === 'none' ? '✓ Not synced' : 'Not synced', 'close', () => sync.set(ids, 'none')),
+            b.entry(current.mode === 'layout' ? '✓ Live sync in layout' : 'Live sync in layout', 'layout', () => sync.set(ids, 'layout')),
+        ];
+        if (targets.length > 0) choices.push(b.submenu('Live sync to specific charts', 'link', targets.map((chart) => {
+            const selected = current.charts.includes(chart.id);
+            const pending = statuses.some((s) => s.pending?.includes(chart.id));
+            return b.entry(`${selected ? '✓ ' : ''}${chart.label}${pending ? ' · loading' : ''}`, undefined, () => {
+                const chosen = new Set(current.charts);
+                if (selected) chosen.delete(chart.id); else chosen.add(chart.id);
+                sync.set(ids, chosen.size > 0 ? 'charts' : 'none', [...chosen]);
+            });
+        })));
+        return [b.submenu('Indicator live sync', 'link', choices, true)];
     }
 
     /** TradingView's three sync scopes, plus per-chart targets, for ONE object or a group. */
@@ -2961,57 +3064,68 @@ export class ObjectTree extends SidePanel {
         return items;
     }
 
+    private indicatorGroupingItems(b: MenuBuilder, id: string): MenuItemDescriptor[] {
+        const mine = indicatorGroupOf(this.groups, id);
+        const items: MenuItemDescriptor[] = [];
+        if (!mine) items.push(b.entry('New group', 'group', () => this.makeGroup([], [], undefined, [id]), true));
+        const others = this.groups.filter((g) => g.id !== mine?.id);
+        if (others.length > 0) items.push(b.submenu(mine ? 'Move to group' : 'Add to group', 'folder-plus', others.map((g) =>
+            b.entry(g.name, undefined, () => {
+                this.groups = assignIndicatorsToGroup(this.groups, g.id, [id]);
+                this.render();
+            }),
+        ), items.length === 0));
+        if (mine) items.push(b.entry(`Remove from ${mine.name}`, 'folder-minus', () => {
+            this.groups = removeIndicatorsFromGroups(this.groups, [id]);
+            this.render();
+        }, items.length === 0));
+        return items;
+    }
+
     private groupMenu(b: MenuBuilder, pass: Pass, g: DrawGroup): MenuItemDescriptor[] {
-        // Everything the branch owns: the group's own drawings and every nested group's.
         const ids = groupDrawingIds(this.groups, g.id);
+        const indicators = groupIndicatorIds(this.groups, g.id);
         const members = pass.chart.drawings.all().filter((d) => ids.includes(d.id));
-        const { allHidden, allLocked } = groupState(members);
+        const handles = indicators.map((id) => pass.handle(id)).filter((h): h is IndicatorHandle => h !== undefined);
+        const { allLocked } = groupState(members);
+        const allHidden = members.length + handles.length > 0 && members.every((d) => !d.visible) && handles.every((h) => !h.visible);
         const items = [
-            b.entry('Rename…', 'pen', () => {
-                this.renaming = g.id;
-                this.render();
-            }),
-            b.entry(allHidden ? 'Show all' : 'Hide all', allHidden ? 'eye' : 'eye-off', () => this.setMembers(pass, ids, { visible: allHidden }), true),
-            b.entry(allLocked ? 'Unlock all' : 'Lock all', allLocked ? 'unlock' : 'lock', () => this.setMembers(pass, ids, { locked: !allLocked })),
-            b.entry('Select all', 'group', () => {
-                this.picked = new Set(ids);
-                this.selInd.clear();
-                this.groupPicks.clear();
-                this.bulk = ids.length > 0;
-                this.selectOnChart(ids);
-                this.render();
-            }),
+            b.entry('Rename…', 'pen', () => { this.renaming = g.id; this.render(); }),
+            b.entry(allHidden ? 'Show all' : 'Hide all', allHidden ? 'eye' : 'eye-off', () => this.setGroupVisibility(pass, g.id, allHidden), true),
         ];
-        // Copy the whole branch — drawings cloned as one undo step, the nesting rebuilt.
-        if (ids.length > 0 && pass.chart.drawings.supported) {
+        if (ids.length > 0) items.push(b.entry(
+            handles.length > 0 ? (allLocked ? 'Unlock drawings' : 'Lock drawings') : (allLocked ? 'Unlock all' : 'Lock all'),
+            allLocked ? 'unlock' : 'lock', () => this.setMembers(pass, ids, { locked: !allLocked }),
+        ));
+        items.push(b.entry('Select all', 'group', () => {
+            this.picked = new Set(ids);
+            this.selInd = new Set(indicators);
+            this.groupPicks.clear();
+            this.bulk = ids.length + indicators.length > 0;
+            this.selectOnChart(ids);
+            this.render();
+        }));
+        // Drawing-only duplication preserves the pre-existing complete group behavior; it
+        // must never silently omit indicator members from a mixed duplicate.
+        if (ids.length > 0 && indicators.length === 0 && pass.chart.drawings.supported) {
             items.push(b.entry('Duplicate group', 'clone', () => this.duplicateGroup(pass, g), true));
         }
         items.push(...this.syncSubmenu(b, ids));
-        // A picked group (or a picked drawing) can be filed UNDER this one — the menu route to
-        // what a drag onto the header does.
         const pickedGroups = [...this.groupPicks].filter((id) => id !== g.id && !groupWithin(this.groups, g.id, id));
-        if (this.picked.size > 0 || pickedGroups.length > 0) {
-            items.push(
-                b.entry(
-                    `Group selection inside ${g.name}`,
-                    'folder-plus',
-                    () => {
-                        if (pickedGroups.length > 0) this.makeGroup([...this.picked], pickedGroups, g.id);
-                        else this.makeGroup([...this.picked], [], g.id);
-                    },
-                ),
-            );
+        if (this.picked.size > 0 || this.selInd.size > 0 || pickedGroups.length > 0) {
+            items.push(b.entry(`Group selection inside ${g.name}`, 'folder-plus', () =>
+                this.makeGroup([...this.picked], pickedGroups, g.id, [...this.selInd]),
+            ));
         }
-        // The whole bundle moves through its pane's stack as one contiguous run, keeping its
-        // internal order — TradingView gives a group's members sequential z-indexes.
-        if (members.length > 0) {
+        if (ids.length > 0 || (indicators.length > 0 && pass.stackable)) {
             items.push(...this.visualOrderItems(b, (move) => this.restackGroup(pass, g, move), true));
         }
-        // Ungrouping keeps the drawings; the group is only the panel's bookkeeping. Nested
-        // groups survive it — they move up one level instead of dissolving with the parent.
         items.push(b.entry('Ungroup', 'ungroup', () => this.removeGroup(pass, g.id, false), true));
-        const setMenu = this.drawingSetSubmenu(b, ids, g.name);
+        const setMenu = ids.length > 0 ? this.drawingSetSubmenu(b, ids, g.name) : null;
         if (setMenu) items.push(setMenu);
+        const indicatorTemplates = this.indicatorTemplateSubmenu(b, indicators, g.name);
+        if (indicatorTemplates) items.push(indicatorTemplates);
+        items.push(...this.indicatorSyncSubmenu(b, indicators));
         items.push(b.entry('Remove all', 'trash', () => this.removeGroup(pass, g.id, true)));
         return items;
     }
@@ -3023,14 +3137,33 @@ export class ObjectTree extends SidePanel {
         for (const id of [...this.picked]) if (!live.has(id)) this.picked.delete(id);
         const liveGroups = new Set(this.groups.map((g) => g.id));
         for (const id of [...this.groupPicks]) if (!liveGroups.has(id)) this.groupPicks.delete(id);
-        const liveInd = new Set(chart.indicators().map((h) => h.id));
+        const handles = chart.indicators();
+        const liveInd = new Set(handles.map((h) => h.id));
+        // Source-backed studies can arrive asynchronously after the layout. Retain their
+        // portable references until they materialize; never silently prune the folder.
+        if (this.groups.some((g) => (g.indicatorRefs?.length ?? 0) > 0)) {
+            const next = this.groups.map((g) => {
+                const waiting = [] as NonNullable<DrawGroup['indicatorRefs']>;
+                const indicators = [...(g.indicators ?? [])];
+                for (const ref of g.indicatorRefs ?? []) {
+                    const found = resolveIndicatorReference(handles, ref);
+                    if (found) {
+                        const at = indicators.indexOf(ref.id);
+                        if (at >= 0) indicators[at] = found.id;
+                    } else { waiting.push(ref); liveInd.add(ref.id); }
+                }
+                const { indicatorRefs: _refs, ...rest } = g;
+                return { ...rest, indicators, ...(waiting.length ? { indicatorRefs: waiting } : {}) };
+            });
+            this.groupsPerChart.set(chart, next);
+        }
         for (const id of [...this.selInd]) if (!liveInd.has(id)) this.selInd.delete(id);
         if (this.selCount === 0) this.bulk = false;
         if (this.groups.length === 0) {
             this.renaming = null;
             return;
         }
-        this.groups = pruneGroups(this.groups, live);
+        this.groups = pruneGroups(this.groups, live, liveInd);
         if (this.renaming !== null && !this.groups.some((g) => g.id === this.renaming)) this.renaming = null;
     }
 }

@@ -29,7 +29,7 @@ try {
             present: !!b,
             inRight: !!right,
             w: r ? Math.round(r.width) : null,
-            title: b?.title ?? null,
+            title: b?.getAttribute('aria-label') ?? null,
             active: b?.dataset.active ?? null,
         };
     });
@@ -42,11 +42,11 @@ try {
     await page.locator('.vela-widget-compare').click();
     await page.waitForTimeout(600);
     const sheet = await page.evaluate(() => {
-        const dlg = [...document.querySelectorAll('[role="dialog"]')].find((d) => /Compare/i.test(d.textContent ?? ''));
+        const dlg = document.querySelector('.vela-compare-panel:not([hidden])');
         return { open: !!dlg, text: dlg?.textContent?.replace(/\s+/g, ' ').slice(0, 120) ?? null };
     });
     facts.sheet = sheet;
-    assert(sheet.open && /Choose symbol/.test(sheet.text ?? ''), 'the click opens the compare sheet, not a dead button', sheet);
+    assert(sheet.open && /Choose symbol/.test(sheet.text ?? ''), 'the click opens the compare pane, not a dead button', sheet);
     await page.keyboard.press('Escape');
     await page.waitForTimeout(300);
 
@@ -58,7 +58,7 @@ try {
         return {
             active: b?.dataset.active,
             pressed: b?.getAttribute('aria-pressed'),
-            title: b?.title,
+            title: b?.getAttribute('aria-label'),
             studies: window.__ws.active.chart.indicators().filter((h) => h.nativeType === 'compare').length,
         };
     });
@@ -72,7 +72,7 @@ try {
     await page.waitForTimeout(400);
     const off = await page.evaluate(() => {
         const b = document.querySelector('.vela-widget-compare');
-        return { active: b?.dataset.active, title: b?.title, studies: window.__ws.active.chart.indicators().filter((h) => h.nativeType === 'compare').length };
+        return { active: b?.dataset.active, title: b?.getAttribute('aria-label'), studies: window.__ws.active.chart.indicators().filter((h) => h.nativeType === 'compare').length };
     });
     facts.cleared = off;
     assert(off.active === '0' && off.studies === 0, 'removing the comparison returns it to idle', off);

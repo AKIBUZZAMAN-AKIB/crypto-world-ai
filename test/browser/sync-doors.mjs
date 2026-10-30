@@ -9,7 +9,7 @@ try {
     const empty = await page.evaluate(() => [...document.querySelectorAll('.vela-sl-marks')].map((e) => ({ text: e.textContent, hidden: e.hidden })));
     assert(empty.length >= 4 && empty.every((b) => !b.hidden && b.text === '◌'), 'every chart wears the empty badge', empty);
 
-    // Badge → popover, focused on that chart's column.
+    // Badge → shared setup pane, focused on that chart's column.
     const target = await page.evaluate(() => {
         const cells = [...document.querySelectorAll('.vela-sl-marks')];
         const el = cells[cells.length - 1];
@@ -18,16 +18,16 @@ try {
     });
     await page.waitForTimeout(400);
     const badgeOpen = await page.evaluate(() => ({
-        open: window.__ws.topbar?.layoutPicker?.isOpen ?? null,
-        focus: document.querySelector('.vela-lp-charts .vela-md-matrix-head[data-focus]')?.dataset.cell ?? null,
+        open: document.querySelector('.vela-layout-setup .vela-ls-tab[aria-selected="true"]')?.textContent === 'Chart syncing',
+        focus: document.querySelector('.vela-ls-matrix .vela-md-matrix-head[data-focus]')?.dataset.cell ?? null,
         numbers: document.querySelector('[data-sync-open]') !== null,
     }));
-    assert(badgeOpen.open === true, 'badge opens the layout popover', badgeOpen);
-    assert(badgeOpen.focus === target, 'the popover opens on THAT chart', { ...badgeOpen, target });
+    assert(badgeOpen.open === true, 'badge opens the shared syncing pane', badgeOpen);
+    assert(badgeOpen.focus === target, 'the pane opens on THAT chart', { ...badgeOpen, target });
     assert(badgeOpen.numbers, 'charts wear their slot numbers while the surface is open', badgeOpen);
 
     // Series context menu → "Chart syncing…" opens the same surface.
-    await page.keyboard.press('Escape');
+    await page.locator('.vela-layout-setup .vela-panel-close').click();
     await page.waitForTimeout(300);
     const host = await page.evaluate(() => {
         const el = [...document.querySelectorAll('.vela-cell')].find((c) => c.getBoundingClientRect().width > 200) ?? document.body;
@@ -52,8 +52,8 @@ try {
     await page.mouse.click(spot.x, spot.y);
     await page.waitForTimeout(500);
     const viaMenu = await page.evaluate(() => ({
-        open: window.__ws.topbar?.layoutPicker?.isOpen ?? null,
-        focus: document.querySelector('.vela-lp-charts .vela-md-matrix-head[data-focus]')?.dataset.cell ?? null,
+        open: document.querySelector('.vela-layout-setup .vela-ls-tab[aria-selected="true"]')?.textContent === 'Chart syncing',
+        focus: document.querySelector('.vela-ls-matrix .vela-md-matrix-head[data-focus]')?.dataset.cell ?? null,
     }));
     assert(viaMenu.open === true && Boolean(viaMenu.focus), 'the menu row opens the table on that chart', viaMenu);
     assert(errors.length === 0, 'no page errors', errors.slice(0, 2));

@@ -2,7 +2,7 @@
 
 `@luxalgo/vela/workspace` is the multi-chart shell: a grid of full Vela™ charts behind **one
 shared data feed**, wrapped in **one shared chrome** — topbar (symbol / timeframe /
-style / **layout** dropdowns, indicator picker, alerts), one drawing toolbar, object
+style controls, **Layout setup** pane, indicator picker, alerts), one drawing toolbar, object
 tree, data window, bottom bar, one keyboard map — that always **reflects and acts on the
 ACTIVE cell**. Cells are switched in place (`setMarket` under the hood), so indicators,
 drawings, and your subscriptions survive every symbol/timeframe change.
@@ -14,7 +14,7 @@ import { BinanceProvider } from '@luxalgo/vela/providers/binance';
 
 const ws = new VelaWorkspace('#app', {
     layout: '4', // '1' | '2h' | '2v' | '4' | '8' | picker ids ('g3x2') | a registerLayout() id
-    //           // `false` = SINGLE-CHART mode: one cell, no layout picker or sync
+    //           // `false` = SINGLE-CHART mode: one cell, no Layout setup pane or sync
     //           // switches anywhere, `setLayout` no-ops, no `cells` entry needed
     // Chart options at the TOP LEVEL are every cell's DEFAULT — the same words the
     // widget (and the bare chart) use. `cells` overrides them per cell; a cell's NAME
@@ -51,14 +51,62 @@ the shared toolbar offers. Only its `toolbar` sub-key changes meaning: one share
 serves the grid, so per-cell in-chart bars never render (`drawingToolbar: false` hides
 the shared bar itself).
 
-Alerts from every cell aggregate in the topbar bell, newest first, each entry naming
-its source as `SYMBOL timeframe Indicator`; `alertCap` bounds how many are kept
-(default 50). `ws.toast(message, kind?, durationMs?)` shows a host notice on the same
-surface.
+## Alerts
+
+The **Alerts** bell is visible near the symbol on desktop and touch landscape, and at the
+start of the phone's scrolling tool bar. The phone's **More → Alerts** opens the same pane;
+**Alt+A** opens its Create tab. On desktop it is a square docked panel with a resizable width;
+on a portrait phone it attaches across the bottom and the top grip changes its height.
+Touch landscape uses desktop chrome. A host's explicit topbar composition still controls
+whether and where the bell appears. Condition and status-filter dropdowns use compact,
+theme-matched lists; use arrows, Home/End and Enter to choose, or Escape to dismiss.
+Unavailable drawing-backed moving conditions stay disabled.
+
+The pane has three tabs:
+
+- **Create** binds a draft to the selected chart and market. Choose a crossing,
+  greater/less-than or moving (including percentage) condition, a level or move amount,
+  the moving lookback (1–500 bars), and **Once only** or **Every time**. A drawing's alert
+  action creates a level that follows that drawing. If the selected chart, symbol, interval
+  or trading session changes, the old draft is preserved but cannot be submitted until
+  **Use active chart** is chosen.
+- **Alerts** lists created price and drawing alerts with their chart, condition, frequency,
+  status and trigger count. Filter by **All statuses**, **Active**, **Paused** or
+  **Triggered**. **Edit** changes the condition, level, lookback or frequency without
+  replacing the separate Create draft; **Pause** stops evaluation, **Resume** restarts a
+  paused alert, and **Re-arm** restarts a once-only alert after it triggered. The chart action
+  activates the owner, and deletion asks for confirmation. Editing preserves the alert's
+  current status and trigger count; a paused or triggered alert remains stopped until it is
+  explicitly resumed or re-armed. Editing is unavailable while the owning chart, its original
+  symbol or a source drawing is unavailable, or while its market is loading. An alert on a
+  different symbol waits for its original symbol; a pooled or removed chart is retained and
+  marked **Waiting for chart**. A missing drawing is marked **Waiting for drawing**. Pausing,
+  resuming or deleting a waiting alert is still possible; deletion removes an owned level
+  line only if no other alert uses it. Manually drawn lines are not taken over by a new
+  price alert. Older documents without line ownership are restored conservatively: a
+  price-matched legacy line is preserved rather than deleted during edit or removal.
+- **Log** groups triggered price and script events by chart, with the symbol, timeframe and
+  script captured when each event fired. **Go** activates a chart; **Clear** and **Clear all**
+  remove log entries only, not price alerts. Events remain visible even if their original
+  chart is no longer in the current layout. `alertCap` limits the session log (default 50).
+
+Resuming, re-arming or saving an edited level alert uses the current price as its new
+crossing anchor; crossings that happened while stopped are not replayed. Greater/less-than
+alerts that are already beyond their level wait for a return and a new crossing after resume
+or edit. Moving alerts use the chart's current loaded lookback on the next bar, which can
+include bars from before resume. If a drawing source disappears, a crossing alert starts
+with a fresh side when that source returns rather than counting the missing interval.
+Replay jumps rebase the alert price and moving lookback to the revealed bars; a partially
+played candle restored internally during a seek is not treated as a new price print.
+Price alerts are checked locally as their chart receives data, not by a background server;
+this feature does not promise delivery when the workspace is closed or disconnected.
+Price alerts are part of the layout state and can be restored when the host saves that state;
+the triggered-event log is session-only. `ws.toast(message, kind?, durationMs?)` shows a
+host notice on the same in-app surface.
 
 ## Single chart (`layout: false`)
 
-`layout: false` pins the workspace to **one chart**: the layout picker and the sync
+`layout: false` pins the workspace to **one chart**: Layout setup and the sync
 switches disappear (desktop and mobile), `setLayout` is a no-op, and no `cells` entry
 is needed — the top-level chart options seed the single chart. Everything else on this
 page applies unchanged; the state document is simply the single-cell case
@@ -112,16 +160,47 @@ layout (`cell:destroyed`). Host code that tracks cells should **follow
 `cell:created`/`cell:destroyed`** rather than snapshot `ws.cells()` once: a later
 `setLayout` (or a restored document) mints cells that a one-time snapshot never sees.
 
-Layouts live in a registry (`registerLayout` from `@luxalgo/vela/workspace`), and the topbar's
-**layout dropdown** composes them on a 4×4 grid canvas: hover previews the full
+Layouts live in a registry (`registerLayout` from `@luxalgo/vela/workspace`). The topbar's
+**Layout setup** button opens a right-side dock with a 4×4 grid canvas: hover previews the full
 *columns × rows* rectangle from the top-left (the table-insert idiom); a click
 applies it immediately. Rectangles matching a classic preset (`1`, `2h`, `2v`, `4`,
 `8`) reuse it; anything else gets a self-describing dynamic id (`g3x2` = 3 rows ×
 2 columns) that resolves without registration (persisted picks restore across boots).
-Plugin layouts the canvas cannot express (bespoke `areas`) list as labeled rows under
-the canvas, so `registerLayout` contributions keep appearing automatically. In code,
+Plugin layouts the canvas cannot express (bespoke `areas`) appear as named preset tiles
+grouped by chart count, so `registerLayout` contributions keep appearing automatically. In code,
 the same composition is `layoutForGrid(rows, cols)` (exported from `@luxalgo/vela/workspace`),
 handed to `ws.setLayout(...)`.
+
+### Layout setup and chart syncing
+
+Desktop **Layout setup** is a square docked pane, like Data window. Use the button beside
+Close to Float or Dock it, the dock's inner edge to change its width, or the resize button
+immediately after Close to resize a floating card. The desktop heading drags the card; it
+can coexist with another docked panel and other floating cards. Its placement and size use
+the normal panel persistence and undo/redo. On a portrait phone, **More → Layout setup**
+opens one full-width, bottom-attached pane: the strip above the heading resizes its height,
+the heading does not detach it, and the button beside Close toggles fullscreen/restore.
+Landscape uses desktop-style chrome. The two tabs are the same on both devices:
+
+- **Layout** contains the square grid, grouped asymmetric presets, layout-wide settings and
+  indicator actions, link-tabs selector, Share and **Manage layouts**. Removing hidden
+  charts takes a confirmation and offers Undo; their restored state is retained. Manage
+  layouts is a separate compact floating menu and does not close its parent pane.
+- **Chart syncing** contains the seven independent link switches and a chart-by-link matrix.
+  A chart's mark identifies its group; choose a chart header to activate it, click/tap a
+  chip to cycle, or right-click/long-press for the direct palette. **ALL** links every
+  chart for that row; group names and marks are editable when in use. Drawing scope is a
+  separate control from the Drawings switch. The table scrolls horizontally within the pane
+  when needed, and live changes update without rebuilding the focused controls.
+
+The status-line sync badge and chart context menu open the same pane on **Chart syncing**,
+with that chart's column highlighted and brought into view. Keyboard users can move between
+tabs with Left/Right, Home and End; the grid uses arrows to preview and Enter or Space to
+apply. Preset arrows move focus while Enter or Space applies, and link-tab arrows select a
+set. Escape closes the focused pane and returns focus to its opener (a tooltip or child menu
+may consume Escape first). The grid's help button also exposes its instructions on touch.
+The phone More menu has **one** Layout setup entry, not a second Chart syncing entry;
+**Manage layouts** and **Indicator templates** remain separate actions.
 
 Splitters between cells resize the grid tracks (double-click a divider for an even
 split).
@@ -149,9 +228,16 @@ lit stop restores the view. The **jump-back-to-latest** button needs no hover on
 phone at all: it appears the moment the newest bar is off screen, at a 32px touch
 target, and disappears again when the view is back at the edge.
 
+On a phone, **More → Chart actions** opens a compact menu next to More rather than a
+second sheet. It exposes the active chart's right-click actions: reset the view, chart
+syncing and apply-to-all when available, remove drawings or indicators, settings, and
+contributed chart-body actions. Empty removals stay visible but disabled. The menu
+scrolls when needed, dismisses on an outside tap or when its opener disappears, and
+Escape returns focus to More. The desktop chart-body right-click menu is unchanged.
+
 ## Sync links
 
-Per kind — `viewport`, `symbol`, `timeframe`, `crosshair`, `drawings`, `style` — link
+Per kind — `viewport`, `time`, `symbol`, `timeframe`, `crosshair`, `drawings`, `style` — link
 every cell (`true`) or named groups keyed by cell IDENTITY (`{ btc: 'a', eth: 'a',
 sol: 'b' }`: only same-group cells follow each other). Cross-timeframe viewport groups
 align on the **right edge** (a finer-timeframe cell clamps the window to its own
@@ -163,7 +249,7 @@ the cell API, a restored document) pushes that cell's symbol/timeframe onto its 
 the pair a layout shows is whatever each **cell identity** carries — a layout is only
 an arrangement, so `4` → `2h` → `1` keeps every cell's own market. `ws.sync.set('symbol',
 true)` also aligns the group to the active cell once (the "starts coherent" rule the
-whole surface follows), while the dropdown's switches only link what happens NEXT: with
+whole surface follows), while the pane's switches only link what happens NEXT: with
 four different pairs on screen, flipping **Symbol** on leaves all four untouched until
 one of them changes. Cells a later layout change adds to an all-cells link (`true`)
 adopt a pre-existing group peer's market on arrival — the market twin of the style and
@@ -216,13 +302,13 @@ chart type itself stays per cell — a candles cell and a line cell keep their t
 and share their colors — and so do the baseline price and the **Events** tab. The
 display timezone and theme are already workspace-global, so neither rides this link.
 
-**Symbol**, **Interval** (timeframe), **Crosshair** and **Style** are also switches
-in the topbar's layout dropdown (its SYNC section), and **Drawings** is a toggle on
-the shared drawing toolbar (the pen-with-panes icon under stay-in-drawing-mode). A
-switch reflects the simple all-cells form (`true`/off); flipping one overrides a
-host-set group record with plain on/off — group records stay an API-only shape. A
-switch is a LINK, not an edit: turning one on never rewrites the market a cell shows
-right now (only an API `ws.sync.set(kind, true)` aligns once).
+The **Chart syncing** tab exposes **Date range**, **Time**, **Symbol**, **Interval**,
+**Crosshair**, **Drawings** and **Style** as independent switches. Drawings is also a
+toggle on the shared drawing toolbar. A group record reads as on: switching it off
+parks its grouping and switching it back on restores it. The matrix edits individual
+memberships directly; **ALL** returns a row to the all-cells form. A switch is a LINK,
+not an edit: turning one on never rewrites the markets currently shown (the API's
+`ws.sync.set(kind, true)` aligns once by default).
 
 ```ts
 ws.sync.set('viewport', true); // aligns followers to the active cell, then follows pans
@@ -428,7 +514,7 @@ new VelaWorkspace('#app', { persist: 'main', storage: restStorage /* … */ });
 Notes: writes are fire-and-forget (the UI never blocks on storage); a remote adapter
 that must survive tab-close should use `navigator.sendBeacon` in its `set`. A saved
 state referencing a plugin layout id restores only if that layout is registered
-(`registerLayout`) before `applyState` runs; the layout picker's dynamic ids (`g3x2`)
+(`registerLayout`) before `applyState` runs; the layout grid's dynamic ids (`g3x2`)
 are self-describing and always resolve.
 
 ## Options (summary)
@@ -505,8 +591,9 @@ wrapper) of entries, inline or fetched from a URL, shared by every cell:
 The shell is keyboard-first (bindings act on the **active cell**):
 
 - Type a **letter** or `0` anywhere on a chart → the symbol search opens, seeded with it.
-- Type a **digit from 1 to 9** → the timeframe entry opens (`15`, `4H`, `D`, `3M`, … — a
-  bare number is minutes, a bare letter means one unit; letters show in capitals).
+- Type a **digit from 1 to 9** → select its mapped chart interval. Press `,` to open
+  the typed timeframe entry (`15`, `4H`, `D`, `3M`, …).
+- `/` opens Indicators (or its configured slot override); `Alt+W` opens Symbol Search.
 - `alt+S` → download a PNG of the visible layout (every chart, or the
   maximized one). `?` → the shortcuts panel.
 - `mod+↑/↓` glide-zoom, `mod+←/→` glide-pan with the exact feel and limits of a drag
@@ -534,8 +621,8 @@ they work from the very first keystroke, before any click.
   highlighted in place; an unstarred current sits next to the caret, and the caret
   opens the full list — or the combined label+caret when nothing is starred),
   chart-style dropdown (built-ins ∪ [plugin chart types](../contributing/plugin-sdk.md),
-  with their icons and labels), the layout dropdown (multi-chart grids only),
-  Indicators picker and the chart-templates dropdown beside it (see
+  with their icons and labels), the Layout setup pane (multi-chart grids only),
+  Indicators pane and the separate Indicator templates pane beside it (see
   [Chart templates](#chart-templates)), undo/redo (same history as Ctrl+Z / Ctrl+Y),
   the saved-layout chip and its Save button (see [The layout menu](#the-layout-menu)),
   compare (it lights up while the active chart carries a second series), alerts bell,
@@ -590,52 +677,108 @@ they work from the very first keystroke, before any click.
   **Shift-click** takes the range, **Ctrl/Cmd+A** takes every row, **Delete/Backspace** removes
   the pick and **Esc** lets go without closing the panel. A pick can hold studies and drawings
   at once; a sticky bar then carries the verbs that make sense for it (**eye** hides or shows
-  the lot, **bin** removes it, **gear** when it is exactly one study, **group** and **duplicate**
-  when it is drawings). Right-clicking inside a pick acts on the whole pick rather than on the
-  single row under the pointer, and a phone starts a pick with a **long-press** (a plain tap
-  stays a tap; the next tap extends it).
-  Drawings inside a group travel together: the group hides, locks, deletes and drags as one
-  block; groups live for as long as the chart and are not persisted. Groups **nest**, as they
-  do in TradingView's tree: a pick that holds group headers plus drawings groups them into one
-  parent, and dragging a group **onto another group's header** nests it there at any depth
-  (the header outlines in the accent while the drop would nest). Headers indent one step per
-  level, their eye/padlock/count speak for the whole branch, **Ungroup** lifts the children a
-  level instead of dissolving them, **Duplicate group** copies a branch whole (its drawings
-  come back as one undo step, its nesting and names rebuilt), and a group left empty by a
-  removal or an undo disappears with its branch. Double-clicking a header renames it.
-  On a touch screen the tree drags too: **hold** a row to pick it and keep the finger moving
-  to drag it (the gesture is held off the list's scroller, so the row follows the finger
-  instead of scrolling), or start on the row's **grip** — shown where there is no pointer —
-  to drag with no wait; a plain flick still scrolls the list. The panel header carries
-  **Manage layout drawings** on a multi-chart layout: every cell's drawings in one list,
-  with show / lock / remove per row, so nothing has to be done one chart at a time. Kept in sync with the
-  chart's events — a selection made on the chart (Ctrl/Cmd-click, a marquee) lights up every
-  row it covers, and a pick made in the panel selects the same drawings on the chart.
-- **Data window** — the other docked panel: the date and time of the bar under the crosshair,
-  its OHLCV tinted with the bar's direction, then one section per indicator showing each plot's
-  value in its own color. It follows the crosshair and falls back to the latest bar when the
-  pointer leaves the chart. The docked panels share the dock, so opening one closes the others.
-- **Strategy tester** — the third docked panel, and the backtest report for whatever strategy
-  is running on the chart. It has the reference platform's four tabs: **Overview** (total P&L
-  with its return on the initial capital, max drawdown, profitable trades, profit factor, and
-  the cumulative-P&L curve), **Performance** (every metric in All / Long / Short columns —
-  gross profit and loss, commission, average trade / win / loss, the win-loss ratio, the
-  largest win and loss, average bars in trade, profit factor), **Trades** (one row per round
-  trip in exit order with a running total — closed trades first, open ones last and excluded
-  from every money column) and **Properties** (what the strategy declared: its capital,
-  commission, and its inputs). `script:run` feeds it: a strategy that computes before the
-  panel is opened still has a report waiting, every cell's runs are remembered while you
-  switch between them, and the first strategy run of a session opens the panel once — never
-  over a panel you already have open. Every figure comes from the engine's own broker state
-  and trade ledger; a metric the data cannot answer reads `—` rather than a fabricated zero.
-- **The dock** — the column the built-in panels live in, and the one plugins extend
-  ([`registerSidePanel`](../contributing/plugin-sdk.md#side-panels--registersidepanel)): every
-  panel gets a toggle in the topbar's panel group, one panel shows at a time, and a panel that
-  declares itself resizable has a drag handle on its inner edge (double-click returns it to its
-  declared width). A panel may also declare itself an overlay: it then floats over the chart's
-  right edge instead of shrinking the chart, and a pin in its header docks it as a column
-  whenever you prefer that. Which panel is open, the widths you dragged and the panels you
-  pinned are part of the saved state.
+  the lot, **bin** removes it, **gear** for one study, **group** for compatible picks, and
+  **duplicate** for drawing-only picks). Right-clicking inside a pick acts on the whole pick;
+  on a phone a **long-press** starts a pick and the next tap extends it.
+
+  Groups may contain **drawings only**, **indicators only**, or **both**; they may nest and
+  can include objects from different panes. Grouping is organizational: it does not move an
+  item to a different pane or change its physical z-order. Cross-pane/mixed folders appear
+  once as a tree, while each member continues to render in its original pane. The group menu
+  adapts to its contents: drawing groups have drawing sync, lock and drawing-template actions;
+  indicator groups have indicator templates and live sync; mixed groups have both sets, with
+  **Lock drawings** explicitly scoped to the drawings. **Duplicate group** is offered for
+  drawing-only branches rather than silently dropping studies from a mixed duplicate.
+
+  Drag onto another group header to nest; **Ungroup** lifts children a level, and an empty
+  group disappears. Rename by double-click. Membership and nesting are stored with the layout
+  and participate in undo/redo. The panel is scoped to the active chart; **Manage layouts**
+  remains the separate workspace layout menu. On touch screens, hold a row then drag, or use
+  its grip without waiting; a plain flick scrolls. Drawing selection stays synchronized with
+  the chart (Ctrl/Cmd-click or marquee there, or a pick in the tree). Keyboard focus reveals
+  row actions; Escape from a child form returns focus without closing Object tree.
+- **Data window** — a square, standard pane for the **active chart**, opened from its topbar
+  toggle or **More → Data window** on a portrait phone. On desktop it docks beside the chart;
+  on a phone it is attached to the bottom at full host width, with a height-adjustable top edge.
+  It has two tabs:
+
+  - **Data** shows the symbol, interval, timezone, date/time, OHLCV and available indicator
+    plots. The source is **Crosshair**, **Synced crosshair** or **Latest bar**. A linked
+    follower reads its own bar containing the synced time; without an inspected bar it returns
+    to its latest. Mouse hover and touch crosshair tracking drive the same live readout. There
+    is no hold or automatic freeze: moving into the pane or selecting text does not pause it.
+    Values follow bars, indicator calculations, replay, precision and timezone. **Copy** copies
+    the current readout including collapsed sections, subject to clipboard permissions.
+  - **Table** shows the chart's **loaded** candles, newest first, with date/time, OHLC, full
+    volume and visible numeric indicator plots supported by the renderer. Candle OHLC and
+    volume retain the full loaded values; indicator plots use chart display precision.
+    Missing values show `—`. The current candle and studies update
+    as data arrives. The header shows the market, interval, timezone and loaded count; replay
+    shows only revealed bars. It is not a request for all exchange history: load more history
+    on the chart to extend the table. A third-party renderer without the optional history seam
+    shows its available candle bars without fabricated study columns.
+
+  Scroll the table vertically for older bars and horizontally for more columns; the header and
+  content-sized time column stay pinned and opaque. Click or tap a row, or focus its date/time
+  button and press Enter or Space, to reveal that loaded candle on the active native chart. The
+  chart keeps its zoom and briefly shows a background marker; reduced-motion preferences replace
+  the glide/fade with an immediate pan and a static marker. Text selection does not navigate.
+  On a third-party renderer without the optional navigation seam, rows remain read-only.
+  Rendering is virtualized, so only a bounded slice is in the DOM. During a market load the pane
+  hides old values instead of labeling them with the new market. The tabs support arrow keys,
+  Home and End. Each pane's contents scroll independently.
+- **Strategy tester** — a square, standard pane showing the active chart's strategy report.
+  On desktop it docks beside the chart; in portrait it is attached to the bottom at full host
+  width, with an adjustable top edge. Touch landscape uses desktop chrome. The four tabs are:
+  **Overview** (total P&L, return on initial capital, max drawdown, profitable trades, profit
+  factor and a cumulative-P&L curve); **Performance** (All / Long / Short statistics);
+  **Trades** (one row per round trip in exit order, with a running total); and **Properties**
+  (strategy declaration and inputs). Open trades appear last and are excluded from closed
+  trade money columns. Tap or activate a trade number to reveal entry/exit time and price,
+  size, bars held and available excursion figures. Times in trade details are UTC.
+
+  The tabs support Left/Right, Home and End. Tables scroll within the pane, with sticky headers
+  and a pinned first column. The trade list renders a bounded slice of large ledgers; on a trade
+  number, Up/Down, Home and End navigate through the full list. Each tab retains its scroll
+  position, including when a live result updates. A live repaint waits for an active scroll
+  or text selection to finish, so a phone flick or copy is not interrupted. A market change
+  hides the previous report while the new chart data and strategy result load. `script:run` feeds the active chart, while
+  each cell's most recent run is remembered; the first strategy run opens the panel once unless
+  another panel is already open. A missing ledger is identified instead of being called an empty
+  ledger. The calculations use the engine's trade P&Ls and broker state as supplied, and missing
+  optional metrics show `—`. If the broker's net P&L differs from the ledger total (for example,
+  because an engine reports gross trade P&Ls and net broker figures), the status shows the
+  broker net and marks the discrepancy; the tester does not silently change either figure.
+- **The dock and floating panels** — built-ins and plugins
+  ([`registerSidePanel`](../contributing/plugin-sdk.md#side-panels--registersidepanel)) share
+  the same shell. On desktop, click the button immediately beside **Close** to turn a docked
+  panel into a movable card; click it again to **Dock panel beside chart**. The chart regains
+  the side column while the card floats. Several floating panels can stay open together with
+  one docked panel. Opening another dock replaces only the current dock; interacting with a
+  card or the dock brings it forward without rebuilding its contents.
+
+  Drag a floating header to move it. A focused header also accepts arrow keys; right-click it,
+  press **Shift+F10**, or tap it on a touch screen for position sliders and exact pixel inputs
+  without dragging. Cards start at staggered positions. A panel's body may extend beyond the
+  visible workspace, but its entire header and controls remain reachable. This does not enlarge
+  or scroll the surrounding page; a host page with its own content can still scroll normally.
+  If keyboard focus reaches an off-screen control, the card temporarily moves enough to reveal
+  it without changing its saved position. On a floating card, drag the resize button immediately **after Close** to change width and height together;
+  the opposite bottom-left corner stays fixed. Arrow keys on that button also resize. Clicking
+  or tapping a resize button or grip does not open a size popup. Floating cards have no separate
+  top strip or edge handles. Narrow headers, tabs and content scroll when needed, including the
+  Pine Editor's header actions. Built-in cards can shrink to 160 × 112 px where the host has
+  room. Contributed panels keep their declared resize bounds.
+
+  A resizable dock's inner-edge width handle accepts arrow keys, Home and End; double-click
+  restores the declared width. Object tree, Data window, Alerts, Pine Editor and Strategy
+  tester remain square and start as full-height desktop docks. Watchlist and other panels that
+  already had desktop maximize keep it. In phone portrait, every pane has a maximize/restore
+  toggle immediately before Close. It fills the visible workspace and restores the preceding
+  position and size. Contents and tabs remain mounted, and open modes, widths, heights and
+  positions are saved and participate in undo/redo. A phone pane stays attached to the bottom:
+  drag the separate strip immediately above its header to change height. The header itself
+  does not move or resize the pane, and older saved phone offsets cannot detach it.
 - **Bottom bar** — range chips, a live clock, and the timezone picker. Each chip switches
   the active chart's timeframe, **fetches the depth its window needs**, and frames it:
   `1D`→1m, `7D`→5m, `1M`→30m, `3M`→1h, `6M`→4h, `YTD`/`1Y`→1D, `5Y`/`ALL`→1W. Changing
@@ -650,10 +793,11 @@ they work from the very first keystroke, before any click.
   indicators, and the settings dialog; the price axis for that pane's own scale (autoscale,
   invert, regular/percent/indexed/logarithmic, and the label and level toggles); the time axis
   for the display timezone. On a touch screen a **long press** on the plot enters the
-  crosshair and keeps it there — the finger's lift does not end the readout, dragging moves
-  the crosshair instead of panning, and a single tap exits (a pinch exits too, because two
-  fingers are navigation); a long press on either axis opens that axis' sheet instead. Every
-  pane's price scale has its own menu, so a study pane's scale
+  crosshair and keeps it there — the finger's lift does not end the readout. On a new touch,
+  the existing crosshair stays put and moves by the finger's displacement instead of jumping
+  under it; tracking does not pan. A single tap exits, as does a pinch. A long press on the
+  price axis opens a compact desktop-style menu with nested Labels and Levels; a long press
+  on the time axis opens a compact timezone menu with its own search. Every pane's price scale has its own menu, so a study pane's scale
   is independent of the main one. Each menu's settings entry opens the settings dialog on the
   tab that belongs to it — Canvas from the chart body, Scales and lines from either axis.
   Rows a plugin adds sort in with the built-in ones: by default after the built-in actions and
@@ -771,56 +915,139 @@ for them twice; a flip between the size classes builds what the new one needs an
 the active chart onto it. The replay transport is mounted by the first replay session —
 `Shift+↓` still starts and pauses one from the keyboard.
 
-**Panels, dialogs and the layout picker mount when they open.** The Pine editor's surface,
-a dialog's scrim and panel, and the layout picker's matrix are built once and held outside
-the document until the first open — a workspace with four closed panels and three closed
-dialogs carries none of their nodes. A docked panel itself is in the same boat: its header,
-body and width handle are appended to the dock on the first open, so the four built-ins
-(Pine editor, data window, object tree, strategy tester) cost **nothing** until you reach for
-one, and closing it keeps the nodes it already has (state, scroll position and any lift of
-the header included) so reopening it is a `display` flip, not a rebuild. The editor re-renders as it mounts, so its viewport and
-syntax highlighting are measured against the real box rather than a detached one.
+**Panels and dialogs mount when they open.** The Pine editor's surface, a dialog's scrim
+and panel, and the Layout setup matrix are held outside the document until first opened.
+A docked panel's header, body and width handle are appended to the dock on first open, so
+closed built-in panels do not add their UI nodes to the document; closing retains the panel
+shell and applicable state. Some contents, including the
+Strategy tester report, are refreshed when reopened so they reflect the latest chart. The Pine
+editor loads its Monaco surface on first open and measures it against the real box rather
+than a detached one.
 
 Long lists stream instead of landing in one lump. The symbol picker's page of a hundred
-symbols paints its first screenful in the frame the dialog opens and appends the rest over
-the next few frames (a keystroke in its search box costs one short frame, not a hundred
-rows), and its row icons are lazy — a hundred coin logos are fetched and decoded as they
-come into view, never inside the click. Measured on this machine: the picker is fully
-populated 50–90 ms after the click, where it used to block for 300 ms.
+symbols paints its first screenful when the search opens and appends the rest over
+the next few frames, and its row icons are lazy — off-screen coin logos are fetched and
+decoded as they come into view, not all during the opening click.
+
+### Indicators, templates, Compare and Symbol Search
+
+**Indicators**, **Indicator templates**, **Compare** and **Symbol Search** are four
+separate, non-modal workspace panes. On desktop they start docked beside the chart; use
+**Float/Dock** beside Close to switch to a movable card, and drag the control after Close
+to resize a floating card in both dimensions. Several floating panes can coexist with one
+dock. On a portrait phone each opens as a square, full-width bottom-attached pane: drag the
+separate grip above its header to resize, or use fullscreen/restore beside Close. The title
+itself does not detach the pane. Phone landscape uses the desktop-style dock again. The
+panel layout and size use the normal workspace persistence and history.
+
+Indicators retains search, categories, favorites, recents, on-chart controls, settings and
+source access. Its **Templates** shortcut opens the *separate* Indicator templates pane,
+not a tab merged into the indicator catalog. A compact indicator settings form can remain
+open over its parent pane; closing the form returns to Indicators. The dedicated toolbar
+button and phone **More → Indicator templates** remain available as well.
+
+Symbol Search keeps the watchlist, ranked results, asset filters, exchange/venue labels and
+keyboard selection. Arrow keys move the highlighted result and Enter selects it; watchlist
+stars never select a market. Search can load a watchlist symbol on all charts in a multichart
+layout. In **Compare with** mode that bulk primary-market action is omitted so choosing a
+comparison cannot accidentally replace the charts' main symbols. Compare controls one
+comparison symbol for the active chart, with Same % scale, New price scale or New pane, plus
+removal. Its symbol and display placement restore with the chart; when Compare switched the
+price axis to percent, removing it restores the price axis without overriding a percent axis
+you chose yourself. Canceling symbol search returns to Compare unless another pane has taken
+the dock.
+A provider index arriving late refreshes an open search without discarding its query.
 
 ### Chart templates
 
 A **template** is a chart's *indicators, settings included* — not the chart: no drawings,
 and the symbol and timeframe only if you asked for them. TradingView keeps its own
-("Indicator templates") in a dropdown immediately beside the Indicators button, and so does
-this shell: the small templates glyph there opens
+("Indicator templates") beside the Indicators button. In this shell the separate pane
+has **Favorites**, **My templates**, **Technical** and **Financial** tabs. The **Save**
+and **Import** controls stay above the independently scrolling list in My templates and
+Favorites. It offers
 
 - the saved templates, each with its indicator count (and the market, when it was saved
-  with one) — **clicking one applies it** here and closes the menu, replacing this chart's
+  with one) — **clicking one applies it** here and closes the pane, replacing this chart's
   indicators as TradingView's does;
 - **the six built-ins TradingView ships** — *Bill Williams' 3 Lines*, *Displaced EMA*,
   *MA Exp Ribbon* (five EMAs at 8/13/21/34/55), *Oscillators*, *Swing Trading* and
-  *Volume Based* — listed under the saved ones and read-only: they apply like any other
-  template but carry no star, kebab or rename field, so they can never be overwritten;
-- the row's **star**, which makes that template the set **new charts open with** (the
-  heading says what that is), and the row's **kebab**: *Apply to all charts* (a multi-chart
+  *Volume Based* — in the Technical/Financial categories and read-only: they apply like any other
+  template and can be favorited, but cannot be renamed or overwritten;
+- a separate **favorite** control, the row's **default star** (the set **new charts open
+  with**), and the row's **kebab**: *Apply to all charts* (a multi-chart
   layout only), *Rename…*, *Export*, *Delete* — delete arms on the first tap, deletes on
   the second;
 - **Save template…** — a name, and a *Remember symbol & timeframe* box that is **off by
   default**, because a template is meant to travel between markets;
 - **Import template file…** for a `.vela-template.json` written by *Export*.
 
-Escape closes the menu and returns focus to the button. The same store is behind the layout
-picker's Templates pane and the phone's More drawer, so a template saved in one shows up in
-all three, and `ws.saveTemplate` / `applyTemplate` / `renameTemplate` / `deleteTemplate` /
-`setDefaultTemplate` drive it from code. Composition id `'templates'`; it renders wherever
-the shell has templates to offer, single-chart mode included.
+Escape first cancels an open save/rename form or closes a row's actions without closing the
+pane; otherwise it closes the pane and returns focus to its opener when available. The desktop
+button, indicator shortcut and phone More entry use the same template store and panel. From Object tree, open an
+indicator, group or selected indicators → **Indicator templates** → **Save as new template…**
+or **Add to existing template**. A mixed selection contributes only its indicators; drawing
+sets remain a separate feature. The compact name form leaves Object tree open. Native types,
+source-backed scripts, their languages, inputs, declaration properties and visibility travel
+with the template. Saving or appending does not apply it to the chart.
+
+Applying replaces the target chart's indicator set. A target without a required scripting
+engine is skipped and reported instead of losing its current indicators. Likewise, if removing
+the last study in a pane would leave a drawing stranded there, that chart is skipped: move the
+drawing to a surviving pane first. Other safe targets in an all-chart request can still apply.
+`ws.saveTemplate` / `applyTemplate` / `renameTemplate` / `deleteTemplate` /
+`setDefaultTemplate` drive the library from code. Composition id `'templates'` is also
+available in a single-chart shell.
+
+### Indicator live sync
+
+Live indicator sync is **opt-in** and separate from drawing sync and one-shot template
+application. From an indicator, an indicator group or a mixed group in Object tree, choose
+**Indicator live sync → Live sync in layout** or select individual charts under **Live sync to
+specific charts**. Initial linking uses the initiating indicator's settings; later input and
+style/declaration-property changes on **any linked copy** propagate to its peers. Existing
+inherited counterparts and single-instance studies can be reused; unrelated same-type studies
+are not silently commandeered. A missing required engine is reported, and an inherited script
+that is still loading is linked when its manifest resolves.
+
+The scope is the **current layout**, never all saved layouts. A layout-wide link can be enabled
+on one chart before expanding the grid; newly created charts then join it. Changing the link to
+**Not synced** leaves the copies on their charts. Visibility, pane placement, source-code edits
+and deletion are local rather than propagated; removing a linked copy also excludes that chart
+from future automatic layout expansion for that link. Link settings and the latest values are
+saved with the layout so temporarily hidden charts can catch up when restored. From host code,
+`ws.setIndicatorLiveSync(ids, 'layout')`, `ws.setIndicatorLiveSync(ids, 'charts', cellIds)`,
+`ws.setIndicatorLiveSync(ids, 'none')`, and `ws.indicatorSyncStatus(id)` use the active chart's
+indicator IDs; status distinguishes connected `charts` from still-loading `pending` targets.
+This live link is a Vela extension; TradingView documents manual indicator
+application rather than automatic indicator synchronization across a layout.
+
+### Chart Settings and color
+
+On desktop, drag Chart Settings by its header, or drag the resize button just after Close to
+change both width and height; its arrow keys resize too. In phone portrait it starts as a
+bottom-attached pane with a separate height-resize strip immediately above the header. Drag
+the grip to resize; the title stays in place. Use the toggle immediately before Close to fill
+the visible workspace and restore the previous height and bottom-attached position. Grip and resize-button taps do not open size
+popups. Its section button opens the section rail, and its contents scroll inside the pane.
+Templates sits in the header, so a fixed action footer does not take space from a short
+pane. The square, compact color picker stays inside the visible screen, but may extend beyond an
+embedded chart or workspace when needed; it scrolls internally when space is limited. Its recent-color strip automatically keeps up to ten selected hues for the
+current page session; scroll the strip to reach the rest. Select the current-color well with
+the pencil to edit a custom color. The native custom-color chooser itself is controlled by
+the browser and operating system. The picker includes its own opacity slider and numeric
+percentage, so Crosshair does not show a duplicate opacity row. Tap a point on the slider,
+drag it, use arrow/Home/End keys, or type a percentage. Existing
+crosshair configurations with alpha in both the color and `crosshair.opacity` keep their
+combined appearance; opening the picker alone never changes them. On an edit, the chosen
+hue is stored as opaque RGB with the effective opacity in the legacy opacity field. A
+projection-wide opacity setting remains separate because it affects more than one color.
 
 ### Chart-settings templates
 
-The chart-settings dialog carries TradingView's second kind of template in the same place
-it does: a **Templates** control at the left of the dialog's footer, where its text is the
-template the chart currently wears (or *Templates* when it matches none). A settings
+The chart-settings dialog offers a **Templates** control in the desktop footer or the
+phone pane header. It names the template the chart currently wears (or says *Templates*
+when it matches none). A settings
 template is the **appearance** — candle and background colours, grid, scales, status line —
 and deliberately neither a market nor an indicator set: applying one restyles whatever the
 chart is showing.
@@ -832,16 +1059,37 @@ chart is showing.
 - the row's **trash arms on the first tap and deletes on the second**;
 - **Save template…** captures the open chart as it is now — the same document
   `getConfig()` returns, which is also what `applyConfig` takes back;
-- **Apply defaults** restores the factory look (it is the old *Reset defaults* button,
-  moved into the menu so the footer keeps one control);
-- **Apply to all** copies the chart's current settings onto every chart in the layout —
-  the button TV puts beside this one, and the reason the two share a footer.
+- **Apply defaults** restores the factory look;
+- **Apply to all** copies the chart's current settings onto every chart in the layout. On
+  desktop it is beside Templates; on a phone it is the first action inside Templates.
 
 Deleting a template that the house pointer names clears the pointer rather than leaving it
-dangling. On a phone the control is the same chip in the same footer, the panel is capped
-to the viewport, and the footer never scrolls sideways. From code: `ws.appearanceTemplateList`,
+dangling. The phone's action menu is scrollable and stays within the visible workspace.
+From code: `ws.appearanceTemplateList`,
 `appearanceTemplateName`, `saveAppearanceTemplate`, `applyAppearanceTemplate`,
 `deleteAppearanceTemplate`, `defaultAppearanceTemplate`, `setDefaultAppearanceTemplate`.
+
+### Indicator settings — Inputs, Style and Visibility
+
+The indicator settings dialog provides three standard tabs alongside any script-declared
+input tabs:
+
+- **Inputs** is generated from the script's declared input fields and keeps its Pine groups,
+  inline rows, and conditional gates.
+- **Style** exposes settings for renderable plot series: plot visibility, static colors where
+  a single color is meaningful, line width/style, candle up/down colors, and the indicator's
+  price-scale labels and status-line values. A dynamically colored plot does not get a single
+  misleading color picker, and Pine plots declared with `editable=false` stay out of the
+  generated controls. Pine drawing objects (lines, boxes, labels, tables) are not plot
+  series, so they do not get fabricated Style controls; use the script's color Inputs where
+  it declares them.
+- **Visibility** provides interval-family switches for Ticks, Seconds, Minutes, Hours, Days,
+  Weeks, and Months. A disabled family hides the indicator on charts in that family; changing
+  the active interval re-evaluates the selection.
+
+Edits apply live, and **Cancel** restores the Style and Visibility choices captured when the
+settings dialog opened. Tab navigation supports keyboard arrows and scrolls horizontally when
+space is narrow.
 
 ### Indicator settings — Defaults
 
@@ -867,28 +1115,26 @@ script indicator (no registered type) keeps the plain *Reset defaults* chip. Fro
 ### The layout menu
 
 The chip after undo/redo reads the active layout's name — *Untitled layout* until it has
-one — and lights a dot the moment there is something to save. Its **Save** button is the
-same verb as the panel's primary row (and `Ctrl`/`⌘ S`): a named layout is written in
-place, an untitled one opens the naming dialog first. Pressing the chip opens the panel
-TradingView keeps in this spot:
+one — and lights a dot when there is something to save. Its **Save** button and `Ctrl`/`⌘ S`
+write a named layout in place; an untitled layout first asks for a name. Press the chip to
+open a small anchored **Manage layouts** menu, not a separate panel. On a phone, open
+**More → Manage layouts**; the menu floats next to More. It also opens from
+**Layout setup → Manage layouts** on either device. It keeps the actions in compact,
+scrollable menu pages:
 
-- the name and its status — *Unsaved changes*, *Autosave is writing…*, *All changes saved*;
-- **Save layout**, wearing its chord — or *Name and save…* on an untitled set;
-- **Save as…** — a copy under a new name, which becomes the active layout;
-- **Make a copy…** — duplicates the active layout and opens the duplicate;
-- **Rename…** — the dialog refuses a name another layout already holds;
-- **Share link** — copies a `#l1=…` URL that opens this one layout;
-- **Export chart data** — the active layout's series as CSV;
-- **Autosave** — a switch; while it is on every edit is written about two seconds after it
-  settles and the manual Save stands down, as in TradingView's own autosave;
-- **Open layout · N** — every saved layout with a dirty dot, its chart and indicator
-  counts, a check on the active row, and a kebab holding open / rename / copy / share /
-  export / delete. Delete arms on the first tap and deletes on the second.
+- **Save layout** or **Name and save…**, **Autosave**, **Make a copy**, and **Rename…**;
+- **Sharing** — turn workspace-link sharing on or off, copy or view the link, or open a
+  shared link; the link remains selectable if clipboard access is refused;
+- **Saved layouts** — select a layout to open, rename, copy under a chosen name, share,
+  export or delete it. Active and unsaved layouts are marked, and long lists can be
+  filtered. Delete requires a second confirmation;
+- **More actions** — **Save as…**, export chart data as CSV, import a layout file, or
+  open the existing drawing-template library.
 
-The panel writes the same store the More drawer's layout pane and the layout picker read,
-so a layout saved from any of them appears in all three. Escape closes the panel and puts
-focus back on the chip, and every row is reachable from the keyboard. Composition id
-`'layouts'`; it renders on multi-chart shells only.
+The menu uses the same saved-layout store as the rest of the workspace. It flips or
+scrolls to fit available space, closes on an outside click, and returns focus to its opener
+on Escape. Arrow keys navigate its menu rows. Composition id `'layouts'` supplies the
+name chip on multi-chart shells.
 
 ### Following menus and panels
 
@@ -907,7 +1153,7 @@ container.addEventListener(SURFACE_OPEN_EVENT, (e) => {
 ```
 
 `kind` is `'menu'` (submenus and the drawing toolbar's flyouts included), `'popover'` (select
-lists, color pickers, mark cards, the layout picker), `'dialog'`, `'drawer'` or `'panel'`.
+lists, color pickers, mark cards and the generic-host layout picker), `'dialog'`, `'drawer'` or `'panel'`.
 `trigger` is the element that opened it — a menu's button, a submenu's row, the control that
 had focus when a dialog opened — or `null` when there is none (a right-click menu). A surface
 created without an explicit host portals to `<body>`; listen on `document` to catch those too.
@@ -927,7 +1173,7 @@ then hides or removes it. These elements get the attribute:
 | `.vela-dialog` and `.vela-dialog-backdrop` | A dialog and its scrim. |
 | `.vela-drawer` and `.vela-drawer-backdrop` | A bottom sheet (mobile chrome) and its scrim. |
 | `.vela-panel` | A side panel. |
-| `.vela-lp` | The layout picker. |
+| `.vela-lp` | The generic-host layout picker (the workspace's Layout setup uses `.vela-panel`). |
 | `.vela-dtb-flyout` | A drawing toolbar flyout. |
 
 ```css
@@ -978,12 +1224,12 @@ Entries come from one shared vocabulary:
 | `'symbol'` | The symbol button (opens the search). |
 | `'timeframes'` | The favorite chips + timeframe dropdown group. |
 | `'style'` | The chart-style dropdown. |
-| `'layout'` | The layout dropdown (renders on multi-chart shells only). |
+| `'layout'` | The Layout setup button (renders on multi-chart shells only). |
 | `'layouts'` | The saved-layout chip — name, unsaved dot, Save — and the [layout menu](#the-layout-menu) it opens (multi-chart shells only; default last in `left`). |
-| `'templates'` | The chart-templates dropdown, drawn beside `'indicators'` (the two share one hairline, as in TradingView; a single-chart shell has it too). |
-| `'indicators'` | The Indicators slot — the built-in button, or a plugin's [slot override](../contributing/plugin-sdk.md#replacing-a-built-in-button--slot-overrides). Omitting it removes the button, the mobile stop, the `/` shortcut, and skips the picker dialog. |
+| `'templates'` | The separate Indicator templates pane, opened beside `'indicators'` (a single-chart shell has it too). |
+| `'indicators'` | The Indicators slot — the built-in button, or a plugin's [slot override](../contributing/plugin-sdk.md#replacing-a-built-in-button--slot-overrides). Omitting it removes the button, the mobile stop, the `/` shortcut, and skips the built-in picker pane. |
 | `'undo-redo'` | The undo/redo pair. |
-| `'compare'` | The Compare tool — opens the compare sheet for the active chart (symbol, and the three display modes). The glyph takes the accent and its tooltip names the compared ticker while that chart carries a second series; `'compare'` renders only when the shell offers the feature. |
+| `'compare'` | The Compare tool — opens the Compare pane for the active chart (symbol, and the three display modes). The glyph takes the accent and its tooltip names the compared ticker while that chart carries a second series; `'compare'` renders only when the shell offers the feature. |
 | `'replay'` | The bar-replay button — opens the replay menu (Select bar / Select date / Random bar). Renders only when the shell runs the replay chrome (`replay: false` removes it, and the mobile bar has no counterpart). |
 | `'alerts'` | The alerts bell (badge included). |
 | `'panels'` | The side-panel toggle group (object tree, data window, contributed panels). |
@@ -1017,14 +1263,17 @@ built-in button was.
 In a container narrower than ~640px (or up to ~920px with a coarse pointer — a
 tablet), the shell switches to its **mobile chrome**; `layoutMode: 'mobile'` or
 `'desktop'` pins the choice. The mode is container-driven and live: resizing across
-the breakpoint swaps the chrome in place, closing whatever was open in the other
-presentation. Sheets and full-screen pickers act on the **active cell**.
+the breakpoint swaps the chrome in place. Most transient dialogs close; open Chart
+Settings instead changes presentation while retaining its selected section and chosen
+phone-pane height. On a touch phone in landscape, desktop-style chrome takes over: the pair
+stays pinned and the rest of the top bar can scroll. Sheets and pickers act on the
+**active cell**.
 
 What changes on mobile:
 
 - **One bottom bar replaces both desktop bars.** Its two ends are pinned: the **pair
   name** on the left (the pin that says which cell your next tap acts on; tapping it
-  opens the full-screen symbol search) and, on the right, the **three-dots sheet** and
+  opens the bottom-attached Symbol Search pane) and, on the right, the **More pane** and
   **chart settings**. Everything between them scrolls sideways in one band, in the order
   a trade is set up: **interval → chart type → undo / redo → drawings → fullscreen →
   indicators → the script editor**. Undo and redo sit near the head of the band because
@@ -1034,27 +1283,53 @@ What changes on mobile:
   unified history (the same one the desktop topbar drives). The interval button is a bottom sheet with the date-range presets
   on top and the timeframe grid below; drawings is a sheet with a search bar, the tool
   groups as scrollable tabs and favorite stars; the editor (when a scripting engine is
-  configured) rises as a draggable bottom sheet (see
+  configured) opens as a bottom-attached pane (see
   [scripting engines](./scripting-engines.md#the-script-editor)). The band fades at
   whichever edge still has stops behind it, so a phone with no chart maximized still
-  shows where the tools went. The three-dots sheet holds undo/redo, screenshot, chart
-  type, the side panels, time zone, alerts, contributed topbar actions, an entry per
+  shows where the tools went. The More pane has no search box; its flat, grouped interior keeps
+  undo/redo, screenshot, chart type, the side panels, time zone, alerts, contributed topbar
+  actions, and an entry per
   **hidden chart** (`ws.hiddenChartList()` — the charts a smaller layout set aside; tapping
   one puts it in the active pane and parks the chart it replaced, `ws.showHiddenChart(id)`
-  from code), and — multi-chart grids only — a **Layout** entry that opens three tabs:
-  the tap-to-apply grid canvas, the saved-layout library, and the sync switches.
+  from code). On multi-chart grids, **Layout setup** is one entry containing Layout and
+  Chart syncing tabs; **Manage layouts** and **Indicator templates** are separate actions.
+  **Manage layouts**, **Cursor**, **Time zone** and **Chart actions** open compact floating
+  menus over More without closing it or changing its size or scroll. The timezone menu's own
+  search narrows the desktop-equivalent zone list. The chart-type chooser keeps its favorites
+  and selection controls in a square-cornered surface.
+- **Selected drawing controls stay on one line.** Open the drawing toolbar's existing **…**
+  to reach controls that do not fit and its duplicate, style and ordering actions. The menu
+  keeps each hidden control's icon and label, sizes to its content, is viewport-bounded, and
+  cannot be panned sideways. It may extend beyond the chart when space requires. On desktop,
+  drawing **Settings** follows the Chart Settings floating-card pattern: a direct two-axis
+  resize control, full-card viewport bounds, and both horizontal and vertical content scrolling.
+  On phones, it follows the Data Window pane: bottom-attached, a separate resize grip, and
+  maximize/restore beside Close. The pane remains within the workspace and visible viewport;
+  its header does not drag it. The bottom-bar **Drawings** entry opens the tool picker in a
+  square, bottom-attached pane with its own resize grip, maximize/restore and Close controls;
+  More continues to list **Object tree** under that name. Cancel still restores the drawing to
+  the state it had when settings opened.
 - **The docked drawing toolbar hides.** Picking a tool from the drawings sheet arms it
   and shows a floating pill over the chart — the armed tool's icon, the magnet cycle,
   stay-in-drawing-mode, the eraser, and ✕ to disarm. Favorites keep working (stars in
   the sheet), so a radial-wheel-style picker built on them keeps its data.
-- **Dialogs go full-screen** — symbol search, the indicator picker, indicator settings,
-  and chart settings, where the section rail sits behind a burger button, a section's
-  group list becomes scrollable tabs at the top, and instance strips scroll sideways.
-- **Side panels** (data window, object tree, contributed) open over the chart instead
-  of docking a column beside it — except the **script editor**, which is a bottom
-  SHEET: drag its grip to resize it (a tap snaps it between the two useful heights) and
-  the chart stays visible above it, because an editor on a phone must be usable
-  *without* leaving the chart.
+- **Compact child forms** such as indicator settings remain separate from their parent
+  pane; closing the form returns to the still-open Indicators pane. Smaller action menus
+  stay compact rather than becoming full panels.
+- **Side panels** open over the chart instead of docking a column beside it. Indicators,
+  Indicator templates, Compare, Symbol Search, Object tree, Data window, Layout setup,
+  Pine Editor, Alerts, Strategy tester and More start as square, full-width,
+  bottom-attached panes. Their resize grips sit in a separate strip above the header; dragging
+  the title leaves the pane in place.
+  Each has a fullscreen/restore toggle just before Close; restore returns to the previous
+  position and size. Chart Settings uses the same interaction and remains non-modal: the
+  exposed chart stays interactive. Drag its grip or use the grip's keyboard arrows; tapping
+  it does not open a height popup. Its section rail and body scroll independently. The desktop
+  Float/Dock button is hidden in portrait: one phone pane is visible at a time, and other
+  desktop cards are suspended rather than lost. Rotating back restores those cards and their
+  positions; a panel explicitly closed on the phone stays closed. Phone bottom drawers also
+  keep their resize grip in a separate top strip and do not move when their heading or blank
+  rail is dragged. Landscape phone mode uses the desktop-style dock again.
 - **The indicator legend is measured, not assumed** — in BOTH directions: the rows (title,
   values, hide, ⚙, ×) show whenever the pane can hold them by height *and* by width (a
   title stub plus the action cluster), exactly as on a desktop, and only a genuinely
@@ -1063,10 +1338,11 @@ What changes on mobile:
   "Indicator settings" entry, so everything the rows offered stays one tap away. The tree's
   rows carry every study's values (see above), and its menu also opens a study's
   **source code**.
-- **The More sheet has a "Pine Editor — Open" row**: the editor is a panel on desktop, but
-  on a phone it is a sheet over the chart, and this is its one-tap door (TradingView keeps
-  its Pine Editor just as close on mobile). The dock's generic panel toggles do not repeat
-  it.
+- **The More sheet has a "Pine Editor — Open" row**: this is the phone's one-tap door to
+  the same Monaco-based editor used on desktop. Long-press the code or use its **Actions**
+  button for editing operations; the minimap hides in phone portrait. See the
+  [script editor](./scripting-engines.md#the-script-editor) for suggestion coverage,
+  clipboard permissions and the mobile-browser limitation.
 - **Pane controls are measured, not switched off.** `move up / move down / collapse /
   maximize` used to be suppressed outright by the mobile mode flag. They now follow the
   desktop rule on every device: a pane that can hold a row of 24px chips under its legend
@@ -1079,29 +1355,34 @@ What changes on mobile:
   TradingView's phone layout reads it), then the delta moves up onto the symbol line so the
   four values keep a row of their own. 360–430px therefore read out **O H L C + change** on
   two lines; only a truly cramped chip (≈320px) falls back to the close.
-- **Layout setup and Manage layouts are separate tabs.** The More sheet's *Layout* door
-  opens a sticky three-stop nav — **Layout setup** (grid + presets), **Manage layouts**
-  (saved layouts, autosave, indicator templates, drawing sets), **Sync** — and each stop
-  is its own pane, so the library no longer buries every other row. The standalone
-  *Manage layouts* page and its back button remain for deep links.
-- **Indicator templates have their own tab.** The indicator sheet's **Templates** stop sits
-  before the family tabs (visible at 390px) and carries save / apply to this chart / apply
-  to all charts / rename / export / import / set default, plus six read-only built-ins.
-  The study search hides there, because it filters studies, not stacks.
+- **Layout setup and Manage layouts stay separate.** More opens one **Layout setup** pane
+  with **Layout** and **Chart syncing** tabs. **Manage layouts** is a minimal floating menu
+  for autosave, copying, renaming, sharing and saved layouts, rather than another panel.
+- **Indicator templates have their own panel.** Its Favorites, My templates, Technical and
+  Financial categories keep template management separate from both the indicator search
+  and layout management.
 - **Drawing templates come in two kinds.** A tool's saved *look* is still on the floating
   toolbar and in a drawing's settings; a **drawing set** is a whole reusable bundle saved
   from the object tree (selection, group or bulk menu → **Drawing templates → Save as
   template…**). Geometry is stored as time offsets and price ratios, so a breakout pattern
   keeps its shape on another symbol; insertion is one undo step and lands as a group in
-  the tree. **Manage layouts → Drawings** lists sets first (insert / export / import /
-  delete), then the per-tool looks.
+  the tree. **Manage layouts → More actions → Drawing templates** opens the library,
+  which lists sets first (insert / export / import / delete), then per-tool looks.
 - **Every plottable built-in has Pine source.** The legend's `{ }` opens v6 scripts for all
   72 classic studies plus **Volume** and **Compare**; VPVR (visible-range volume profile)
   is the one intentional exception, matching TradingView.
-- **Touch gestures**: one-finger pan (with the usual fling), two-finger pinch zoom
-  anchored between the fingers, and a **long-press** that inspects with the crosshair —
-  the view stays put while the finger drives the readout; lifting clears it. A
-  **double-tap** mirrors the desktop double-click: on the price axis it resets that
+- **Touch gestures**: one-finger pan (with the usual fling) and two-finger pinch zoom
+  anchored between the fingers. **Long-press** the plot to enter crosshair tracking:
+  drag to inspect without panning, and lift to keep the crosshair and values visible.
+  Touch again and drag by a relative offset to move the retained crosshair without it
+  jumping under your finger; a single tap exits tracking. A pinch exits tracking and
+  zooms normally. With no loaded bars, the lines remain visible but no price, time or
+  OHLC is invented. Long-press tracking temporarily displays the configured crosshair
+  even when Arrow, None or another non-line cursor is selected, provided an active drawing
+  tool is not using the gesture. It does not change saved cursor or crosshair settings. The
+  legacy default color/opacity pair gets temporary contrast-aware tracking ink on light/dark
+  backgrounds; other color/opacity values, shapes and runtime overrides remain in force.
+  A **double-tap** mirrors the desktop double-click: on the price axis it resets that
   pane's scale to auto, on the time axis it fits the view to content, and inside the
   plot it maximizes the tapped pane (price or indicator) — a second double-tap
   restores the split. The price/time axis strips still drag-rescale, and the button
@@ -1109,20 +1390,20 @@ What changes on mobile:
 
 ### Why these doors are separate
 
-TradingView's own vocabulary is the reason the phone sheet does not merge them: a
-**layout** is the whole saved workspace (symbol, interval, indicators, drawings, colors),
-opened from **Manage layouts**, while **Layout setup** is the multi-chart grid and its sync
-switches [1](https://www.tradingview.com/support/solutions/43000746975-tradingview-layouts-a-quick-guide/).
+A **layout** is the whole saved workspace (symbol, interval, indicators, drawings, colors),
+opened from **Manage layouts**, while **Layout setup** combines the multi-chart grid and its
+chart-syncing controls in two tabs [1](https://www.tradingview.com/support/solutions/43000746975-tradingview-layouts-a-quick-guide/).
 An **indicator template** is only the applied studies with their inputs and styles — never
 drawings or the theme — and it replaces the chart's current stack when applied
 [1](https://www.tradingview.com/charting-library-docs/latest/saving_loading/)
 [2](https://www.tradingview.com/support/solutions/43000543048-what-are-indicator-templates/).
-A **drawing template** is officially one tool's saved properties; TradingView's
-object-tree groups are the unit that travels together (one group per pane, sequential
-z-order, never empty) [1](https://www.tradingview.com/charting-library-docs/latest/ui_elements/drawings/drawings-api/).
-Vela keeps that distinction, then adds **drawing sets** — a selected group saved with
-relative geometry — as the reusable pattern the name promises. Applying one study set to
-every chart follows TradingView's own *Apply these Indicators to Entire Layout* rule
+A **drawing template** is officially one tool's saved properties; TradingView's drawing
+API groups have one pane and sequential z-order
+[1](https://www.tradingview.com/charting-library-docs/latest/ui_elements/drawings/drawings-api/).
+Vela deliberately extends the organizational tree to indicators and mixed, cross-pane folders
+without repaning or restacking the members, and adds **drawing sets** — a selected group saved
+with relative geometry. Applying one study set to every chart follows TradingView's own
+*Apply these Indicators to Entire Layout* rule
 [18](https://www.tradingview.com/blog/en/apply-all-technical-analysis-tools-to-all-charts-in-the-workspace-19368/).
 
 Built-in source is not universal on the reference either: TradingView says Volume Profiles

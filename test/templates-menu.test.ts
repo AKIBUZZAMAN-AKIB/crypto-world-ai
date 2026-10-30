@@ -212,6 +212,20 @@ describe('the templates menu', () => {
         expect(rows().map((r) => r.dataset.name)).toEqual(['C', 'B']);
     });
 
+    it('does not carry a refused rename draft to a different template', () => {
+        const s = stub([{ name: 'A', count: 1 }, { name: 'Existing', count: 1 }, { name: 'Third', count: 1 }]);
+        open(s);
+        click(row('A')?.querySelector('.vela-tm-kebab'));
+        click([...document.querySelectorAll('.vela-tm-chip')].find((c) => c.textContent?.startsWith('Rename')));
+        const first = document.querySelector<HTMLInputElement>('.vela-tm-input')!;
+        first.value = 'Existing';
+        first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        expect(flash()).toContain('already exists');
+        click(row('Third')?.querySelector('.vela-tm-kebab'));
+        click([...document.querySelectorAll('.vela-tm-chip')].find((c) => c.textContent?.startsWith('Rename')));
+        expect(document.querySelector<HTMLInputElement>('.vela-tm-input')?.value).toBe('Third');
+    });
+
     it('deletes on the second tap, never the first', () => {
         const s = stub([{ name: 'A', count: 1 }, { name: 'B', count: 1 }]);
         open(s);

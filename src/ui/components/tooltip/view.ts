@@ -58,6 +58,8 @@ const TIP_ID = 'vela-shared-tip';
 /** Gap between the trigger's edge and the tip, and the smallest gap to the viewport. */
 const OFFSET = 8;
 const VIEWPORT_MARGIN = 4;
+/** Time to cross the small gap from a trigger onto its hoverable tooltip. */
+const HOVER_BRIDGE_MS = 300;
 
 const SIDES = new Set(['top', 'bottom', 'left', 'right']);
 const FLIP: Record<string, TooltipPlacement> = {
@@ -94,13 +96,28 @@ class SharedTips {
     private layer: HTMLElement | null = null;
     private box: HTMLElement | null = null;
     private openFor: HTMLElement | null = null;
+    private hoveredTrigger: HTMLElement | null = null;
+    private hoveringTip = false;
+    /** Unregistered button titles are borrowed only while their tooltip is visible. */
+    private auto: { trigger: HTMLElement; title: string | null } | null = null;
     private openTimer: ReturnType<typeof setTimeout> | null = null;
     private closeTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly reposition = (): void => {
         if (this.openFor) this.place(this.openFor);
     };
 
+    /** Use the same surface for titled or icon-only buttons inside a workspace. */
+    enableButtons(root: HTMLElement): () => void {
+        root.setAttribute('data-vela-auto-tips', '');
+        this.wire(root.ownerDocument);
+        return () => {
+            if (this.auto && (root.contains(this.auto.trigger) || !this.auto.trigger.isConnected)) this.close();
+            root.removeAttribute('data-vela-auto-tips');
+        };
+    }
+
     register(trigger: HTMLElement, opts: TooltipOptions): void {
+        if (this.auto?.trigger === trigger) this.close();
         if (opts.triggerId) trigger.id = opts.triggerId;
         trigger.setAttribute(TIP_ATTR, '');
         this.defs.set(trigger, {
@@ -119,7 +136,10 @@ class SharedTips {
         const def = this.defs.get(trigger);
         if (!def) return;
         def.content = content;
-        if (this.openFor === trigger && this.box) this.fill(def);
+        if (this.openFor === trigger && this.box) {
+            this.fill(def);
+            this.place(trigger);
+        }
     }
 
     /** Forget a trigger. Safe to call twice, and while its tip is open. */
@@ -127,7 +147,6 @@ class SharedTips {
         if (this.openFor === trigger) this.close();
         this.defs.delete(trigger);
         trigger.removeAttribute(TIP_ATTR);
-        trigger.removeAttribute('aria-describedby');
         trigger.removeAttribute('data-state');
         trigger.removeAttribute('data-scope');
         trigger.removeAttribute('data-part');
@@ -145,31 +164,92 @@ class SharedTips {
         doc.addEventListener('focusin', (e) => {
             // Keyboard focus only: a button clicked with a pointer also takes focus, and a tip
             // left floating after the click would cover what the click opened.
-            const t = this.triggerOf(e.target);
-            if (t && focusVisible(t)) this.open(t);
+            const t = this.triggerOf(e.target, true);
+            if (t && isElement(e.target) && focusVisible(e.target)) {
+                this.prepareAuto(t);
+                this.open(t);
+            }
         }, true);
         doc.addEventListener('focusout', (e) => {
-            if (this.openFor && e.target === this.openFor) this.scheduleClose(this.defs.get(this.openFor)?.closeDelay ?? 0);
+            const trigger = this.triggerOf(e.target);
+            if (!trigger || trigger !== this.openFor || (isElement(e.relatedTarget) && trigger.contains(e.relatedTarget))) return;
+            if (this.hoveredTrigger !== trigger && !this.hoveringTip) this.scheduleClose(this.defs.get(trigger)?.closeDelay ?? 0);
         }, true);
-        doc.addEventListener('keydown', (e) => {
-            if ((e as KeyboardEvent).key === 'Escape') this.close();
+        // Capture at the window before dialog/popover dismissal listeners: the first
+        // Escape dismisses the tooltip, not the panel underneath it.
+        const keyTarget: Window | Document = doc.defaultView ?? doc;
+        keyTarget.addEventListener('keydown', (e: Event) => {
+            if ((e as KeyboardEvent).key === 'Escape' && this.openFor) {
+                this.close();
+                e.stopImmediatePropagation();
+            }
+        }, true);
+        doc.addEventListener('vela:surface-close', (e) => {
+            if (this.openFor && isElement(e.target) && e.target.contains(this.openFor)) this.close();
         }, true);
     }
 
-    private triggerOf(target: EventTarget | null): HTMLElement | null {
+    private triggerOf(target: EventTarget | null, allowAuto = false): HTMLElement | null {
         if (!isElement(target)) return null;
         const el = target.closest(`[${TIP_ATTR}]`);
-        return el && this.defs.has(el as HTMLElement) ? (el as HTMLElement) : null;
+        if (el && this.defs.has(el as HTMLElement)) return el as HTMLElement;
+        if (this.auto?.trigger.contains(target)) return this.auto.trigger;
+        if (!allowAuto) return null;
+        const control = target.closest('button, [role="separator"][title]') as HTMLElement | null;
+        if (!control || !control.closest('[data-vela-auto-tips]') || control.closest('[data-vela-no-tip]')) return null;
+        // Keep visible text as the name; otherwise nameless icon buttons and the titled
+        // pane separator need the same styled hint instead of a native browser tooltip.
+        const title = control.getAttribute('title')?.trim();
+        const label = control.matches('button') && !control.textContent?.trim() ? control.getAttribute('aria-label')?.trim() : '';
+        return title || label ? control : null;
+    }
+
+    private prepareAuto(trigger: HTMLElement): void {
+        if (this.defs.has(trigger)) return;
+        if (this.auto) this.close();
+        const title = trigger.getAttribute('title');
+        const content = title?.trim() || trigger.getAttribute('aria-label')?.trim();
+        if (!content) return;
+        this.auto = { trigger, title };
+        // Restore on close; this suppresses the browser's second, differently styled tip.
+        if (title !== null) trigger.removeAttribute('title');
+        this.defs.set(trigger, { content, placement: 'top', openDelay: 0, closeDelay: 0, interactive: false });
+    }
+
+    private releaseAuto(trigger: HTMLElement): void {
+        const saved = this.auto;
+        if (!saved || saved.trigger !== trigger) return;
+        this.auto = null;
+        this.defs.delete(trigger);
+        if (saved.title !== null && !trigger.hasAttribute('title')) trigger.setAttribute('title', saved.title);
+        // Do not overwrite descriptions another control added or changed while open.
+        const descriptions = (trigger.getAttribute('aria-describedby') ?? '').split(/\s+/).filter((id) => id && id !== TIP_ID);
+        if (descriptions.length) trigger.setAttribute('aria-describedby', descriptions.join(' '));
+        else trigger.removeAttribute('aria-describedby');
+    }
+
+    private hasKeyboardFocus(trigger: HTMLElement): boolean {
+        const focused = trigger.ownerDocument.activeElement;
+        return isElement(focused) && trigger.contains(focused) && focusVisible(focused);
     }
 
     private onOver(e: PointerEvent): void {
         if (e.pointerType === 'touch') return;
-        const t = this.triggerOf(e.target);
+        if (isElement(e.target) && this.box?.contains(e.target)) {
+            this.hoveringTip = true;
+            this.clearClose();
+            return;
+        }
+        const t = this.triggerOf(e.target, true);
         if (!t) return;
+        this.hoveredTrigger = t;
+        this.hoveringTip = false;
         this.clearClose();
         if (this.openFor === t) return;
         // Moving inside the open trigger (button → icon) is not a new tip.
         if (isElement(e.relatedTarget) && t.contains(e.relatedTarget as Node)) return;
+        this.prepareAuto(t);
+        this.hoveredTrigger = t;
         const def = this.defs.get(t);
         if (!def) return;
         this.clearOpen();
@@ -179,12 +259,22 @@ class SharedTips {
 
     private onOut(e: PointerEvent): void {
         if (e.pointerType === 'touch') return;
+        const to = e.relatedTarget;
+        if (isElement(e.target) && this.box?.contains(e.target)) {
+            if (isElement(to) && this.box.contains(to)) return;
+            this.hoveringTip = false;
+            const trigger = this.openFor;
+            if (!trigger) return;
+            if (isElement(to) && trigger.contains(to)) { this.hoveredTrigger = trigger; return; }
+            if (!this.hasKeyboardFocus(trigger)) this.scheduleClose(this.defs.get(trigger)?.closeDelay ?? 0);
+            return;
+        }
         const t = this.triggerOf(e.target);
         if (!t || t !== this.openFor) return;
-        const to = e.relatedTarget;
-        if (isElement(to) && (t.contains(to as Node) || (this.box && this.box.contains(to as Node)))) return;
-        const def = this.defs.get(t);
-        this.scheduleClose(def?.closeDelay ?? 0);
+        if (isElement(to) && t.contains(to)) return;
+        this.hoveredTrigger = null;
+        if (isElement(to) && this.box?.contains(to)) { this.hoveringTip = true; return; }
+        if (!this.hasKeyboardFocus(t)) this.scheduleClose(Math.max(HOVER_BRIDGE_MS, this.defs.get(t)?.closeDelay ?? 0));
     }
 
     private open(trigger: HTMLElement): void {
@@ -192,7 +282,10 @@ class SharedTips {
         if (!def) return;
         this.clearClose();
         this.clearOpen();
-        if (this.openFor && this.openFor !== trigger) this.mark(this.openFor, false);
+        if (this.openFor && this.openFor !== trigger) {
+            this.mark(this.openFor, false);
+            this.releaseAuto(this.openFor);
+        }
         this.build(trigger, def);
         this.openFor = trigger;
         this.fill(def);
@@ -233,7 +326,9 @@ class SharedTips {
         }
         const host = def.host ?? (trigger.closest('.vela-ui') as HTMLElement | null) ?? doc.body;
         if (this.layer.parentElement !== host) host.appendChild(this.layer);
-        if (this.box) this.box.style.pointerEvents = def.interactive ? 'auto' : 'none';
+        // The text remains non-interactive, but it must be hoverable so a magnifier or
+        // low-vision user can move onto it without the description disappearing.
+        if (this.box) this.box.style.pointerEvents = 'auto';
     }
 
     private fill(def: TipDef): void {
@@ -244,9 +339,12 @@ class SharedTips {
     }
 
     private mark(trigger: HTMLElement, open: boolean): void {
-        trigger.dataset.state = open ? 'open' : 'closed';
-        if (open) trigger.setAttribute('aria-describedby', TIP_ID);
+        const descriptions = (trigger.getAttribute('aria-describedby') ?? '').split(/\s+/).filter((id) => id && id !== TIP_ID);
+        if (open) descriptions.push(TIP_ID);
+        if (descriptions.length) trigger.setAttribute('aria-describedby', descriptions.join(' '));
         else trigger.removeAttribute('aria-describedby');
+        // A delegated fallback must not overwrite the component's own state attribute.
+        if (this.auto?.trigger !== trigger) trigger.dataset.state = open ? 'open' : 'closed';
     }
 
     /** Put the surface beside `trigger`: centred on the side it asked for, flipped to the
@@ -258,7 +356,11 @@ class SharedTips {
         box.hidden = false;
         box.dataset.state = 'open';
         // Measure at the origin so the previous position never skews the size read.
+        // A fixed layer can have a non-viewport containing block (for example inside
+        // a layout-contained panel or a transformed host). Its painted origin must be
+        // subtracted from viewport coordinates to keep the tip beside its trigger.
         layer.style.transform = 'translate3d(0px, 0px, 0)';
+        const origin = layer.getBoundingClientRect();
         const t = trigger.getBoundingClientRect();
         // Layout size, not the painted box: the open animation scales from 0.97, and a size
         // read through a running transform would centre the tip a pixel off its trigger.
@@ -291,7 +393,7 @@ class SharedTips {
         }
         x = Math.max(VIEWPORT_MARGIN, Math.min(x, Math.max(VIEWPORT_MARGIN, vw - b.width - VIEWPORT_MARGIN)));
         y = Math.max(VIEWPORT_MARGIN, Math.min(y, Math.max(VIEWPORT_MARGIN, vh - b.height - VIEWPORT_MARGIN)));
-        layer.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
+        layer.style.transform = `translate3d(${Math.round(x - origin.left)}px, ${Math.round(y - origin.top)}px, 0)`;
         layer.dataset.placement = placement;
         box.dataset.placement = placement;
     }
@@ -301,8 +403,11 @@ class SharedTips {
         this.clearClose();
         const trigger = this.openFor;
         this.openFor = null;
+        this.hoveredTrigger = null;
+        this.hoveringTip = false;
         if (trigger) {
             this.mark(trigger, false);
+            this.releaseAuto(trigger);
             trigger.ownerDocument.removeEventListener('scroll', this.reposition, { capture: true } as EventListenerOptions);
             (trigger.ownerDocument.defaultView as Window | null)?.removeEventListener('resize', this.reposition);
         }
@@ -337,6 +442,11 @@ class SharedTips {
 }
 
 const shared = new SharedTips();
+
+/** Give a workspace's titled and icon-only buttons the shared tooltip without native duplicates. */
+export function enableButtonTooltips(root: HTMLElement): () => void {
+    return shared.enableButtons(root);
+}
 
 /**
  * Attach a tooltip to `trigger`. Costs one attribute on the trigger and one map entry: the

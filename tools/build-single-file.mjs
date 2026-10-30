@@ -17,6 +17,7 @@ import { build } from 'esbuild';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 import { dirname, join, resolve } from 'node:path';
+import { inlineMonacoCss } from './inline-monaco-css.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -45,10 +46,16 @@ const built = await build({
     write: false,
     format: 'iife',
     target: ['es2020'],
-    minify: true,
+    // Keep identifiers distinct across this large concatenated bundle. With esbuild
+    // 0.28.x identifier minification can collide a module variable with a function and
+    // produce an HTML file that parses but crashes during workspace construction.
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: false,
     legalComments: 'none',
     define: { 'process.env.NODE_ENV': '"production"' },
     loader: { '.ts': 'ts' },
+    plugins: [inlineMonacoCss()],
     // `import.meta.url` resolves to nothing in an IIFE; the only user is the OPTIONAL worker
     // engine, which the playground does not construct (it uses the in-page PineEngine).
     logOverride: { 'empty-import-meta': 'silent' },
@@ -64,7 +71,9 @@ if (!template.includes(SCRIPT)) throw new Error(`the template lost its entry: ${
 const page = template
     .replace('<meta name="viewport" content="width=device-width, initial-scale=1" />',
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />\n        <meta name="theme-color" content="#151619" />\n        <meta name="apple-mobile-web-app-capable" content="yes" />\n        <meta name="mobile-web-app-capable" content="yes" />')
-    .replace(SCRIPT, `<script>\n${js}\n        </script>`)
+    // A replacement callback is essential: bundled editor code contains `$&` and
+    // other replacement tokens that String.replace would otherwise expand as HTML.
+    .replace(SCRIPT, () => `<script>\n${js.replace(/<\/script/gi, '<\\/script')}\n        </script>`)
     // A phone's URL bar shrinks the viewport as you scroll; 100% of a fixed html/body keeps
     // the chart from jumping, and `overscroll-behavior` kills the rubber-band bounce that
     // otherwise drags the whole workspace when a chart is panned past its edge.

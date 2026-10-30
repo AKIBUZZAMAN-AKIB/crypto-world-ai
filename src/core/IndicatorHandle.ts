@@ -24,13 +24,13 @@ export interface CodeUpdateResult {
 export interface IndicatorHandle {
     readonly id: string;
     readonly title: string;
-    /** The script source this indicator currently runs (the one it was added with,
-     *  until {@link updateCode} replaces it). `undefined` for a NATIVE (core-computed)
-     *  indicator — there is no script to show. What a host editor opens when a legend
-     *  action asks for "the code behind this row". */
+    /** The current script source, when available. Many native indicators also expose
+     *  readable source for the editor; native identity still takes precedence. */
     readonly source?: string;
-    /** The registered type of a NATIVE (core-computed) indicator — `undefined` for a
-     *  script indicator. The two are exclusive: a handle has a `source` or a `nativeType`. */
+    /** Registered scripting language used by this source-backed instance. */
+    readonly language?: string;
+    /** The registered type of a native indicator — `undefined` for a source-backed
+     *  script. Native handles may also expose readable `source`. */
     readonly nativeType?: string;
     /** Inputs parsed from the Pine source (populated once the script is prepared). */
     readonly inputs: readonly InputSchema[];

@@ -23,6 +23,8 @@ import { Popover } from '../ui/components/popover';
 import { downloadText } from '../ui/download';
 import { iconEl } from '../ui/icons';
 import { injectStyles } from '../ui/styles';
+import { panelResizeGrip } from '../ui/panel-drag';
+import type { WorkspaceToolPanel } from './workspace-tool-panel';
 import {
     favoriteKeyForBuiltin,
     favoriteKeyForTemplate,
@@ -32,6 +34,7 @@ import {
     type IndicatorTemplateTab,
 } from './indicator-templates';
 
+let templatesMenuSequence = 0;
 export const TEMPLATES_MENU_STYLE_ID = 'vela-templates-menu';
 
 export const TEMPLATES_MENU_CSS = `
@@ -80,8 +83,8 @@ export const TEMPLATES_MENU_CSS = `
 .vela-tm-tab:hover { color: var(--vela-fg-bright); background: var(--vela-hover); }
 .vela-tm-tab[data-active='1'] { color: var(--vela-fg-on-fill); background: var(--vela-accent); }
 .vela-tm-tab:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: -2px; }
-.vela-tm-fav[data-on='1'] { color: var(--vela-accent); }
-.vela-tm-head { display: flex; align-items: center; gap: 10px; padding: 8px 8px 6px; }
+.vela-tm-fav[data-on='1'] { color: var(--vela-accent-ink, var(--vela-accent)); }
+.vela-tm-head { position: sticky; top: -6px; z-index: 2; display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: var(--vela-surface-elev); }
 .vela-tm-mark {
     flex: none;
     display: grid;
@@ -90,10 +93,10 @@ export const TEMPLATES_MENU_CSS = `
     height: 30px;
     border-radius: 9px;
     background: var(--vela-hover-strong);
-    color: var(--vela-accent);
+    color: var(--vela-accent-ink, var(--vela-accent));
     font-size: 16px;
 }
-.vela-tm-headid { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vela-tm-headid { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .vela-tm-title {
     font-size: 14px;
     font-weight: 650;
@@ -109,7 +112,7 @@ export const TEMPLATES_MENU_CSS = `
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.vela-tm-sub[data-house='1'] { color: var(--vela-accent); font-weight: 550; }
+.vela-tm-sub[data-house='1'] { color: var(--vela-accent-ink, var(--vela-accent)); font-weight: 550; }
 /* The list is one focusable group: rows are buttons, so a keyboard user tabs the set. */
 .vela-tm-list { display: flex; flex-direction: column; gap: 1px; }
 .vela-tm-row {
@@ -119,6 +122,7 @@ export const TEMPLATES_MENU_CSS = `
     align-items: center;
     gap: 8px;
     width: 100%;
+    min-width: 0;
     padding: 6px 8px;
     border-radius: 8px;
     cursor: pointer;
@@ -138,7 +142,7 @@ export const TEMPLATES_MENU_CSS = `
     height: 24px;
     border-radius: 6px;
     background: var(--vela-hover-strong);
-    color: var(--vela-accent);
+    color: var(--vela-accent-ink, var(--vela-accent));
     font-size: 13px;
 }
 .vela-tm-id { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
@@ -166,7 +170,7 @@ export const TEMPLATES_MENU_CSS = `
     padding: 1px 5px;
     border-radius: 4px;
     background: var(--vela-hover-strong);
-    color: var(--vela-accent);
+    color: var(--vela-accent-ink, var(--vela-accent));
 }
 .vela-tm-ico {
     all: unset;
@@ -261,7 +265,7 @@ export const TEMPLATES_MENU_CSS = `
     text-align: center;
     cursor: pointer;
 }
-.vela-tm-primary:hover { filter: brightness(1.07); }
+.vela-tm-primary:hover { background: color-mix(in srgb, var(--vela-accent) 92%, #000); }
 .vela-tm-primary:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: 2px; }
 .vela-tm-act {
     all: unset;
@@ -293,8 +297,136 @@ export const TEMPLATES_MENU_CSS = `
 .vela-tm-flash[data-tone='bad'] { color: var(--vela-down, #e5484d); } /* palette-exempt: var() fallback for a menu portalled outside the token scope */
 /* The phone's More-drawer door opens the SAME surface as a compact centred card. */
 .vela-tm-dialog { width: min(360px, calc(100vw - 24px)) !important; max-width: calc(100vw - 24px) !important; }
-.vela-tm-dialog .vela-dialog-body { padding: 0; max-height: min(72vh, 560px); overflow: auto; }
+.vela-tm-dialog .vela-dialog-body { padding: 0; max-height: none; overflow: auto; }
 .vela-tm-dialog .vela-tm { width: 100%; border: 0; box-shadow: none; max-height: none; }
+/* A workspace pane already has a shell. The premium popover skin must not add a
+   second card, inset track or raised tiles inside it. Scope these rules to the pane so
+   the standalone popover and dialog keep their own surface and behavior. */
+.vela-panel.vela-templates-panel .vela-panel-body {
+    display: flex; flex-direction: column; overflow: hidden; padding: 0; container-type: inline-size;
+}
+.vela-panel.vela-templates-panel .vela-tm {
+    display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0;
+    width: 100%; height: 100%; max-height: none; overflow: hidden; padding: 0;
+    border: 0; border-radius: 0; background: transparent; box-shadow: none;
+}
+/* A short pane must let the entire save form scroll into view, including its checkbox. */
+.vela-panel.vela-templates-panel .vela-tm[data-saving='1'] { overflow-x: hidden; overflow-y: auto; }
+.vela-panel.vela-templates-panel .vela-tm-tabs {
+    flex: none; gap: 0; min-width: 0; margin: 0; padding: 0 8px;
+    border: 0; border-bottom: 1px solid var(--vela-border); border-radius: 0;
+    background: transparent; box-shadow: none; scrollbar-width: none;
+}
+.vela-panel.vela-templates-panel .vela-tm-tab {
+    display: inline-flex; align-items: center; justify-content: center;
+    box-sizing: border-box; height: 40px; min-height: 40px; padding: 0 10px;
+    border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+    background: transparent; box-shadow: none; color: var(--vela-fg-muted);
+    font-size: 12px; font-weight: 600; letter-spacing: 0;
+}
+.vela-panel.vela-templates-panel .vela-tm-tab:hover {
+    background: var(--vela-hover); color: var(--vela-fg-bright); box-shadow: none;
+}
+.vela-panel.vela-templates-panel .vela-tm-tab[data-active='1'] {
+    background: transparent; color: var(--vela-accent-ink, var(--vela-accent));
+    border-bottom-color: var(--vela-accent-ink, var(--vela-accent)); box-shadow: none;
+}
+.vela-panel.vela-templates-panel .vela-tm-tab:active { transform: none; }
+.vela-panel.vela-templates-panel .vela-tm-toolbar {
+    display: flex; flex: none; align-items: center; gap: 2px; min-width: 0;
+    min-height: 42px; padding: 3px 8px; border-bottom: 1px solid var(--vela-border);
+}
+.vela-panel.vela-templates-panel .vela-tm-pane-summary {
+    flex: 1 1 auto; min-width: 0; padding: 0 4px; overflow: hidden;
+    color: var(--vela-fg-muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap;
+}
+.vela-panel.vela-templates-panel .vela-tm-pane-summary[data-house='1'] { color: var(--vela-accent-ink, var(--vela-accent)); }
+.vela-panel.vela-templates-panel .vela-tm-toolbar .vela-tm-act {
+    display: inline-flex; flex: none; align-items: center; gap: 5px; width: auto;
+    height: 34px; min-height: 34px; padding: 0 7px; border: 0; border-radius: 3px;
+    background: transparent; box-shadow: none; font-size: 12px; white-space: nowrap;
+}
+.vela-panel.vela-templates-panel .vela-tm-toolbar .vela-tm-save { color: var(--vela-accent-ink, var(--vela-accent)); }
+.vela-panel.vela-templates-panel .vela-tm-toolbar .vela-tm-act:hover { background: var(--vela-hover); }
+.vela-panel.vela-templates-panel .vela-tm-list {
+    display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0;
+    overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 4px 8px 8px;
+    scrollbar-width: thin; scrollbar-color: var(--vela-scroll) transparent;
+}
+.vela-panel.vela-templates-panel .vela-tm-list::-webkit-scrollbar { width: 8px; }
+.vela-panel.vela-templates-panel .vela-tm-list::-webkit-scrollbar-thumb {
+    background: var(--vela-scroll); border: 2px solid transparent; background-clip: padding-box;
+}
+.vela-panel.vela-templates-panel .vela-tm-item,
+.vela-panel.vela-templates-panel .vela-tm-item > div { min-width: 0; }
+.vela-panel.vela-templates-panel .vela-tm-row {
+    min-width: 0; min-height: 44px; padding: 6px; border: 0; border-radius: 0;
+    background: transparent; box-shadow: none;
+}
+.vela-panel.vela-templates-panel .vela-tm-row:hover { background: var(--vela-hover); border: 0; }
+.vela-panel.vela-templates-panel .vela-tm-row[data-current='1'] { background: var(--vela-hover); }
+.vela-panel.vela-templates-panel .vela-tm-row:active { transform: none; }
+.vela-panel.vela-templates-panel .vela-tm-glyph {
+    width: 22px; height: 22px; border: 0; border-radius: 0;
+    background: transparent; box-shadow: none; color: var(--vela-fg-muted);
+}
+.vela-panel.vela-templates-panel .vela-tm-glyph .vela-icon { width: 16px; height: 16px; }
+.vela-panel.vela-templates-panel .vela-tm-badge { padding: 0 3px; border-radius: 0; background: transparent; }
+.vela-panel.vela-templates-panel .vela-tm-ico {
+    box-sizing: border-box; width: 32px; height: 32px; border: 0; border-radius: 3px; box-shadow: none;
+}
+.vela-panel.vela-templates-panel .vela-tm-strip { gap: 2px; padding: 1px 6px 7px 34px; }
+.vela-panel.vela-templates-panel .vela-tm-chip {
+    max-width: 100%; height: auto; min-height: 30px; padding: 5px 7px; border: 0; border-radius: 3px;
+    background: transparent; box-shadow: none; font-size: 11.5px; font-weight: 500; white-space: normal;
+}
+.vela-panel.vela-templates-panel .vela-tm-chip span { min-width: 0; overflow-wrap: anywhere; }
+.vela-panel.vela-templates-panel .vela-tm-chip:hover { background: var(--vela-hover); box-shadow: none; }
+.vela-panel.vela-templates-panel .vela-tm-chip[data-danger='1'] { color: var(--vela-down, #e5484d); } /* palette-exempt: var() fallback */
+.vela-panel.vela-templates-panel .vela-tm-group { padding: 6px; margin: 0; }
+.vela-panel.vela-templates-panel .vela-tm-empty { padding: 12px 6px; }
+.vela-panel.vela-templates-panel .vela-tm-form { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--vela-border); }
+.vela-panel.vela-templates-panel .vela-tm .vela-tm-input {
+    min-width: 0; border-radius: 3px; background: var(--vela-surface); box-shadow: none;
+}
+.vela-panel.vela-templates-panel .vela-tm .vela-tm-input:focus { box-shadow: none; }
+.vela-panel.vela-templates-panel .vela-tm .vela-tm-check input { box-shadow: none; }
+.vela-panel.vela-templates-panel .vela-tm-primary {
+    border-radius: 3px; border: 0; background: var(--vela-accent); color: var(--vela-fg-on-fill); box-shadow: none;
+}
+.vela-panel.vela-templates-panel .vela-tm-primary:hover { background: color-mix(in srgb, var(--vela-accent) 92%, #000); }
+.vela-panel.vela-templates-panel :is(.vela-tm-tab, .vela-tm-row, .vela-tm-ico, .vela-tm-act, .vela-tm-chip, .vela-tm-input, .vela-tm-primary):focus-visible {
+    outline: 2px solid var(--vela-fg-bright); outline-offset: -2px; box-shadow: none;
+}
+.vela-panel.vela-templates-panel .vela-tm-flash {
+    flex: none; min-height: 0; margin: 0; padding: 7px 12px; border-top: 1px solid var(--vela-border);
+}
+.vela-panel.vela-templates-panel .vela-tm-flash:empty { display: none; }
+/* In narrow or embedded hosts, keep full-size row actions without squeezing a template
+   name down to a few characters. The name may wrap to two lines; its accessible label
+   still carries the full text. */
+@container (max-width: 260px) {
+    .vela-panel.vela-templates-panel .vela-tm-glyph { display: none; }
+    .vela-panel.vela-templates-panel .vela-tm-name {
+        display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+        white-space: normal; overflow-wrap: anywhere; line-height: 1.3;
+    }
+    .vela-panel.vela-templates-panel .vela-tm-strip { padding-left: 6px; }
+}
+/* At the minimum floating height the entire body scrolls instead of trapping a
+   zero-height list beneath fixed tabs and controls. */
+.vela-panel.vela-templates-panel[data-compact-height] .vela-panel-body { overflow: auto; }
+.vela-panel.vela-templates-panel[data-compact-height] .vela-tm { flex: none; height: auto; overflow: visible; }
+.vela-panel.vela-templates-panel[data-compact-height] .vela-tm-list { flex: none; min-height: 120px; overflow: visible; }
+[data-layout='mobile'] .vela-panel.vela-templates-panel .vela-tm-row { min-height: 44px; }
+[data-layout='mobile'] .vela-panel.vela-templates-panel .vela-tm-ico { width: 40px; height: 40px; }
+[data-layout='mobile'] .vela-panel.vela-templates-panel .vela-tm-tab { height: 44px; min-height: 44px; }
+[data-layout='mobile'] .vela-panel.vela-templates-panel .vela-tm-chip { min-height: 40px; }
+[data-layout='mobile'] .vela-panel.vela-templates-panel .vela-tm-toolbar .vela-tm-act,
+[data-layout='mobile'] .vela-panel.vela-templates-panel .vela-tm-primary { height: 40px; min-height: 40px; }
+[data-layout='mobile'] .vela-panel.vela-templates-panel .vela-tm-input { height: 40px; font-size: 16px; }
+[data-layout='mobile'] .vela-panel.vela-templates-panel .vela-tm-check { min-height: 40px; }
+
 `;
 
 /** One saved template, as the menu lists it. */
@@ -333,9 +465,11 @@ export interface TemplatesMenuOptions {
 
 export class TemplatesMenu {
     private readonly opts: TemplatesMenuOptions;
+    private readonly tabBase = `vela-template-tabs-${++templatesMenuSequence}`;
     private doc: Document;
     private popover: Popover | null = null;
     private dialog: Dialog | null = null;
+    private pane: WorkspaceToolPanel | null = null;
     private panel: HTMLElement | null = null;
     private trigger: HTMLElement | null = null;
     /** The active Favorites / My templates / Technical / Financial category. */
@@ -359,7 +493,47 @@ export class TemplatesMenu {
     }
 
     get isOpen(): boolean {
-        return this.popover?.open === true || this.dialog?.open === true;
+        return this.pane?.open === true || this.popover?.open === true || this.dialog?.open === true;
+    }
+
+    /** Attach the same template actions to a workspace pane instead of a popup. */
+    attachPanel(pane: WorkspaceToolPanel): void {
+        this.pane = pane;
+        this.doc = pane.el.ownerDocument;
+        injectStyles(TEMPLATES_MENU_STYLE_ID, TEMPLATES_MENU_CSS, this.doc);
+        this.panel = pane.content;
+        this.panel.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape' || event.defaultPrevented || (!this.openRow && !this.saving && !this.renaming)) return;
+            const rowName = this.renaming ?? this.openRow;
+            this.openRow = null;
+            this.armed = null;
+            this.renaming = null;
+            this.renameDraft = null;
+            this.saving = false;
+            event.preventDefault();
+            event.stopPropagation();
+            this.render();
+            const row = rowName ? [...(this.panel?.querySelectorAll<HTMLElement>('.vela-tm-item') ?? [])]
+                .find((el) => el.dataset.name === rowName) : null;
+            (row?.querySelector<HTMLElement>('.vela-tm-kebab') ?? this.panel?.querySelector<HTMLElement>('.vela-tm-save'))
+                ?.focus({ preventScroll: true });
+        });
+        pane.onVisibilityChange = (open, userOpening) => {
+            if (open) {
+                this.beginOpen();
+                this.render();
+                if (userOpening && !pane.el.closest('[data-layout="mobile"]')) {
+                    setTimeout(() => { if (pane.open) this.panel?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true }); }, 0);
+                }
+            } else {
+                this.openRow = null;
+                this.armed = null;
+                this.renaming = null;
+                this.renameDraft = null;
+                this.saving = false;
+            }
+            this.opts.onOpenChange?.(open);
+        };
     }
 
     /** Reset transient row state when the panel is opened from a new door. */
@@ -368,12 +542,30 @@ export class TemplatesMenu {
         this.openRow = null;
         this.armed = null;
         this.renaming = null;
+        this.renameDraft = null;
         this.saving = false;
         this.flash = null;
     }
 
+    /** Switch categories the same way for pointer and keyboard navigation. */
+    private selectTab(tab: IndicatorTemplateTab): void {
+        this.tab = tab;
+        this.openRow = null;
+        this.armed = null;
+        this.renaming = null;
+        this.renameDraft = null;
+        this.saving = false;
+        this.flash = null;
+        this.render();
+    }
+
     /** Open under the button (or toggle it shut). */
     open(trigger: HTMLElement): void {
+        if (this.pane) {
+            if (this.pane.open) this.pane.toggle(false);
+            else this.pane.showFrom(trigger);
+            return;
+        }
         if (this.popover?.open) {
             this.popover.hide();
             return;
@@ -400,6 +592,7 @@ export class TemplatesMenu {
                 this.openRow = null;
                 this.armed = null;
                 this.renaming = null;
+                this.renameDraft = null;
                 this.saving = false;
                 this.opts.onOpenChange?.(false);
                 this.trigger?.focus({ preventScroll: true });
@@ -415,6 +608,7 @@ export class TemplatesMenu {
 
     /** Open the SAME panel as a centred non-modal dialog — the phone's More-drawer door. */
     openDialog(host: HTMLElement): void {
+        if (this.pane) { this.pane.showFrom(); return; }
         if (this.dialog?.open) {
             this.dialog.hide();
             return;
@@ -425,7 +619,6 @@ export class TemplatesMenu {
         this.beginOpen();
         const dialog = new Dialog({
             title: 'Indicator templates',
-            kicker: 'Library',
             headerIcon: 'templates',
             host,
             className: 'vela-tm-dialog',
@@ -445,6 +638,7 @@ export class TemplatesMenu {
                 this.openRow = null;
                 this.armed = null;
                 this.renaming = null;
+                this.renameDraft = null;
                 this.saving = false;
                 this.opts.onOpenChange?.(false);
             },
@@ -455,6 +649,7 @@ export class TemplatesMenu {
     }
 
     close(): void {
+        this.pane?.toggle(false);
         this.popover?.hide();
         this.dialog?.hide();
     }
@@ -467,6 +662,8 @@ export class TemplatesMenu {
     destroy(): void {
         this.popover?.destroy();
         this.dialog?.destroy();
+        this.pane?.destroy();
+        this.pane = null;
         this.popover = null;
         this.dialog = null;
         this.panel = null;
@@ -478,6 +675,19 @@ export class TemplatesMenu {
         const panel = this.panel;
         if (!panel) return;
         const d = this.doc;
+        const active = d.activeElement as HTMLElement | null;
+        const focusKey = active && panel.contains(active) ? active.dataset.tmFocus : undefined;
+        const focusRow = active?.closest<HTMLElement>('.vela-tm-item')?.dataset.name;
+        const activeSaveInput = focusKey === 'form:name' ? active as HTMLInputElement : null;
+        const selection = activeSaveInput ? { start: activeSaveInput.selectionStart, end: activeSaveInput.selectionEnd,
+            direction: activeSaveInput.selectionDirection } : null;
+        const saveDraft = this.saving ? panel.querySelector<HTMLInputElement>('.vela-tm-form .vela-tm-input')?.value ?? '' : '';
+        const saveMarket = this.saving && (panel.querySelector<HTMLInputElement>('.vela-tm-form .vela-tm-check input')?.checked ?? false);
+        const previousList = panel.querySelector<HTMLElement>('.vela-tm-list');
+        const listScroll = previousList?.dataset.tab === this.tab ? previousList.scrollTop : 0;
+        const tabsScroll = panel.querySelector<HTMLElement>('.vela-tm-tabs')?.scrollLeft ?? 0;
+        const formScroll = this.saving ? panel.querySelector<HTMLElement>('.vela-tm')?.scrollTop ?? 0 : 0;
+        const bodyScroll = panel.scrollTop;
         const rows = this.opts.templates();
         const builtins = this.opts.builtins?.() ?? [];
         const favorites = this.opts.favorites?.() ?? [];
@@ -488,16 +698,18 @@ export class TemplatesMenu {
 
         const card = d.createElement('div');
         card.className = 'vela-tm';
+        if (this.saving) card.dataset.saving = '1';
 
         // ── head: what this is, how many, and what new charts start from ──
         const head = d.createElement('div');
         head.className = 'vela-tm-head';
+        head.tabIndex = 0;
+        head.setAttribute('aria-label', 'Move indicator templates panel');
         const mark = d.createElement('span');
         mark.className = 'vela-tm-mark';
         mark.appendChild(iconEl('templates', d));
         const headId = d.createElement('div');
         headId.className = 'vela-tm-headid';
-        headId.setAttribute('data-kicker', 'Library'); // R87 premium eyebrow (see ui/premium.ts)
         const title = d.createElement('b');
         title.className = 'vela-tm-title';
         title.textContent = 'Indicator templates';
@@ -507,13 +719,25 @@ export class TemplatesMenu {
             sub.textContent = `New charts start with “${house}”`;
             sub.dataset.house = '1';
         } else {
-            sub.textContent = rows.length === 0
-                ? 'A template is a chart’s indicators, settings included'
-                : `${rows.length} saved · choose a category below`;
+            sub.textContent = rows.length === 0 ? 'No saved templates' : `${rows.length} saved`;
         }
         headId.append(title, sub);
-        head.append(mark, headId);
-        card.appendChild(head);
+        let summary: HTMLDivElement | null = null;
+        if (this.pane) {
+            summary = d.createElement('div');
+            summary.className = 'vela-tm-pane-summary';
+            if (this.tab === 'favorites') {
+                const count = view.rows.length + view.builtins.length;
+                summary.textContent = count === 0 ? 'No favorites' : `${count} favorite${count === 1 ? '' : 's'}`;
+            } else {
+                summary.textContent = sub.textContent;
+                if (house) summary.dataset.house = '1';
+            }
+            summary.title = summary.textContent ?? '';
+        } else {
+            head.append(mark, headId, panelResizeGrip(d, 'indicator templates panel'));
+            card.appendChild(head);
+        }
 
         // ── the four required categories ──
         const tabs = d.createElement('div');
@@ -525,37 +749,70 @@ export class TemplatesMenu {
             b.type = 'button';
             b.className = 'vela-tm-tab';
             b.dataset.tab = t.id;
+            b.dataset.tmFocus = `tab:${t.id}`;
             b.textContent = t.label;
+            b.id = `${this.tabBase}-tab-${t.id}`;
             b.setAttribute('role', 'tab');
+            b.setAttribute('aria-controls', `${this.tabBase}-view`);
             b.setAttribute('aria-selected', String(this.tab === t.id));
             if (this.tab === t.id) b.dataset.active = '1';
             b.tabIndex = this.tab === t.id ? 0 : -1;
-            b.addEventListener('click', () => {
-                this.tab = t.id;
-                this.openRow = null;
-                this.armed = null;
-                this.renaming = null;
-                this.saving = false;
-                this.flash = null;
-                this.render();
-            });
+            b.addEventListener('click', () => this.selectTab(t.id));
             b.addEventListener('keydown', (e) => {
-                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
                 e.preventDefault();
+                e.stopPropagation();
                 const at = INDICATOR_TEMPLATE_TABS.findIndex((x) => x.id === this.tab);
-                const step = e.key === 'ArrowRight' ? 1 : -1;
-                this.tab = INDICATOR_TEMPLATE_TABS[(at + step + INDICATOR_TEMPLATE_TABS.length) % INDICATOR_TEMPLATE_TABS.length]!.id;
-                this.render();
+                const next = e.key === 'Home' ? 0 : e.key === 'End' ? INDICATOR_TEMPLATE_TABS.length - 1
+                    : (at + (e.key === 'ArrowRight' ? 1 : -1) + INDICATOR_TEMPLATE_TABS.length) % INDICATOR_TEMPLATE_TABS.length;
+                this.selectTab(INDICATOR_TEMPLATE_TABS[next]!.id);
                 this.panel?.querySelector<HTMLElement>(`.vela-tm-tab[data-tab="${this.tab}"]`)?.focus();
             });
             tabs.appendChild(b);
         }
         card.appendChild(tabs);
 
+        // Library controls stay above the list in the workspace pane, even when the
+        // saved collection is long. The compact standalone menu keeps its old order.
+        const library = this.tab === 'my' || this.tab === 'favorites';
+        if (this.pane && library) {
+            const toolbar = d.createElement('div');
+            toolbar.className = 'vela-tm-toolbar';
+            if (summary) toolbar.appendChild(summary);
+            if (this.opts.onSave) {
+                const save = this.action(this.saving ? 'close' : 'plus', this.saving ? 'Cancel' : 'Save', () => {
+                    this.saving = !this.saving;
+                    this.openRow = null;
+                    this.flash = null;
+                    this.render();
+                    if (this.saving) this.panel?.querySelector<HTMLInputElement>('.vela-tm-input')?.focus();
+                });
+                save.classList.add('vela-tm-save');
+                save.dataset.tmFocus = 'library:save';
+                save.title = this.saving ? 'Cancel saving a template' : 'Save indicator template';
+                save.setAttribute('aria-label', save.title);
+                save.setAttribute('aria-expanded', String(this.saving));
+                toolbar.appendChild(save);
+            }
+            if (this.opts.onImport) {
+                const importBtn = this.action('upload', 'Import', () => this.pickFile());
+                importBtn.classList.add('vela-tm-import');
+                importBtn.dataset.tmFocus = 'library:import';
+                importBtn.title = 'Import template file';
+                importBtn.setAttribute('aria-label', importBtn.title);
+                toolbar.appendChild(importBtn);
+            }
+            card.appendChild(toolbar);
+            if (this.saving) card.appendChild(this.saveForm(saveDraft, saveMarket));
+        }
+
         // ── the filtered list ──
         const list = d.createElement('div');
         list.className = 'vela-tm-list';
+        list.dataset.tab = this.tab;
+        list.id = `${this.tabBase}-view`;
         list.setAttribute('role', 'tabpanel');
+        list.setAttribute('aria-labelledby', `${this.tabBase}-tab-${this.tab}`);
         if (view.rows.length === 0 && view.builtins.length === 0) {
             const empty = d.createElement('div');
             empty.className = 'vela-tm-empty';
@@ -564,20 +821,22 @@ export class TemplatesMenu {
         }
         for (const row of view.rows) list.appendChild(this.renderRow(row, house, charts, fav));
         if (view.builtins.length > 0) {
-            const group = d.createElement('div');
-            group.className = 'vela-tm-group';
-            group.textContent = this.tab === 'favorites' ? 'Favorite built-ins' : this.tab === 'financial' ? 'Financial' : 'Technical';
-            list.appendChild(group);
+            if (!this.pane || (this.tab === 'favorites' && view.rows.length > 0)) {
+                const group = d.createElement('div');
+                group.className = 'vela-tm-group';
+                group.textContent = this.tab === 'favorites' ? 'Favorite built-ins' : this.tab === 'financial' ? 'Financial' : 'Technical';
+                list.appendChild(group);
+            }
             for (const built of view.builtins) list.appendChild(this.renderBuiltin(built, fav));
         }
         card.appendChild(list);
 
         // Save/import belong to the user's own template library.
-        if (this.tab === 'my' || this.tab === 'favorites') {
+        if (!this.pane && library) {
             const sep = d.createElement('div');
             sep.className = 'vela-tm-sep';
             card.appendChild(sep);
-            if (this.saving) card.appendChild(this.saveForm());
+            if (this.saving) card.appendChild(this.saveForm(saveDraft, saveMarket));
             else if (this.opts.onSave) {
                 const save = this.action('plus', 'Save indicator template…', () => {
                     this.saving = true;
@@ -608,6 +867,25 @@ export class TemplatesMenu {
         card.appendChild(flash);
 
         panel.replaceChildren(card);
+        if (listScroll > 0) list.scrollTop = listScroll;
+        if (tabsScroll !== 0) tabs.scrollLeft = tabsScroll;
+        if (formScroll > 0) card.scrollTop = formScroll;
+        if (bodyScroll > 0) panel.scrollTop = bodyScroll;
+        if (focusKey) {
+            const target = [...panel.querySelectorAll<HTMLElement>('[data-tm-focus]')].find((el) => el.dataset.tmFocus === focusKey);
+            if (target) {
+                target.focus({ preventScroll: true });
+                if (selection && selection.start !== null && selection.end !== null && focusKey === 'form:name') {
+                    (target as HTMLInputElement).setSelectionRange(selection.start, selection.end, selection.direction ?? undefined);
+                }
+            } else if (focusKey.startsWith('action:') && focusRow) {
+                const row = [...panel.querySelectorAll<HTMLElement>('.vela-tm-item')].find((el) => el.dataset.name === focusRow);
+                (row?.querySelector<HTMLElement>('.vela-tm-kebab') ?? panel.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]'))
+                    ?.focus({ preventScroll: true });
+            } else if (focusKey.startsWith('favorite:')) {
+                panel.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true });
+            } else if (focusKey === 'form:save') panel.querySelector<HTMLElement>('.vela-tm-save')?.focus({ preventScroll: true });
+        }
     }
 
     /** The pin that puts a saved/built-in template on the Favorites tab. */
@@ -618,6 +896,7 @@ export class TemplatesMenu {
         const b = d.createElement('button');
         b.type = 'button';
         b.className = 'vela-tm-ico vela-tm-fav';
+        b.dataset.tmFocus = `favorite:${key}`;
         b.dataset.on = on ? '1' : '0';
         b.title = on ? 'Remove from Favorites' : 'Add to Favorites';
         b.setAttribute('aria-label', b.title);
@@ -675,11 +954,13 @@ export class TemplatesMenu {
         wrap.className = 'vela-tm-item';
         wrap.dataset.name = row.name;
 
-        const btn = d.createElement('button');
-        btn.type = 'button';
+        // A rename input cannot be nested inside the apply button.
+        const renaming = this.renaming === row.name;
+        const btn = d.createElement(renaming ? 'div' : 'button');
+        if (!renaming) (btn as HTMLButtonElement).type = 'button';
         btn.className = 'vela-tm-row';
         btn.dataset.name = row.name;
-        btn.setAttribute('aria-label', `Apply the template ${row.name} to this chart`);
+        if (!renaming) btn.setAttribute('aria-label', `Apply the template ${row.name} to this chart`);
         if (house === row.name) btn.dataset.current = '1';
 
         const glyph = d.createElement('span');
@@ -692,6 +973,7 @@ export class TemplatesMenu {
             const input = d.createElement('input');
             input.type = 'text';
             input.className = 'vela-tm-input';
+            input.dataset.tmFocus = `rename:${row.name}`;
             input.value = this.renameDraft ?? row.name;
             input.maxLength = 40;
             input.setAttribute('aria-label', `Rename ${row.name}`);
@@ -761,6 +1043,7 @@ export class TemplatesMenu {
         const kebab = d.createElement('button');
         kebab.type = 'button';
         kebab.className = 'vela-tm-ico vela-tm-kebab';
+        kebab.dataset.tmFocus = `actions:${row.name}`;
         kebab.appendChild(iconEl('kebab', d));
         kebab.title = `Actions for ${row.name}`;
         kebab.setAttribute('aria-label', `Actions for ${row.name}`);
@@ -768,6 +1051,7 @@ export class TemplatesMenu {
         kebab.addEventListener('click', () => {
             this.openRow = this.openRow === row.name ? null : row.name;
             this.renaming = null;
+            this.renameDraft = null;
             this.saving = false;
             this.armed = null;
             this.flash = null;
@@ -779,6 +1063,7 @@ export class TemplatesMenu {
         const star = d.createElement('button');
         star.type = 'button';
         star.className = 'vela-tm-ico vela-tm-star';
+        star.dataset.tmFocus = `default:${row.name}`;
         star.dataset.on = house === row.name ? '1' : '0';
         const starLabel = house === row.name
             ? `${row.name} seeds new charts — turn off`
@@ -820,10 +1105,11 @@ export class TemplatesMenu {
         const d = this.doc;
         const strip = d.createElement('div');
         strip.className = 'vela-tm-strip';
-        const chip = (label: string, run: () => void, opts: { danger?: boolean; icon?: string } = {}): HTMLElement => {
+        const chip = (label: string, run: () => void, opts: { danger?: boolean; icon?: string; key?: string } = {}): HTMLElement => {
             const b = d.createElement('button');
             b.type = 'button';
             b.className = 'vela-tm-chip';
+            b.dataset.tmFocus = `action:${row.name}:${opts.key ?? label}`;
             if (opts.danger) b.dataset.danger = '1';
             if (opts.icon) b.appendChild(iconEl(opts.icon, d));
             const t = d.createElement('span');
@@ -848,6 +1134,7 @@ export class TemplatesMenu {
         if (this.opts.onRename) {
             strip.appendChild(chip('Rename…', () => {
                 this.renaming = row.name;
+                this.renameDraft = null;
                 this.openRow = null;
                 this.armed = null;
                 this.render();
@@ -882,12 +1169,12 @@ export class TemplatesMenu {
                 this.openRow = null;
                 this.flash = { text: `“${row.name}” deleted`, tone: 'ok' };
                 this.render();
-            }, { danger: true, icon: 'trash' }));
+            }, { danger: true, icon: 'trash', key: 'delete' }));
         }
         return strip;
     }
 
-    private saveForm(): HTMLElement {
+    private saveForm(draft: string, rememberMarket: boolean): HTMLElement {
         const d = this.doc;
         const form = d.createElement('div');
         form.className = 'vela-tm-form';
@@ -896,12 +1183,15 @@ export class TemplatesMenu {
         const input = d.createElement('input');
         input.type = 'text';
         input.className = 'vela-tm-input';
+        input.dataset.tmFocus = 'form:name';
         input.placeholder = 'Template name';
+        input.value = draft;
         input.maxLength = 40;
         input.setAttribute('aria-label', 'Save chart template as');
         const ok = d.createElement('button');
         ok.type = 'button';
         ok.className = 'vela-tm-primary';
+        ok.dataset.tmFocus = 'form:save';
         ok.textContent = 'Save';
 
         // TV's "Remember interval" checkbox, widened to what this build stores: the market
@@ -910,6 +1200,8 @@ export class TemplatesMenu {
         check.className = 'vela-tm-check';
         const box = d.createElement('input');
         box.type = 'checkbox';
+        box.checked = rememberMarket;
+        box.dataset.tmFocus = 'form:market';
         const checkText = d.createElement('span');
         checkText.textContent = 'Remember symbol & timeframe';
         check.title = 'Off by default: a template works on any market';

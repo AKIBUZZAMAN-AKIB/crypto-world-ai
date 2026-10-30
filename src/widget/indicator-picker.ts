@@ -12,6 +12,7 @@ import { iconEl } from '../ui/icons';
 import { downloadText } from '../ui/download';
 import { favoritesOf, isFavorite as isStoredFavorite, onFavoritesChange, recentOf, toggleFavorite } from './favorites';
 import type { Unsubscribe } from '../core/util/types';
+import type { WorkspaceToolPanel } from './workspace-tool-panel';
 
 export interface IndicatorRow {
     name: string;
@@ -31,6 +32,7 @@ export interface IndicatorRow {
     source?: string;
 }
 
+let indicatorPickerSequence = 0;
 const STYLE_ID = 'vela-widget-indpicker';
 const CSS = `
 .vela-ip-searchrow {
@@ -48,6 +50,11 @@ const CSS = `
 .vela-ip-searchrow:focus-within { border-color: var(--vela-border-strong); }
 .vela-ip-searchrow .vela-icon { color: var(--vela-fg-muted); }
 .vela-ip-search { flex: 1; background: transparent; color: var(--vela-fg); border: none; font-size: 14px; outline: none; }
+.vela-ip-templates-door { all: unset; box-sizing: border-box; display: inline-flex; flex: none; align-items: center; gap: 5px; min-height: 30px; padding: 0 5px; color: var(--vela-accent-ink, var(--vela-accent)); font-size: 11px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.vela-ip-templates-door:hover { background: var(--vela-hover); }
+.vela-ip-templates-door:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: -2px; }
+.vela-ip-templates-door .vela-icon { width: 14px; height: 14px; color: inherit; }
+.vela-indicator-panel[data-compact-width] .vela-ip-templates-text { display: none; }
 /* The tab strip scrolls sideways on a phone; it is a MODE over one list, not navigation. */
 .vela-ip-tabs {
     display: flex;
@@ -85,9 +92,26 @@ const CSS = `
 .vela-ip-tab[data-icon='1'] .vela-icon { font-size: 15px; width: 15px; height: 15px; }
 .vela-ip-tab[data-fav='1'][data-active='1'] { color: var(--vela-star, var(--vela-highlight)); }
 .vela-ip-list { max-height: 50vh; overflow: auto; min-width: 380px; }
+/* Workspace panes own their height; the search and filters stay above one list scroller. */
+.vela-indicator-panel .vela-panel-body { display: flex; flex-direction: column; overflow: hidden; }
+.vela-indicator-panel .vela-ip-searchrow, .vela-indicator-panel .vela-ip-tabs { flex: none; min-width: 0; }
+.vela-indicator-panel .vela-ip-list { flex: 1 1 auto; min-width: 0; min-height: 0; max-height: none; overscroll-behavior: contain; }
+.vela-indicator-panel .vela-ip-search { min-width: 0; }
+/* In a very short floating pane, let the body scroll to the separately scrolling list. */
+.vela-indicator-panel[data-compact-height] .vela-panel-body { overflow: auto; }
+.vela-indicator-panel[data-compact-height] .vela-ip-list { flex: none; min-height: 120px; max-height: 180px; }
+
+
 /* Mobile (fullscreen dialog): no width floor — 380px would overflow a phone —
    and no height cap; the fullscreen body owns the scrolling. */
 [data-layout='mobile'] .vela-ip-list { min-width: 0; max-height: none; }
+[data-layout='mobile'] .vela-indicator-panel .vela-ip-search { font-size: 16px; }
+[data-layout='mobile'] .vela-indicator-panel .vela-ip-star,
+[data-layout='mobile'] .vela-indicator-panel .vela-ip-code,
+[data-layout='mobile'] .vela-indicator-panel .vela-ip-trash,
+[data-layout='mobile'] .vela-indicator-panel .vela-ip-gear {
+    box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 0;
+}
 .vela-ip-list::-webkit-scrollbar { width: 8px; }
 .vela-ip-list::-webkit-scrollbar-thumb { background: var(--vela-scroll); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box; }
 .vela-ip-group {
@@ -117,7 +141,14 @@ const CSS = `
     cursor: pointer;
 }
 .vela-ip-row:hover { background: var(--vela-hover); }
-.vela-ip-row[data-present='1'] .vela-ip-name { color: var(--vela-accent); }
+.vela-ip-pick { all: unset; box-sizing: border-box; display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--vela-space-2); }
+button.vela-ip-pick { cursor: pointer; }
+button.vela-ip-pick:focus-visible, .vela-ip-tab:focus-visible, .vela-ip-star:focus-visible,
+.vela-ip-code:focus-visible, .vela-ip-trash:focus-visible, .vela-ip-gear:focus-visible {
+    outline: 2px solid var(--vela-accent); outline-offset: 2px;
+}
+.vela-ip-name { min-width: 0; overflow-wrap: anywhere; }
+.vela-ip-row[data-present='1'] .vela-ip-name { color: var(--vela-accent-ink, var(--vela-accent)); }
 /* The family glyph in a squared badge: identical rows of text need a left edge to scan
    down, and a shape reads faster than the category heading three rows above. */
 .vela-ip-glyph {
@@ -141,7 +172,7 @@ const CSS = `
     border-radius: var(--vela-radius-sm);
     background: var(--vela-surface-elev);
     border: 1px solid var(--vela-border);
-    color: var(--vela-accent);
+    color: var(--vela-accent-ink, var(--vela-accent));
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -181,11 +212,15 @@ const CSS = `
     .vela-ip-tab { min-height: 36px; }
 }
 .vela-ip-empty { padding: var(--vela-space-3); color: var(--vela-fg-muted); text-align: center; }
-.vela-ip-tab[data-templates='1'] { color: var(--vela-accent); font-weight: 700; }
+.vela-ip-tab[data-templates='1'] { color: var(--vela-accent-ink, var(--vela-accent)); font-weight: 700; }
 .vela-ip-tab[data-templates='1'][data-active] { box-shadow: inset 0 -2px 0 var(--vela-accent); }
 /* ── Templates tab ─────────────────────────────────────────────────────────── */
 .vela-ip-tpl { cursor: default; }
 .vela-ip-tpl .vela-ip-name { cursor: pointer; }
+button.vela-ip-template-pick { all: unset; box-sizing: border-box; flex: 1; min-width: 0; font-weight: 600; color: var(--vela-fg-bright); font-size: 13px; cursor: pointer; }
+button.vela-ip-template-pick:focus-visible, button.vela-ip-tpl:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: 2px; }
+button.vela-ip-tpl { all: unset; box-sizing: border-box; display: flex; width: 100%; align-items: center; gap: var(--vela-space-2); padding: 7px 6px; cursor: pointer; }
+button.vela-ip-tpl:hover { background: var(--vela-hover); }
 .vela-ip-tpl[data-default='1'] .vela-ip-name { color: var(--vela-fg-bright); font-weight: 600; }
 .vela-ip-tplmeta { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vela-fg-muted); font-size: var(--vela-font-size-sm, 11px); font-variant-numeric: tabular-nums; }
 .vela-ip-flash { margin: 6px 2px; padding: 8px 10px; border-radius: var(--vela-radius-sm); background: var(--vela-hover); color: var(--vela-fg); font-size: var(--vela-font-size-md); }
@@ -207,7 +242,7 @@ const CSS = `
     cursor: pointer;
 }
 .vela-ip-verb:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
-.vela-ip-verb[data-primary='1'] { border-color: var(--vela-accent); color: var(--vela-accent); }
+.vela-ip-verb[data-primary='1'] { border-color: var(--vela-accent); color: var(--vela-accent-ink, var(--vela-accent)); }
 .vela-ip-verb[data-danger='1'] { color: var(--vela-down); }
 .vela-ip-verb[data-armed='1'] { background: var(--vela-down); color: var(--vela-fg-on-fill); border-color: transparent; }
 .vela-ip-tplfoot { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 2px 4px; }
@@ -324,11 +359,14 @@ export interface IndicatorTemplatesDoor {
 
 export class IndicatorPicker {
     private readonly dialog: Dialog;
+    private pane: WorkspaceToolPanel | null = null;
+    private templatesDoor: HTMLButtonElement | null = null;
     private readonly list: HTMLElement;
     private readonly search: HTMLInputElement;
     private readonly searchRow: HTMLElement;
     private readonly tabs: HTMLElement;
     private readonly opts: IndicatorPickerOptions;
+    private readonly tabBase = `vela-indicator-tabs-${++indicatorPickerSequence}`;
     private readonly offFavorite: Unsubscribe;
     private isOpen = false;
     private activeTab = ALL_TAB;
@@ -348,6 +386,7 @@ export class IndicatorPicker {
         this.search = doc.createElement('input');
         this.search.className = 'vela-ip-search';
         this.search.placeholder = 'Search…';
+        this.search.setAttribute('aria-label', 'Search indicators');
         this.search.spellcheck = false;
         this.search.addEventListener('input', () => this.refresh());
         const searchRow = doc.createElement('div');
@@ -356,30 +395,23 @@ export class IndicatorPicker {
         this.searchRow = searchRow;
         this.tabs = doc.createElement('div');
         this.tabs.className = 'vela-ip-tabs';
+        this.tabs.setAttribute('role', 'tablist');
+        this.tabs.setAttribute('aria-label', 'Indicator categories');
         this.list = doc.createElement('div');
         this.list.className = 'vela-ip-list';
+        this.list.id = `${this.tabBase}-view`;
+        this.list.setAttribute('role', 'tabpanel');
         // A star pressed ANYWHERE (another picker, another chart) repaints an open list.
         this.offFavorite = opts.favorites ? () => undefined : onFavoritesChange(() => this.sync());
         this.dialog = new Dialog({
             title: 'Indicators',
-            kicker: 'Studies',
             headerIcon: 'indicators',
             host: opts.host,
             draggable: true,
             closeOnInteractOutside: true,
             // The picker adds/removes indicators live — keep the chart undimmed behind it.
             content: (body) => body.append(this.searchRow, this.tabs, this.list),
-            onOpenChange: (open) => {
-                this.isOpen = open;
-                if (open) {
-                    this.search.value = '';
-                    this.refresh();
-                    // Desktop only: focusing the search on a touch device would pop the
-                    // on-screen keyboard over the just-opened fullscreen picker.
-                    if (!this.search.closest('[data-layout="mobile"]')) setTimeout(() => this.search.focus(), 0);
-                }
-                opts.onOpenChange?.(open);
-            },
+            onOpenChange: (open) => this.visibilityChanged(open, true),
         });
         this.list.addEventListener('click', (e) => {
             const target = e.target as HTMLElement;
@@ -402,10 +434,11 @@ export class IndicatorPicker {
                 return;
             }
             if (gear) {
-                // One dialog at a time: on a phone both are full-screen, and stacking the
-                // instance's form over the list leaves two ✕ buttons and no back.
-                this.close();
+                // A workspace pane is non-modal, so the child form can close back to it.
+                // Standalone dialogs retain the original one-dialog-at-a-time behavior.
+                if (!this.pane) this.close();
                 this.opts.onSettings?.(Number(row.dataset.instance));
+                return;
             } else if (trash) {
                 this.opts.onRemove(Number(row.dataset.instance));
             } else if (code) {
@@ -413,7 +446,7 @@ export class IndicatorPicker {
                 const index = row.dataset.library !== undefined ? Number(row.dataset.library) : -1;
                 const entry = index >= 0 ? this.opts.library()[index] : undefined;
                 if (entry?.source) {
-                    this.close();
+                    if (!this.pane) this.close();
                     this.opts.onSource?.(entry);
                 }
                 return;
@@ -424,22 +457,84 @@ export class IndicatorPicker {
         });
     }
 
-    open(): void {
-        this.dialog.show();
+    /** Use the workspace's non-modal pane; standalone pickers keep their dialog. */
+    attachPanel(pane: WorkspaceToolPanel): void {
+        this.pane = pane;
+        pane.content.append(this.searchRow, this.tabs, this.list);
+        pane.onVisibilityChange = (open, userOpening) => this.visibilityChanged(open, userOpening);
     }
 
-    /** Re-render the lists if the dialog is open (async catalog updates land late). */
+    /** Keep the old Templates entry, but point it to the workspace's separate pane.
+     * Standalone pickers continue to expose their full embedded Templates tab. */
+    useSeparateTemplates(pane: WorkspaceToolPanel): void {
+        if (!this.opts.templates || this.templatesDoor) return;
+        const doc = this.searchRow.ownerDocument;
+        const button = doc.createElement('button');
+        button.type = 'button';
+        button.className = 'vela-ip-templates-door';
+        button.setAttribute('aria-label', 'Open indicator templates');
+        button.setAttribute('aria-controls', pane.el.id);
+        button.setAttribute('aria-expanded', String(pane.open));
+        button.title = 'Open indicator templates';
+        const label = doc.createElement('span');
+        label.className = 'vela-ip-templates-text';
+        label.textContent = 'Templates';
+        button.append(iconEl('templates', doc), label);
+        button.addEventListener('click', () => {
+            // A different dock replaces a docked Indicators pane. Return focus to the
+            // visible Indicators door in that case; a floating parent stays available.
+            const root = this.pane?.el.closest('.vela-workspace');
+            const phone = root?.getAttribute('data-layout') === 'mobile';
+            const fallback = root?.querySelector<HTMLElement>(phone ? '.vela-mb-indicators' : '.vela-widget-indicators');
+            const source = this.pane?.el.hasAttribute('data-free-floating') ? button : (fallback ?? button);
+            pane.showFrom(source);
+        });
+        this.searchRow.appendChild(button);
+        this.templatesDoor = button;
+        if (this.activeTab === TEMPLATES_TAB) this.activeTab = ALL_TAB;
+    }
+
+    setTemplatesPanelOpen(open: boolean): void {
+        this.templatesDoor?.setAttribute('aria-expanded', String(open));
+    }
+
+    private visibilityChanged(open: boolean, userOpening: boolean): void {
+        this.isOpen = open;
+        if (open) {
+            this.search.value = '';
+            this.refresh();
+            // A restored pane must not steal focus; a phone opening must not summon the keyboard.
+            if (userOpening && !this.search.closest('[data-layout="mobile"]')) {
+                setTimeout(() => {
+                    if (!this.isOpen || !this.search.isConnected) return;
+                    if (this.searchRow.hidden) this.tabs.querySelector<HTMLElement>('[aria-selected="true"]')?.focus({ preventScroll: true });
+                    else this.search.focus({ preventScroll: true });
+                }, 0);
+            }
+        }
+        this.opts.onOpenChange?.(open);
+    }
+
+    open(): void {
+        if (this.pane) this.pane.showFrom();
+        else this.dialog.show();
+    }
+
+    /** Re-render the lists when open (async catalog and active-chart updates land late). */
     sync(): void {
         if (this.isOpen) this.refresh();
     }
 
     close(): void {
-        this.dialog.hide();
+        if (this.pane) this.pane.toggle(false);
+        else this.dialog.hide();
     }
 
     destroy(): void {
         this.offFavorite();
         this.dialog.destroy();
+        this.pane?.destroy();
+        this.pane = null;
     }
 
     private isStarred(key: string): boolean {
@@ -468,10 +563,17 @@ export class IndicatorPicker {
             this.activeTab = ALL_TAB;
         }
         this.tabs.replaceChildren();
+        let tabIndex = 0;
         const tab = (label: string, id: string, opts: { icon?: string; fav?: boolean } = {}): void => {
             const el = doc.createElement('button');
             el.className = 'vela-ip-tab';
             el.type = 'button';
+            el.id = `${this.tabBase}-tab-${tabIndex++}`;
+            el.setAttribute('role', 'tab');
+            el.setAttribute('aria-controls', this.list.id);
+            el.setAttribute('aria-selected', String(this.activeTab === id));
+            el.tabIndex = this.activeTab === id ? 0 : -1;
+            if (this.activeTab === id) this.list.setAttribute('aria-labelledby', el.id);
             if (id === TEMPLATES_TAB) {
                 el.dataset.templates = '1';
                 el.title = 'Indicator templates';
@@ -488,8 +590,18 @@ export class IndicatorPicker {
             if (this.activeTab === id) el.dataset.active = '1';
             el.addEventListener('click', () => {
                 this.activeTab = id;
-                this.renderTabs(library);
                 this.refresh();
+            });
+            el.addEventListener('keydown', (event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                const tabs = Array.from(this.tabs.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+                const at = tabs.indexOf(el);
+                const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+                    : (at + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+                event.preventDefault();
+                event.stopPropagation();
+                tabs[next]?.click();
+                this.tabs.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus({ preventScroll: true });
             });
             this.tabs.appendChild(el);
         };
@@ -498,7 +610,7 @@ export class IndicatorPicker {
         // Templates sits BEFORE the families, not at the tail: at 390 px a tab after ten
         // category names is scrolled out of sight — the labelled dropdown's whole point on
         // a phone is that a trader can SEE it. It lists STACKS to apply, not studies to add.
-        if (this.opts.templates) tab('Templates', TEMPLATES_TAB);
+        if (this.opts.templates && !this.templatesDoor) tab('Templates', TEMPLATES_TAB);
         tab('All', ALL_TAB);
         for (const cat of cats) tab(cat, cat);
     }
@@ -532,21 +644,29 @@ export class IndicatorPicker {
             if (this.isStarred(key)) row.dataset.starred = '1';
             if (this.opts.onChart().some((o) => o.native && o.nativeType && o.nativeType === r.nativeType)) row.dataset.present = '1';
 
+            // The main action and its star/settings are siblings, not nested buttons.
+            const pick = doc.createElement(where.library !== undefined ? 'button' : 'div');
+            pick.className = 'vela-ip-pick';
+            if (where.library !== undefined) {
+                (pick as HTMLButtonElement).type = 'button';
+                pick.setAttribute('aria-label', `Add ${r.name}`);
+            }
             const glyph = doc.createElement('span');
             glyph.className = 'vela-ip-glyph';
             glyph.appendChild(iconEl(categoryIcon(r.category ?? ''), doc));
-            row.appendChild(glyph);
+            pick.appendChild(glyph);
 
             const name = doc.createElement('span');
             name.className = 'vela-ip-name';
             name.textContent = r.name;
-            row.appendChild(name);
+            pick.appendChild(name);
             if (r.beta) {
                 const beta = doc.createElement('span');
                 beta.className = 'vela-ip-badge';
                 beta.textContent = 'beta';
-                row.appendChild(beta);
+                pick.appendChild(beta);
             }
+            row.appendChild(pick);
             if (where.instance !== undefined) {
                 const badgeText = r.native ? 'vela' : r.language;
                 if (badgeText) {
@@ -735,9 +855,11 @@ export class IndicatorPicker {
                 continue;
             }
 
-            const name = doc.createElement('span');
-            name.className = 'vela-ip-name';
+            const name = doc.createElement('button');
+            name.type = 'button';
+            name.className = 'vela-ip-name vela-ip-template-pick';
             name.textContent = r.name;
+            name.setAttribute('aria-label', `Apply ${r.name} to this chart`);
             row.appendChild(name);
             const meta = doc.createElement('span');
             meta.className = 'vela-ip-tplmeta';
@@ -785,7 +907,8 @@ export class IndicatorPicker {
             head.textContent = 'Built-in · read-only';
             this.list.appendChild(head);
             for (const b of builtins) {
-                const row = doc.createElement('div');
+                const row = doc.createElement('button');
+                row.type = 'button';
                 row.className = 'vela-ip-row vela-ip-tpl';
                 row.dataset.builtin = b.id;
                 const glyph = doc.createElement('span');

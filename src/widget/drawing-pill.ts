@@ -68,7 +68,7 @@ const CSS = `
     height: 40px;
     border-radius: 10px;
     background: var(--vela-hover);
-    color: var(--vela-accent);
+    color: var(--vela-accent-ink, var(--vela-accent));
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
@@ -90,7 +90,7 @@ const CSS = `
     position: relative;
 }
 .vela-drawpill-btn:active { background: var(--vela-hover); }
-.vela-drawpill-btn[data-on='1'] { color: var(--vela-accent); background: var(--vela-hover); }
+.vela-drawpill-btn[data-on='1'] { color: var(--vela-accent-ink, var(--vela-accent)); background: var(--vela-hover); }
 .vela-drawpill-btn .vela-icon { font-size: 17px; width: 17px; height: 17px; }
 .vela-drawpill-badge {
     position: absolute;
@@ -98,7 +98,7 @@ const CSS = `
     right: 2px;
     font-size: 8px;
     font-weight: 700;
-    color: var(--vela-accent);
+    color: var(--vela-accent-ink, var(--vela-accent));
 }
 /* The templates sheet — the phone's door to a saved look, straight off the pill. */
 .vela-dptpl {
@@ -150,7 +150,7 @@ const CSS = `
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vela-fg) 18%, transparent);
 }
 .vela-dptpl-name { flex: 1 1 auto; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vela-dptpl-check { flex: none; width: 16px; height: 16px; color: var(--vela-accent); }
+.vela-dptpl-check { flex: none; width: 16px; height: 16px; color: var(--vela-accent-ink, var(--vela-accent)); }
 .vela-dptpl-sep { height: 1px; margin: 3px 8px; background: var(--vela-border); }
 .vela-dptpl-empty { padding: 4px 8px 8px; font-size: 12px; line-height: 1.45; color: var(--vela-fg-muted); }
 `;

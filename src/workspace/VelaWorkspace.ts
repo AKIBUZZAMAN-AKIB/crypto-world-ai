@@ -9,6 +9,8 @@
 // undo-history are per-cell; everything else is shared.
 import type { DataProvider } from '../core/ports/DataProvider';
 import type { ScriptingEngine } from '../core/ports/ScriptingEngine';
+import type { IndicatorHandle } from '../core/IndicatorHandle';
+import { indicatorReference, indicatorReferenceKey, resolveIndicatorReference } from '../core/indicator-reference';
 import type { VelaTheme, NativeBackend, VelaOptions } from '../core/options';
 import type { VelaShellOptions } from '../widget/shell-options';
 import { resolveTheme } from '../core/theme';
@@ -23,14 +25,17 @@ import { Menu, type MenuItemDescriptor } from '../ui/components/menu';
 import { Popover } from '../ui/components/popover';
 import { DatePicker, isoDate } from '../ui/components/date-picker';
 import { Dialog } from '../ui/components/dialog';
+import { enableButtonTooltips } from '../ui/components/tooltip';
 import { ReplayToolbar, REPLAY_CALENDAR_CLASS, REPLAY_DEFAULT_SPEED } from '../widget/replay-toolbar';
 import type { Vela } from '../Vela';
 import { joinWorkspaceLink } from './link';
+import { IndicatorLiveSync, type IndicatorLinkMode } from './indicator-live-sync';
 import { Topbar, priceStyleLabel, priceStyleIcon, priceStyleMarkup } from '../widget/topbar';
 import { Bottombar, RANGE_PRESETS } from '../widget/bottombar';
 import { SecondClock } from '../core/util/wall-clock';
 import { ObjectTree } from '../widget/object-tree';
 import { LayoutManagerPanel } from '../widget/layout-manager-panel';
+import { LayoutSetupPanel } from '../widget/layout-setup-panel';
 import { withFavorite } from '../widget/indicator-templates';
 import { canonicalTicker } from '../widget/symbol-quick-switch';
 import { DataWindow } from '../widget/data-window';
@@ -38,20 +43,21 @@ import { StrategyTester } from '../widget/strategy-tester';
 import { PineEditor } from '../widget/pine-editor';
 import type { ScriptRun } from '../core/script-run';
 import { PanelDock } from '../widget/panel-dock';
+import { WorkspaceToolPanel } from '../widget/workspace-tool-panel';
 import { SymbolPicker } from '../widget/symbol-picker';
 import { IndicatorPicker, indicatorKey } from '../widget/indicator-picker';
 import { TimeframeQuick } from '../widget/timeframe-quick';
 import { ShortcutsHelp } from '../widget/shortcuts-help';
-import { AlertList } from '../widget/alert-list';
-import { AlertCreateSheet } from '../widget/alert-create';
+import { AlertPanel, type AlertEditDraft } from '../widget/alert-panel';
+import type { ArmedAlertRow } from '../widget/alert-list';
+import type { AlertRequest, AlertTarget } from '../widget/alert-create';
 import { CompareSheet } from '../widget/compare-sheet';
 import type { CompareDisplay } from '../core/native-indicators/compare';
 import type { DrawingSetTemplate, DrawingSetTemplateDrawing, DrawingSyncEntry, DrawingSyncMode, IndicatorDefault, SavedPriceAlert } from '../state/document';
 import { sanitizeDrawingSetTemplates } from '../state/document';
 import { BUILTIN_TEMPLATES, builtinTemplate } from '../state/builtin-templates';
 import type { InputValue } from '../core/model/inputs';
-import { advanceAlert, alertRowLabel, alertWatchesSymbol, describeAlert, isMoveCondition, movingFires, nextAlertId, type AlertCondition, type AlertFrequency, type PriceAlert } from './price-alerts';
-import { Tip } from '../widget/tip';
+import { advanceAlert, alertRowLabel, alertWatchesSymbol, CONDITION_LABELS, describeAlert, isMoveCondition, movingFires, type AlertCondition, type AlertFrequency, type PriceAlert } from './price-alerts';
 import { REDUCED_MOTION_CSS } from '../ui/motion';
 import { CommandPalette, type PaletteCommand } from '../widget/command-palette';
 import { Toast } from '../widget/toast';
@@ -77,7 +83,6 @@ import { TimeframeDrawer } from '../widget/timeframe-drawer';
 import { DrawingsDrawer } from '../widget/drawings-drawer';
 import { MoreDrawer } from '../widget/more-drawer';
 import { TimezoneDrawer } from '../widget/timezone-drawer';
-import { PriceScaleDrawer } from '../widget/price-scale-drawer';
 import { DrawingPill } from '../widget/drawing-pill';
 import { priceStyleIds } from '../renderers/native/core/chartConfig';
 import { resolveIndicators, type IndicatorManifest, type ResolvedIndicator } from '../widget/indicators';
@@ -290,6 +295,9 @@ const CSS = `
 .vela-ws-main:focus { outline: none; }
 .vela-ws-main:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: -2px; }
 .vela-ws-main { position: relative; display: flex; flex-direction: row; flex: 1 1 auto; min-height: 0; }
+/* Contain the layout contribution of off-screen desktop panels, without clipping their
+   visible overflow or changing the scroll behaviour of the surrounding host page. */
+[data-layout='desktop'] .vela-ws-main { contain: layout; }
 .vela-ws-toolbar { position: relative; flex: none; }
 .vela-ws-strips { position: relative; flex: none; display: flex; flex-direction: column; min-width: 0; }
 .vela-ws-strips:empty { display: none; }
@@ -425,6 +433,7 @@ function primitiveBag(bag: Record<string, InputValue>): Record<string, number | 
 
 export class VelaWorkspace {
     readonly root: HTMLElement;
+    private readonly disableButtonTooltips: () => void;
     /** The shortcut system — one manager for the whole workspace, routed to the active cell. */
     readonly keymap: KeymapManager;
     /** Bar replay across every cell on one clock (see {@link WorkspaceReplay}). */
@@ -485,8 +494,12 @@ export class VelaWorkspace {
     private readonly bottombar: Bottombar | null;
     private readonly objectTree: ObjectTree;
     private readonly dataWindow: DataWindow;
+    /** Shared Layout / Chart syncing pane; a single-chart workspace has no grid setup. */
+    private layoutSetup: LayoutSetupPanel | null = null;
     /** The backtest report of the strategy running on the active cell — empty until one does. */
     private readonly strategyTester: StrategyTester;
+    /** One shared two-tab Alerts pane, reached by the bell and drawing actions. */
+    private readonly alertPanel: AlertPanel;
     /** The tester opened itself once already — after that it is the user's column to open. */
     private testerAnnounced = false;
     /** The script editor's panel — null when the host has no engine (nothing to run). */
@@ -563,6 +576,33 @@ export class VelaWorkspace {
     private readonly drawingSyncModes = new Map<string, DrawingSyncEntry>();
     /** Source drawing → target cell → generated clone id (`insertDocuments` mints fresh ids). */
     private readonly drawingSyncClones = new Map<string, Map<string, string>>();
+    /** Newborns waiting for their inherited manifest; donor identity prevents accidental
+     * reuse of an unrelated same-type instance while layout links reconcile. */
+    private readonly indicatorSyncInheritedFrom = new Map<string, string>();
+    /** Runtime-only provenance: inherited instances can be linked without duplicating or
+     * accidentally adopting unrelated, same-type studies on established charts. */
+    private readonly indicatorOrigins = new Map<string, Map<string, number>>();
+    private nextIndicatorOrigin = 0;
+    /** Script instances that were in the donor's ledger but await the shared manifest. */
+    private readonly deferredInheritedIndicators = new Map<string, Set<number>>();
+    /** Linked indicator INSTANCES, not a one-time copy or a per-type global setting. */
+    private readonly indicatorLiveSync = new IndicatorLiveSync(
+        () => [...this.cellsById.values()].map((cell) => ({
+            id: cell.id,
+            handles: () => cell.chart.indicators(),
+            copy: (source) => {
+                const inherited = this.inheritedIndicator(cell.id, source);
+                if (inherited) return inherited;
+                if (source.nativeType) return cell.chart.addNativeIndicator(source.nativeType, { inputs: source.inputValues() });
+                if (!source.source || !cell.chart.hasEngine(source.language) || this.indicatorCopyDeferred(cell.id, source)) return null;
+                return cell.addManifestInstance({ name: source.title, script: source.source, enabled: true, ...(source.language ? { language: source.language } : {}) }, {
+                    standalone: true, record: false, inputs: source.inputValues(), props: source.propValues(), hidden: !source.visible,
+                });
+            },
+            deferred: (source) => !!source.source && cell.chart.hasEngine(source.language) && this.indicatorCopyDeferred(cell.id, source),
+        })),
+        () => this.markStateDirty(),
+    );
     /** Scope assigned to new objects from the object tree's Manage objects button. */
     private drawingSyncDefault: DrawingSyncMode = 'none';
     /** The shell watchlist — symbols in display order. */
@@ -576,8 +616,6 @@ export class VelaWorkspace {
     /** One-time tips already shown (the ◌ affordance, the palette chord). */
     private readonly seenTips = new Set<string>();
     /** The live coach mark, if any (one at a time — two pointing fingers is noise). */
-    private groupTip: Tip | null = null;
-    private groupTipTimer: ReturnType<typeof setTimeout> | null = null;
     /** Tab-link tag (TradingView Desktop's colored tab link); null = unlinked. */
     private linkGroup: string | null = null;
     /** The tab-link transport (same page synchronously, other tabs via BroadcastChannel). */
@@ -678,32 +716,38 @@ export class VelaWorkspace {
         this.flushPendingState();
         this.persistNow();
     };
-    /**
-     * Re-arm the document's price alerts. Runs once the cells they name exist; an alert whose
-     * chart is gone (a layout change, a trimmed document) is dropped instead of floating with
-     * no chart to watch, and the level line is redrawn so the chart still shows what is armed.
-     */
-    private restorePriceAlerts(rows: readonly SavedPriceAlert[] | undefined): void {
-        // A document with no alerts CLEARS the arm list: applying a saved layout must not
-        // leave the previous document's levels watching markets they were never set on.
+    /** Restore saved alerts, including those whose chart is pooled or currently absent. */
+    private restorePriceAlerts(rows: readonly SavedPriceAlert[] | undefined, restoredDrawings: ReadonlySet<string> = new Set()): void {
+        // Runtime IDs and drawings will be replaced; an editor must not save over a new row.
+        this.alertPanel?.cancelEdit();
+        // A document with no alerts CLEARS the arm list. Never delete a drawing that the
+        // incoming document just restored, or one still referenced by another alert:
+        // drawing-backed alerts can legitimately point at a price alert's dotted line.
         for (const alert of this.priceAlerts) {
-            if (!alert.lineId) continue;
+            if (!alert.lineId || !alert.lineOwned || restoredDrawings.has(alert.cellId)) continue;
+            const retained = rows?.some((row) => row.cellId === alert.cellId && (row.source?.drawingId === alert.lineId
+                || (!row.source && !isMoveCondition(row.condition as AlertCondition) && row.value === alert.value)));
+            if (retained) continue;
             try {
-                this.cellsById.get(alert.cellId)?.chart.drawings.remove(alert.lineId);
+                const cell = this.cellsById.get(alert.cellId);
+                const drawing = cell?.chart.drawings.all().find((item) => item.id === alert.lineId);
+                if (drawing?.type === 'hline' && drawing.style?.lineStyle === 'dotted' && drawing.anchors?.[0]?.price === alert.value)
+                    cell?.chart.drawings.remove(alert.lineId);
             } catch {
                 /* the cell may be gone */
             }
         }
         this.priceAlerts = [];
         if (!rows || rows.length === 0) {
-            this.alertList?.refresh();
+            this.alertPanel?.refresh();
             this.moreDrawer?.refreshAlerts();
             return;
         }
         for (const row of rows) {
-            if (!this.cellsById.has(row.cellId)) continue;
+            // A pooled (or temporarily absent) chart is not evaluating, but its alert
+            // still belongs to the document and must not disappear on restore.
             const alert: PriceAlert = {
-                id: nextAlertId(this.priceAlerts),
+                id: `a${++this.alertIdSerial}`,
                 cellId: row.cellId,
                 symbol: row.symbol,
                 condition: row.condition as AlertCondition,
@@ -711,19 +755,25 @@ export class VelaWorkspace {
                 frequency: row.frequency,
                 state: row.state,
                 createdAt: row.createdAt,
-                anchorPrice: this.lastPrice.get(row.cellId) ?? null,
+                anchorPrice: null,
                 bars: row.bars,
                 firedAt: 0,
                 fires: row.fires,
-                lineId: '',
+                lineId: row.source ? '' : (row.lineId ?? ''),
+                lineOwned: !row.source && row.lineOwned === true,
                 source: row.source,
             };
             const cell = this.cellsById.get(row.cellId);
-            // A drawing-backed alert draws nothing extra: its line is the drawing itself.
-            if (cell && !alert.source) alert.lineId = this.drawAlertLevel(cell, alert) ?? '';
+            alert.anchorPrice = this.alertAnchorPrice(alert, cell);
+            // Old documents had no owned-line ID. Recover their matching dotted line
+            // conservatively as unowned; never delete a possibly user-created drawing.
+            if (!alert.source) alert.lineId = cell
+                ? (this.drawAlertLevel(cell, alert, !row.lineId) ?? '')
+                : (this.pooledAlertLine(alert, !row.lineId) ?? row.lineId ?? '');
             this.priceAlerts.push(alert);
         }
-        this.alertList?.refresh();
+        for (const cell of this.cellsById.values()) this.syncAlertLines(cell);
+        this.alertPanel?.refresh();
         this.moreDrawer?.refreshAlerts();
     }
 
@@ -761,11 +811,10 @@ export class VelaWorkspace {
     private alerts: Array<{ cellId: string; source: string; title: string; message: string; time: number }> = [];
     /** Bell retention — `alertCap` option, default {@link ALERT_CAP}. */
     private readonly alertCap: number;
-    private alertsMenu: Menu | null = null;
-    /** The grouped alert list (the bell's real surface: per chart, per alert). */
-    private alertList: AlertList | null = null;
     /** Price alerts still watching a level, oldest first (the sheet/manager read this). */
     private priceAlerts: PriceAlert[] = [];
+    /** Never reuse a runtime row id: a stale edit/delete cannot target a replacement. */
+    private alertIdSerial = 0;
     /** The last price each cell printed, keyed by cell id — the level prefill + the tick feed. */
     private readonly lastPrice = new Map<string, number>();
     /** The last {@link PRICE_HISTORY} closes per cell — the window a Moving alert looks back
@@ -774,17 +823,23 @@ export class VelaWorkspace {
     /** The bar time of each entry in {@link closeHistory} (same length, same order). */
     private readonly closeTimes = new Map<string, number[]>();
     private readonly lastBarTime = new Map<string, number>();
-    private alertCreate: AlertCreateSheet | null = null;
-    /** The single Compare study's symbol per cell, so a second pick RE-POINTS it instead of
-     *  stacking a second pane (the reference keeps one compare per chart). */
+    /** A search pick can re-point the active chart's single Compare study. */
     private comparePending = false;
-    /** Per cell+handle: the compare symbol and display the sheet reports (the study keeps
-     *  its own inputs; this is the shell's mirror for UI + placement retries). */
+    private returnToCompareAfterSearch = false;
+    private compareSearchEpoch = 0;
+    /** Per cell+handle fallback mirrors; live indicator inputs are authoritative. */
     private readonly compareSymbols = new Map<string, string>();
     private readonly compareDisplays = new Map<string, CompareDisplay>();
+    /** Suppress duplicate placement for this shell's own synchronous input writes. */
+    private readonly compareWrites = new Set<string>();
     /** Cells whose price axis THIS shell switched to percent for a Same-% compare. */
     private readonly compareAxisSwitched = new Set<string>();
     private compareSheet: CompareSheet | null = null;
+    private symbolPanel!: WorkspaceToolPanel;
+    private indicatorPanel: WorkspaceToolPanel | null = null;
+    private templatesPanel!: WorkspaceToolPanel;
+    private comparePanel!: WorkspaceToolPanel;
+    private morePanel!: WorkspaceToolPanel;
     /** ⌘K palette — built lazily on first open. */
     private palette: CommandPalette | null = null;
     /** Recently run palette commands, newest first (persisted with the document). */
@@ -805,12 +860,10 @@ export class VelaWorkspace {
     private tfDrawer: TimeframeDrawer | null = null;
     private drawingsDrawer: DrawingsDrawer | null = null;
     private moreDrawer: MoreDrawer | null = null;
-    /** Compact, NON-MODAL management panel: save/copy/rename/share — never the chart grid. */
+    /** Anchored, non-modal management menu: save/copy/rename/share — never the chart grid. */
     private layoutManager: LayoutManagerPanel | null = null;
     private timezoneDrawer: TimezoneDrawer | null = null;
-    private priceScaleDrawer: PriceScaleDrawer | null = null;
     /** Plot-local y of the last price-axis long-press (targets the pane under the finger). */
-    private priceScalePressY = 0;
     private readonly attachmentDisposers = new Map<string, () => void>();
     /** The resolved topbar composition — one visibility truth for topbar, mobile, keys. */
     private topbarComp!: ResolvedTopbarComposition;
@@ -907,7 +960,10 @@ export class VelaWorkspace {
         this.screenshotOverride = topbarActionOverride('screenshot');
         if (boot?.trackSizes) for (const [id, ts] of Object.entries(boot.trackSizes)) this.trackSizes.set(id, ts);
         if (boot?.ext) this.extState = { ...boot.ext }; // global handlers restore at the end of construction
-        if (boot?.charts) for (const { id, ...cs } of boot.charts) this.pool.set(id, cs);
+        if (boot?.charts) for (const { id, ...cs } of boot.charts) {
+            this.pool.set(id, cs);
+            if (cs.compareAutoPercent) this.compareAxisSwitched.add(id);
+        }
         // Identity ↔ slot mapping: the persisted document's chart order wins (it IS the
         // saved arrangement); a fresh boot takes the `cells` declaration order.
         this.order = boot?.charts ? boot.charts.map((c) => c.id) : declaredOrder(opts.cells);
@@ -935,6 +991,7 @@ export class VelaWorkspace {
         installSmoothScrolling(doc);
         this.root = doc.createElement('div');
         this.root.className = 'vela-workspace';
+        this.disableButtonTooltips = enableButtonTooltips(this.root);
         // First child on purpose: it must be the FIRST stop in the document.
         this.mainId = `vela-ws-main-${(workspaceSeq += 1)}`;
         const skip = doc.createElement('a');
@@ -949,7 +1006,10 @@ export class VelaWorkspace {
         // on the same registry, symbol index, and closed-bar cache.
         for (const [name, make] of Object.entries(opts.providers ?? {})) void this.feed.registerProvider(name, make());
         void this.feed.ready().then(() => {
-            if (!this.destroyed) this.refreshRetention(); // re-key on canonical tickers once indexes settle
+            if (!this.destroyed) {
+                this.refreshRetention(); // re-key on canonical tickers once indexes settle
+                this.symbolPicker?.sync();
+            }
         });
 
         // ── shared dialogs/pickers (they act on the ACTIVE cell at call time) ──
@@ -977,14 +1037,28 @@ export class VelaWorkspace {
                 if (on) this.addToWatchlist(symbol);
                 else this.removeFromWatchlist(symbol);
             },
-            ...(this.def.cells.length > 1 ? { onApplyAll: (symbol: string) => this.setSymbolForAll(symbol) } : {}),
+            onApplyAll: (symbol: string) => this.setSymbolForAll(symbol),
+            // Compare chooses a second series, never a bulk replacement of primary markets.
+            canApplyAll: () => !this.comparePending && this.cells().length > 1,
             onOpenChange: (open) => {
                 // In-chart dialogs (indicator inputs, chart settings) live inside a cell's
                 // chart container, so opening the search from the topbar never hits their
                 // outside-dismiss — close them on every cell explicitly.
                 if (open) for (const cell of this.cells()) cell.chart.renderer.closeDialogs();
-                this.trackDialog(open);
                 this.mobileBar?.setExpanded('symbol', open);
+                if (!open && this.returnToCompareAfterSearch) {
+                    this.returnToCompareAfterSearch = false;
+                    const epoch = this.compareSearchEpoch;
+                    // Selection calls close first, then onSelect synchronously. Defer cancellation
+                    // and the return until the selected symbol has reached the active chart.
+                    queueMicrotask(() => {
+                        if (epoch !== this.compareSearchEpoch) return;
+                        this.comparePending = false;
+                        if (this.destroyed || this.symbolPicker.isOpen) return;
+                        const occupied = this.layoutCtl?.current === 'mobile' ? this.dock.openId : this.dock.dockedId;
+                        if (!occupied || occupied === 'compare') this.compareSheet?.open();
+                    });
+                }
             },
         });
         this.symbolPicker.setSource(() => this.feed.symbols());
@@ -997,8 +1071,8 @@ export class VelaWorkspace {
             opts.indicatorPicker !== false && !this.indicatorsOverride && topbarHas(this.topbarComp, 'indicators')
                 ? new IndicatorPicker({
                       host: this.root,
-                      library: () => this.active.libraryRows(),
-                      onChart: () => this.active.onChartRows(),
+                      library: () => this.activeCell()?.libraryRows() ?? [],
+                      onChart: () => this.activeCell()?.onChartRows() ?? [],
                       onAdd: (i) => {
                           this.active.addFromLibrary(i);
                           // The clock tab's feed — the habit, not the promise (a star).
@@ -1036,7 +1110,6 @@ export class VelaWorkspace {
                           // Same rule as the symbol search: the renderer's in-chart dialogs never see
                           // an outside-dismiss from a topbar dialog — close them on every cell.
                           if (open) for (const cell of this.cells()) cell.chart.renderer.closeDialogs();
-                          this.trackDialog(open);
                           this.mobileBar?.setExpanded('indicators', open);
                       },
                   })
@@ -1056,14 +1129,16 @@ export class VelaWorkspace {
             // RAW option, not the resolved lists — the bar distinguishes a host-declared
             // side (list is law) from a default one (an override's `order` may flow).
             composition: opts.topbar,
-            onSymbolClick: () => this.symbolPicker.open(),
+            onSymbolClick: () => this.openSymbolSearch(),
             onSymbolStep: (delta) => this.stepQuickSymbol(delta),
-            onOpenLayoutManager: () => this.openLayoutManager(),
+            onOpenLayoutManager: (anchor) => this.openLayoutManager(anchor),
+            onOpenLayoutSetup: (keyboard) => this.openLayoutSetup('layout', undefined, true, keyboard),
             ...(picker ? { onIndicatorsClick: () => picker.open() } : {}),
             onUndoClick: () => this.undoHistory(),
             onRedoClick: () => this.redoHistory(),
             onScreenshotClick: () => this.downloadScreenshot(),
-            onAlertsClick: (anchor) => this.openAlertsMenu(anchor),
+            onAlertsClick: () => this.dock.toggle('alerts'),
+            prioritizeAlerts: true,
             // TradingView's "Compare" tool, in the top toolbar: a second series on the
             // active chart. The button is a STATE — it lights up and names the symbol
             // while a comparison is on screen.
@@ -1169,6 +1244,7 @@ export class VelaWorkspace {
         // ── main row: the shared drawing toolbar + the grid + the docked side panels ──
         const main = doc.createElement('div');
         main.className = 'vela-ws-main';
+        main.dataset.velaPaneHost = '';
         main.id = this.mainId;
         main.setAttribute('role', 'main');
         main.setAttribute('aria-label', 'Chart workspace');
@@ -1194,24 +1270,85 @@ export class VelaWorkspace {
         this.gridEl.className = 'vela-ws-grid';
         main.appendChild(this.gridEl);
         // One dock for the WHOLE grid (the panels follow the active cell), owning the built-ins,
-        // the contributed panels, the single-open rule and the topbar's toggle group.
+        // contributions, one side column, desktop cards and the topbar's toggle group.
         this.dock = new PanelDock(main, {
-            chrome: this.topbar,
+            chrome: {
+                setPanelButtons: (buttons, click) => this.topbar.setPanelButtons(buttons, click),
+                setPanelActive: (id, open) => {
+                    this.topbar.setPanelActive(id, open);
+                    if (id === 'layoutSetup') {
+                        this.topbar.setLayoutSetupOpen(open, this.layoutSetup?.el.id);
+                        this.setSyncSurfaceOpen(open);
+                    }
+                    if (id === 'alerts') {
+                        this.topbar.setAlertsActive(open);
+                        this.mobileBar?.setAlertsActive(open);
+                    }
+                    if (id === 'symbolSearch') this.topbar.setToolPanelOpen('symbol', open, this.symbolPanel?.el.id);
+                    if (id === 'indicators') this.topbar.setToolPanelOpen('indicators', open, this.indicatorPanel?.el.id);
+                    if (id === 'indicatorTemplates') {
+                        this.topbar.setToolPanelOpen('templates', open, this.templatesPanel?.el.id);
+                        this.indicatorPicker?.setTemplatesPanelOpen(open);
+                    }
+                    if (id === 'compare') this.topbar.setToolPanelOpen('compare', open, this.comparePanel?.el.id);
+                    if (id === 'more') {
+                        this.mobileBar?.setExpanded('more', open);
+                        // A restored More pane can open before its lazy content is built.
+                        // Wait until construction/active-chart setup has finished.
+                        if (open && !this.moreDrawer) queueMicrotask(() => {
+                            if (this.root.isConnected && this.morePanel.open && !this.moreDrawer) this.ensureMoreDrawer();
+                        });
+                    }
+                },
+            },
             context: () => this.context(),
             changed: () => this.markStateDirty(),
         });
+        // One panel instance per tool, shared by its existing desktop and phone doors.
+        // These are non-modal: the chart and other floating panels remain interactive.
+        this.symbolPanel = new WorkspaceToolPanel(main, 'Symbol Search', 'vela-symbol-panel', 380);
+        this.symbolPicker.attachPanel(this.symbolPanel);
+        this.indicatorPanel = picker ? new WorkspaceToolPanel(main, 'Indicators', 'vela-indicator-panel', 360) : null;
+        if (this.indicatorPanel) picker?.attachPanel(this.indicatorPanel);
+        this.templatesPanel = new WorkspaceToolPanel(main, 'Indicator templates', 'vela-templates-panel', 360);
+        this.topbar.attachTemplatesPanel(this.templatesPanel);
+        picker?.useSeparateTemplates(this.templatesPanel);
+        this.comparePanel = new WorkspaceToolPanel(main, 'Compare', 'vela-compare-panel', 360);
+        this.morePanel = new WorkspaceToolPanel(main, 'More', 'vela-more-panel', 360);
+        this.compareSheet = new CompareSheet({
+            host: this.root,
+            getSymbol: () => this.compareSymbolOf(this.activeCell()),
+            getDisplay: () => this.compareDisplayOf(this.activeCell()),
+            onPickSymbol: () => this.beginCompareSearch(),
+            onDisplay: (mode) => this.setCompareDisplay(mode),
+            onRemove: () => this.removeCompare(),
+        });
+        this.compareSheet.attachPanel(this.comparePanel);
+        this.topbar.setToolPanelOpen('symbol', false, this.symbolPanel.el.id);
+        if (this.indicatorPanel) this.topbar.setToolPanelOpen('indicators', false, this.indicatorPanel.el.id);
+        this.topbar.setToolPanelOpen('templates', false, this.templatesPanel.el.id);
+        this.topbar.setToolPanelOpen('compare', false, this.comparePanel.el.id);
+
         this.objectTree = new ObjectTree(main, (sym) => this.feed.symbolIcon(sym), {
             // The tree's "Source code" entry — the legend chip's twin, and on a phone the
             // route to a study's code (a built-in opens read-only, a script editable).
             onSource: (source, title, readOnly) => this.openEditor(source, title, { readOnly }),
-            // "Manage layout drawings": the tree speaks for the ACTIVE chart, so the header
-            // hands it every live cell — the across-charts list a multi-chart layout needs.
-            layout: () => this.cells().map((c) => ({ label: c.symbol, chart: c.chart })),
             drawingSets: {
                 list: () => this.drawingSetTemplateList(),
                 save: (name, ids) => this.saveDrawingSetTemplate(name, ids),
                 insert: (name) => this.insertDrawingSetTemplate(name),
                 remove: (name) => { this.deleteDrawingSetTemplate(name); },
+            },
+            indicatorTemplates: {
+                list: () => this.templateList(),
+                save: (name, ids, append) => this.saveSelectedIndicatorTemplate(name, ids, append),
+            },
+            indicatorSync: {
+                charts: () => this.cells().map((cell, index) => ({
+                    id: cell.id, label: `Chart ${index + 1} · ${cell.symbol}`, symbol: cell.symbol, active: cell.id === this.activeId,
+                })),
+                status: (id) => this.indicatorSyncStatus(id),
+                set: (ids, mode, charts) => this.setIndicatorLiveSync(ids, mode, charts),
             },
             drawingSync: {
                 rows: () => this.drawingSyncRows(),
@@ -1234,10 +1371,69 @@ export class VelaWorkspace {
             },
         });
         this.dataWindow = new DataWindow(main);
+        this.layoutSetup = this.monoLayout ? null : new LayoutSetupPanel(main, {
+            shape: () => layoutShape(this.def),
+            presets: () => this.presetRows(),
+            glyph: () => layoutGlyph(this.def),
+            onSelectGrid: (rows, cols) => this.setLayout(layoutForGrid(rows, cols)),
+            onSelectPreset: (id) => this.setLayout(id),
+            syncs: () => this.syncRows(),
+            onToggleSync: (id) => this.toggleSync(id as SyncKind),
+            charts: () => this.syncCharts(),
+            onSelectChart: (id) => { if (this.cellsById.has(id)) this.setActiveCell(id); },
+            onCycleCellGroup: (kind, id) => this.cycleGroupFor(kind as SyncKind, id),
+            onSetCellGroup: (kind, id, mark) => this.setGroupFor(kind as SyncKind, id, mark),
+            onAllInOneGroup: (kind) => this.syncAllInOneGroup(kind as SyncKind),
+            legend: () => this.groupLegend(),
+            groupName: (id) => this.groupNames[id],
+            onRenameGroup: (id, name) => this.setGroupName(id, name),
+            onSetGroupMark: (id, mark) => this.setGroupMark(id, mark),
+            drawingsScope: () => this.drawingsScope,
+            onToggleDrawingsScope: () => this.setDrawingsScope(this.drawingsScope === 'global' ? 'layout' : 'global'),
+            onApplySettingsToAll: () => this.applySettingsToAll(),
+            onApplyIndicatorsToAll: () => this.applyIndicatorsToAll(),
+            hiddenCharts: () => this.hiddenChartCount,
+            onClearPooled: () => { this.clearPooled(); },
+            clearedCharts: () => this.clearedChartCount,
+            onRestorePooled: () => { this.restorePooled(); },
+            linkGroup: () => this.linkGroup,
+            onLinkGroup: (tag) => this.setLinkGroup(tag),
+            onOpenManager: (anchor) => this.openLayoutManager(anchor),
+            onShareLink: () => this.copyShareLink(),
+        });
         this.strategyTester = new StrategyTester(main);
+        this.alertPanel = new AlertPanel(main, {
+            target: () => this.alertTarget(),
+            drawingLevel: (target, id) => {
+                const cell = this.cellsById.get(target.cellId);
+                return cell ? this.levelOfDrawing(cell, id, this.alertBarTime(cell)) : null;
+            },
+            onCreate: (request, target) => this.createAlertForTarget(request, target),
+            getAlerts: () => this.alerts,
+            getCharts: () => this.syncCharts(),
+            getArmed: () => this.armedAlertRows(),
+            onBeginEdit: (id) => this.beginPriceAlertEdit(id),
+            onSaveEdit: (id, request, target) => this.savePriceAlertEdit(id, request, target),
+            onToggleAlert: (id) => this.togglePriceAlert(id),
+            onGo: (id) => { if (this.cellsById.has(id)) this.setActiveCell(id); },
+            onClearChart: (id) => {
+                this.alerts = this.alerts.filter((entry) => entry.cellId !== id);
+                this.syncAlertCount();
+            },
+            onClearAll: () => { this.alerts = []; this.syncAlertCount(); },
+        });
+        this.dock.addBuiltIn({ id: 'symbolSearch', title: 'Symbol Search', icon: 'search', order: 1, panel: this.symbolPanel, showInChrome: false });
+        if (this.indicatorPanel) this.dock.addBuiltIn({ id: 'indicators', title: 'Indicators', icon: 'indicators', order: 2, panel: this.indicatorPanel, showInChrome: false });
+        this.dock.addBuiltIn({ id: 'indicatorTemplates', title: 'Indicator templates', icon: 'templates', order: 3, panel: this.templatesPanel, showInChrome: false });
+        this.dock.addBuiltIn({ id: 'compare', title: 'Compare', icon: 'bands', order: 4, panel: this.comparePanel, showInChrome: false });
+        this.dock.addBuiltIn({ id: 'more', title: 'More', icon: 'more', order: 5, panel: this.morePanel, showInChrome: false });
+        if (this.layoutSetup) this.dock.addBuiltIn({ id: 'layoutSetup', title: 'Layout setup', icon: 'layout', order: 8, panel: this.layoutSetup, showInChrome: false });
         this.dock.addBuiltIn({ id: 'dataWindow', title: 'Data window', icon: 'datawindow', order: 10, panel: this.dataWindow, onChart: (c) => this.dataWindow.onChart(c) });
         this.dock.addBuiltIn({ id: 'objects', title: 'Object tree', icon: 'objects', order: 20, panel: this.objectTree, onChart: (c) => this.objectTree.onChart(c) });
         this.dock.addBuiltIn({ id: 'strategyTester', title: 'Strategy tester', icon: 'tester', order: 30, panel: this.strategyTester, onChart: (c) => this.strategyTester.onChart(c) });
+        // The dedicated bell is already the pane's button: do not publish a duplicate
+        // under the separate 'panels' composition slot or the phone's More panel list.
+        this.dock.addBuiltIn({ id: 'alerts', title: 'Alerts', icon: 'bell', order: 40, panel: this.alertPanel, showInChrome: false });
         // The script editor, in the SIDE PANEL rather than on its own page — the shape
         // TradingView settled on. Offered only when a scripting engine is configured:
         // an editor with nothing to run is a dead end, and the shell stays engine-free.
@@ -1452,9 +1648,10 @@ export class VelaWorkspace {
             this.mobileBar = new MobileBar(this.root, {
                           symbol: '',
                           timeframe: '60',
-                          onSymbolClick: () => this.symbolPicker.open(),
+                          onSymbolClick: () => this.openSymbolSearch(),
                           onSymbolStep: (delta) => this.stepQuickSymbol(delta),
                           onTimeframeClick: () => this.openTimeframeDrawer(),
+                          ...(topbarHas(this.topbarComp, 'alerts') ? { onAlertsClick: () => this.dock.toggle('alerts') } : {}),
                           // Same visibility truth as the desktop bar: composition-hidden
                           // indicators lose their mobile stop too; an override takes it over.
                           ...(topbarHas(this.topbarComp, 'indicators') && (picker || this.indicatorsOverride)
@@ -1485,7 +1682,7 @@ export class VelaWorkspace {
                               : {
                                     layoutLabel: () => `${this.def.cols.length}×${this.def.rows.length}`,
                                     layoutGlyph: () => layoutGlyph(this.def),
-                                    onLayoutClick: () => this.openMoreDrawer('layout'),
+                                    onLayoutClick: () => this.openLayoutSetup(),
                                 }),
                           // Undo / redo on the phone's own bar, right before More —
                           // the workspace's unified history of the ACTIVE chart (the
@@ -1494,7 +1691,9 @@ export class VelaWorkspace {
                           onRedoClick: () => this.redoHistory(),
                           onMoreClick: () => this.openMoreDrawer(),
                           onSettingsClick: () => this.active.chart.renderer.openSettings(),
-                      })
+                      });
+            this.mobileBar.setAlertsActive(this.dock.openId === 'alerts');
+            this.mobileBar.setAlertCount(this.alerts.length);
             // One strip for the whole grid — rebound to the active cell on every projection.
             // It docks in the flow ABOVE the bottom bar (never over the plot: the old floating
             // pill covered the last row's time axis). Without a bottom bar it falls back to the
@@ -1504,6 +1703,9 @@ export class VelaWorkspace {
                     ? this.root.insertBefore(doc.createElement('div'), this.mobileBar.el)
                     : this.gridEl;
             drawHost.className = this.mobileBar ? 'vela-ws-drawdock' : drawHost.className;
+            this.mobileBar?.setPaneControl('symbol', this.symbolPanel.el.id, this.symbolPanel.open);
+            this.mobileBar?.setPaneControl('more', this.morePanel.el.id, this.morePanel.open);
+            if (this.indicatorPanel) this.mobileBar?.setPaneControl('indicators', this.indicatorPanel.el.id, this.indicatorPanel.open);
             this.drawingPill = this.drawingsEnabled ? new DrawingPill(drawHost) : null;
         };
 
@@ -1514,6 +1716,9 @@ export class VelaWorkspace {
                 this.projectActiveCell(); // the bar it just built reads the ACTIVE cell
             }
         });
+        // The dock was constructed before `main` had a layout ancestor. Reconcile its
+        // initial mode now as well as on later changes, including synchronous restores.
+        this.dock.setLayout(this.layoutCtl.current);
         if (this.layoutCtl.current === 'mobile') buildMobileChrome();
         // Desktop-only chrome lives outside the document on a mobile shell.
         this.applyChromeForLayout(this.layoutCtl.current);
@@ -1542,6 +1747,8 @@ export class VelaWorkspace {
         this.cellBackend = this.backendFor(this.def);
         this.applyGrid();
         this.buildCells();
+        if (boot?.charts) this.restoreObjectTreeGroups(boot.charts);
+        this.indicatorLiveSync.restore(boot?.indicatorSyncLinks);
         this.syncCellPresentation();
         this.setActiveCell(bootActive != null && this.cellsById.has(bootActive) ? bootActive : (this.order[0] ?? null));
         // Armed levels come back with the document — after the cells exist (their ids are
@@ -1558,6 +1765,10 @@ export class VelaWorkspace {
                 this.manifest = list;
                 this.manifestSettled = true; // from here each cell's live instance set is the truth, empty included
                 for (const cell of this.cellsById.values()) cell.setManifest(list, true);
+                this.captureInheritedIndicators(true);
+                this.indicatorLiveSync.reconcileLayout(this.indicatorSyncInheritedFrom);
+                this.indicatorSyncInheritedFrom.clear();
+                this.deferredInheritedIndicators.clear();
                 this.projectActiveCell();
             });
         } else {
@@ -1667,6 +1878,9 @@ export class VelaWorkspace {
         this.activeId = id; // switch FIRST — the departing cell's drawing:* events must not re-enter the mirrors
         const prevCell = prev ? this.cellsById.get(prev) : undefined;
         if (prevCell) {
+            // A resting touch must not keep broadcasting stale values when another
+            // chart becomes active, particularly across linked crosshair groups.
+            prevCell.chart.renderer.endTouchTracking();
             // Only the ACTIVE cell ever holds an armed tool or a transient mode: the
             // global tool re-arms on the next activation; measure/eraser don't follow.
             prevCell.chart.drawings.setTool(null);
@@ -1695,7 +1909,7 @@ export class VelaWorkspace {
             active: () => (this.activeId ? (this.cellsById.get(this.activeId) ?? null) : null),
             cells: () => this.cells(),
             setActiveCell: (id) => this.setActiveCell(id),
-            openSymbolSearch: (query) => this.symbolPicker.open(query ?? ''),
+            openSymbolSearch: (query) => this.openSymbolSearch(query ?? ''),
             togglePanel: (id, open) => this.dock.toggle(id, open),
             dockStrip: (el) => {
                 this.stripsEl.appendChild(el);
@@ -1808,6 +2022,12 @@ export class VelaWorkspace {
             }
         }
         for (const [id, cs] of byId) charts.push({ id, ...cs }); // pooled strays keep restoring
+        // This shell-owned bit accompanies live AND pooled cells. Do not retain an old
+        // pooled bit after a compare is removed or its display leaves percent mode.
+        for (const chart of charts) {
+            if (this.compareAxisSwitched.has(chart.id)) chart.compareAutoPercent = true;
+            else delete chart.compareAutoPercent;
+        }
         const state: WorkspaceState = { version: 1, layout: this.def.id, timezone: this.timezone, sync: { ...this.syncOpts }, charts };
         if (this.cursorStyle !== 'cross') state.cursor = this.cursorStyle;
         if (this.activeId) state.activeCellId = this.activeId;
@@ -1822,6 +2042,7 @@ export class VelaWorkspace {
                 state: a.state,
                 createdAt: a.createdAt,
                 fires: a.fires,
+                ...(a.lineId && !a.source ? { lineId: a.lineId, lineOwned: a.lineOwned === true } : {}),
                 source: a.source ? { ...a.source } : undefined,
             }));
         }
@@ -1888,6 +2109,8 @@ export class VelaWorkspace {
                 [...this.drawingSyncModes].map(([k, v]) => [k, { mode: v.mode, ...(v.charts && v.charts.length > 0 ? { charts: [...v.charts] } : {}) }]),
             );
         }
+        const indicatorLinks = this.indicatorLiveSync.snapshot();
+        if (indicatorLinks.length > 0) state.indicatorSyncLinks = indicatorLinks;
         if (this.drawingSyncDefault !== 'none') state.drawingSyncDefault = this.drawingSyncDefault;
         if (this.drawingSyncClones.size > 0) {
             state.drawingSyncClones = Object.fromEntries(
@@ -2076,6 +2299,15 @@ export class VelaWorkspace {
         if (this.destroyed) return;
         const st = sanitizeState(state);
         if (!st) return;
+        // Old links/provenance must not act on unrelated rehydrated instances.
+        this.indicatorLiveSync.clear();
+        this.indicatorOrigins.clear();
+        this.indicatorSyncInheritedFrom.clear();
+        this.deferredInheritedIndicators.clear();
+        this.compareSymbols.clear();
+        this.compareDisplays.clear();
+        this.compareAxisSwitched.clear();
+        for (const chart of st.charts) if (chart.compareAutoPercent) this.compareAxisSwitched.add(chart.id);
         this.hydrateSideCars(st);
         if (typeof st.linkedGroup === 'string') this.link.setTag(this.linkGroup);
         if (st.favorites) this.favs = [...st.favorites]; // newborn cells inherit below (buildCells)
@@ -2129,7 +2361,11 @@ export class VelaWorkspace {
             } finally {
                 this.styleSyncBusy = false;
             }
+            // The native study may mount after pane-state restoration; make its stored
+            // display land on the renderer instead of merely painting the right button.
+            for (const cell of this.cellsById.values()) this.restoreComparePlacement(cell);
             this.restoreObjectTreeGroups(st.charts);
+            this.indicatorLiveSync.restore(st.indicatorSyncLinks);
             // AFTER the cells: each restored rendererConfig carries its own zone and the
             // cell mirror adopts it — the document's shell-level field must have the
             // last word when the two disagree (a host editing just `timezone`).
@@ -2145,7 +2381,7 @@ export class VelaWorkspace {
             if (nextActive === this.activeId) this.projectActiveCell();
             else this.setActiveCell(nextActive);
             this.refreshRetention();
-            this.restorePriceAlerts(st.priceAlerts); // cells rehydrated in place — same ids
+            this.restorePriceAlerts(st.priceAlerts, new Set(st.charts.filter((chart) => chart.drawings != null).map((chart) => chart.id))); // cells rehydrated in place
             // Document-level third-party state converges to the document (absent = none);
             // per-cell `ext` was handled by each cell's rehydrate above.
             this.extState = { ...(st.ext ?? {}) };
@@ -2176,13 +2412,14 @@ export class VelaWorkspace {
         this.applyGrid();
         this.buildCells();
         this.restoreObjectTreeGroups(st.charts);
+        this.indicatorLiveSync.restore(st.indicatorSyncLinks);
         this.syncCellPresentation();
         this.topbar.setLayout(this.def.id);
         const nextActive = st.activeCellId && this.cellsById.has(st.activeCellId) ? st.activeCellId : (this.order[0] ?? null);
         if (nextActive === this.activeId) this.projectActiveCell();
         else this.setActiveCell(nextActive);
         this.refreshRetention();
-        this.restorePriceAlerts(st.priceAlerts);
+        this.restorePriceAlerts(st.priceAlerts, new Set(st.charts.map((chart) => chart.id))); // rebuilt charts have no old drawings
         this.events.emit('layout:changed', { layout: this.def.id });
         // Same convergence as the in-place branch; the rebuilt cells already ran their
         // own cell-scope restores (buildCells → restorePersistedExt).
@@ -2214,6 +2451,7 @@ export class VelaWorkspace {
      */
     setTimezone(zone: string): void {
         this.timezone = zone;
+        this.moreDrawer?.refreshMainValues();
         this.projectTimezone();
         for (const cell of this.cellsById.values()) cell.applyTimezone();
         this.markStateDirty();
@@ -2234,6 +2472,7 @@ export class VelaWorkspace {
         if (next === this.cursorStyle) return;
         const wasErasing = this.cursorStyle === 'eraser';
         this.cursorStyle = next;
+        this.moreDrawer?.refreshMainValues();
         this.drawToolbar?.setCursorStyle(next);
         for (const cell of this.cellsById.values()) cell.chart.setCursorStyle(next);
         // The eraser cursor IS the eraser: picking it arms the delete mode on the active
@@ -2315,11 +2554,19 @@ export class VelaWorkspace {
         // the pool carry their own (already converged) state; only genuinely NEW slots
         // need the style and drawings alignment below.
         const preexisting = new Set(this.cellsById.keys());
+        const knownCells = new Set([...this.cellsById.keys(), ...this.pool.keys()]);
+        const indicatorLinks = this.indicatorLiveSync.snapshot();
+        this.indicatorLiveSync.clear();
         for (const [id, cell] of [...this.cellsById]) {
             if (!keep.has(id) || rebuildAll) {
-                this.poolSet(id, cell.dehydrate());
+                const state = cell.dehydrate();
+                state.objectTreeGroups = this.objectTree.groupsFor(cell.chart);
+                this.poolSet(id, state);
                 cell.destroy();
                 this.cellsById.delete(id);
+                this.indicatorOrigins.delete(id);
+                this.indicatorSyncInheritedFrom.delete(id);
+                this.deferredInheritedIndicators.delete(id);
                 this.events.emit('cell:destroyed', { id });
             }
         }
@@ -2327,6 +2574,14 @@ export class VelaWorkspace {
         this.cellBackend = nextBackend;
         this.applyGrid();
         this.buildCells();
+        this.indicatorLiveSync.restore(indicatorLinks);
+        const donor = this.activeId && this.cellsById.has(this.activeId) ? this.activeId : [...preexisting].find((id) => this.cellsById.has(id));
+        if (donor && this.inheritIndicators && !this.defaultTemplateSeed()) {
+            for (const id of this.cellsById.keys()) if (!knownCells.has(id) && id !== donor) this.indicatorSyncInheritedFrom.set(id, donor);
+        }
+        this.captureInheritedIndicators();
+        this.indicatorLiveSync.reconcileLayout(this.indicatorSyncInheritedFrom);
+        if (this.manifestSettled) this.indicatorSyncInheritedFrom.clear();
         this.alignNewCellMarket(preexisting);
         this.alignNewCellStyles(preexisting);
         this.alignNewCellDrawings(preexisting);
@@ -2445,6 +2700,8 @@ export class VelaWorkspace {
             if (host) this.gridEl.appendChild(host);
         }
         this.applyGrid();
+        this.paintChartNumbers();
+        this.alertPanel.refresh(); // chart labels and Go actions follow the new slot order
         this.markStateDirty();
     }
 
@@ -2461,7 +2718,6 @@ export class VelaWorkspace {
 
     destroy(): void {
         if (this.destroyed) return;
-        this.dismissGroupTip(false);
         if (this.historyTimer != null) clearTimeout(this.historyTimer);
         this.historyTimer = null;
         this.workspaceHistoryUnsub();
@@ -2511,29 +2767,32 @@ export class VelaWorkspace {
         this.drawingPill?.destroy();
         this.tfDrawer?.destroy();
         this.drawingsDrawer?.destroy();
+        this.layoutManager?.destroy();
         this.moreDrawer?.destroy();
-        this.alertCreate?.destroy();
         this.compareSheet?.destroy();
         this.timezoneDrawer?.destroy();
-        this.priceScaleDrawer?.destroy();
         this.layoutCtl.destroy();
         this.editorLegendOff?.();
         this.pineEditor?.destroy();
-        this.dock.destroy(); // contributed panels; the two built-ins are ours to drop
+        this.dock.destroy(); // contributed panels; the built-ins are ours to drop
+        this.morePanel.destroy();
         this.objectTree.destroy();
         this.dataWindow.destroy();
+        this.layoutSetup?.destroy();
+        this.strategyTester.destroy();
+        this.alertPanel.destroy();
         this.symbolPicker.destroy();
         this.indicatorPicker?.destroy();
         this.tfQuick.destroy();
         this.shortcutsHelp?.destroy();
         this.toastHost.destroy();
-        this.alertsMenu?.destroy();
         this.disarmReplay();
         this.replayDatePop?.destroy();
         this.replayMenu?.destroy();
         this.replayBar?.destroy();
         this.glider.stop();
         sharedBarStore.retain(new Set(), this); // release OUR declaration only — other shells on the page keep theirs
+        this.disableButtonTooltips();
         this.root.remove();
         this.events.clear();
     }
@@ -2564,11 +2823,15 @@ export class VelaWorkspace {
         this.syncHistoryButtons();
         this.objectTree.setSymbol(cell.symbol);
         this.topbar.setCompareSymbol(this.compareLabel());
+        this.compareSheet?.refresh();
         this.dock.onChart(cell.chart); // every docked panel follows the active cell
+        this.layoutSetup?.refresh();
+        this.alertPanel.refresh();
         this.bottombar?.setActiveRange(cell.activeRangeId);
         this.bottombar?.setSession({ session: cell.session, enabled: cell.sessionAvailable });
         this.projectTimezone(); // under the exchange rule the bar's zone is the active cell's
-        this.indicatorPicker?.sync(); // the dialog may be open while the active cell changes
+        this.indicatorPicker?.sync(); // the pane may be open while the active cell changes
+        this.symbolPicker.sync(); // refresh chart-count-dependent watchlist actions
         this.glider.stop(); // a mid-glide switch must not steer the next cell's viewport
         // Shared drawing toolbar ⇄ the active cell: re-apply the GLOBAL tool + magnet + stay
         // to the cell taking focus, and reflect its (fresh) state on the bar.
@@ -2768,8 +3031,12 @@ export class VelaWorkspace {
         if (this.destroyed) return;
         this.withHistoryRestore(() => {
             try {
+                const snapshot = JSON.parse(raw) as WorkspaceState;
                 this.clearHistorySideCars();
-                this.applyState(JSON.parse(raw));
+                // Public applyState preserves a pre-panel document's current dock. A
+                // history snapshot is a complete replacement: no panels means all closed.
+                if (!snapshot.panels) this.dock.applyState({});
+                this.applyState(snapshot);
             } catch (err) {
                 console.warn('[vela] could not restore a history snapshot:', err);
             }
@@ -3124,7 +3391,11 @@ export class VelaWorkspace {
                 this.order[i] = id;
             }
             if (this.cellsById.has(id)) continue;
+            // Rebuilt cells can recycle native handle ids; old mirrors must not make an
+            // unrelated new indicator look like the previous Compare study.
+            this.forgetCompareMirrors(id);
             const pooled = this.pool.get(id);
+            if (!pooled) this.compareAxisSwitched.delete(id); // a recycled id is a new chart
             // New charts inherit the FIRST chart's live indicator set (TV's rule). A pooled
             // cell keeps its own — it is not new, it is returning.
             const inherited = !pooled && this.inheritIndicators ? this.inheritLedger(id) : undefined;
@@ -3211,10 +3482,12 @@ export class VelaWorkspace {
             // The indicator ledger: a restored cell re-adds ITS recorded set (held until
             // the manifest resolves); a fresh cell seeds the manifest's enabled entries.
             cell.setManifest(this.manifest, seed.indicators == null);
+            if (seed.objectTreeGroups) this.objectTree.setGroupsFor(cell.chart, seed.objectTreeGroups);
             // Third-party state last — the cell is wired and its core state is in
             // place, so a handler's restore (e.g. re-adding external indicators) lands
             // on a cell the workspace fully knows. Runs muted (no undo entries).
             cell.restorePersistedExt();
+            this.restoreComparePlacement(cell);
             this.events.emit('cell:created', { id });
         }
         // DOM order = slot order (auto-flow layouts place row-major by child order).
@@ -3241,15 +3514,12 @@ export class VelaWorkspace {
         }
     }
 
-    /** The sync surfaces (phone sheet, desktop popover) number the charts while they are
-     *  up — a number with nothing to match it against is just noise. */
+    /** The shared setup pane numbers charts while it is open — a number with nothing
+     *  to match it against is just noise. */
     private setSyncSurfaceOpen(open: boolean): void {
         this.syncSurfaceOpen = open;
         if (open) this.root.setAttribute('data-sync-open', '1');
         else this.root.removeAttribute('data-sync-open');
-        // The layout sheet COVERS the badge a coach mark points at: retire it on the way
-        // in (the open itself is the journey the mark was advertising).
-        if (open && this.groupTip) this.dismissGroupTip(true);
     }
 
     /**
@@ -3268,6 +3538,76 @@ export class VelaWorkspace {
      *  cell's whole life, so these live and die with the cell). */
     private wireCell(cell: ChartCell): void {
         const chart = cell.chart;
+        // A pooled/rebuilt chart is a NEW data stream. Old cached prices and anchors
+        // belong to its previous lifetime, not the freshly loaded series.
+        this.lastPrice.delete(cell.id);
+        this.lastBarTime.delete(cell.id);
+        this.closeHistory.delete(cell.id);
+        this.closeTimes.delete(cell.id);
+        for (let i = 0; i < this.priceAlerts.length; i += 1) {
+            const alert = this.priceAlerts[i];
+            if (!alert || alert.cellId !== cell.id) continue;
+            const next = { ...alert, anchorPrice: null };
+            if (!next.source && !isMoveCondition(next.condition)) next.lineId = this.drawAlertLevel(cell, next, !next.lineId) ?? '';
+            this.priceAlerts[i] = next;
+        }
+        this.syncAlertLines(cell);
+        chart.on('indicator:inputs', ({ id }) => {
+            this.indicatorLiveSync.inputsChanged(cell.id, id);
+            // The Compare study can also be edited from indicator settings or live sync.
+            // Its inputs are authoritative and an external display edit must move the
+            // series too, not just paint a different button.
+            const handle = chart.indicators().find((h) => h.id === id && h.nativeType === 'compare');
+            if (!handle) return;
+            const key = `${cell.id}:${id}`;
+            const symbol = this.compareSymbolOf(cell);
+            const display = this.compareDisplayOf(cell);
+            if (symbol) this.compareSymbols.set(key, symbol);
+            else this.compareSymbols.delete(key);
+            this.compareDisplays.set(key, display);
+            if (symbol && !this.compareWrites.has(key)) this.applyCompareDisplay(cell, id, display);
+            if (cell.id === this.activeId) {
+                this.topbar.setCompareSymbol(this.compareLabel());
+                this.compareSheet?.refresh();
+            }
+        });
+        chart.on('indicator:removed', ({ id }) => {
+            this.indicatorOrigins.get(cell.id)?.delete(id);
+            this.indicatorLiveSync.removed(cell.id, id);
+            const key = `${cell.id}:${id}`;
+            const wasCompare = this.compareSymbols.has(key) || this.compareDisplays.has(key);
+            this.compareSymbols.delete(key);
+            this.compareDisplays.delete(key);
+            // Legend, Object Tree and On chart can remove Compare too. Do not alter a
+            // document's new renderer config while in-place rehydration is converging.
+            if (wasCompare && !this.styleSyncBusy && !chart.indicators().some((h) => h.nativeType === 'compare')) {
+                this.restoreCompareAxis(cell);
+                if (cell.id === this.activeId) {
+                    this.topbar.setCompareSymbol(this.compareLabel());
+                    this.compareSheet?.refresh();
+                }
+            }
+            // A report belongs to its actual strategy even when that cell is inactive.
+            this.strategyTester.forgetRun(chart, id);
+        });
+        // Requests on background cells must invalidate their remembered report too; an
+        // unchanged symbol can still receive an entirely new inline candle series.
+        chart.on('market:requested', () => {
+            this.strategyTester.invalidateMarket(chart);
+            // A cell's prior price/history belongs to its old market. Never seed or
+            // immediately evaluate a new-symbol alert from those stale candles.
+            this.lastPrice.delete(cell.id);
+            this.lastBarTime.delete(cell.id);
+            this.closeHistory.delete(cell.id);
+            this.closeTimes.delete(cell.id);
+            this.alertPanel.refresh();
+        });
+        chart.on('indicator:added', ({ id }) => {
+            this.indicatorLiveSync.resolvePending();
+            this.indicatorLiveSync.ready(cell.id, id);
+            const handle = chart.indicators().find((h) => h.id === id && h.nativeType === 'compare');
+            if (handle) this.compareDisplays.set(`${cell.id}:${id}`, this.compareDisplayOf(cell));
+        });
         chart.on('indicator:error', ({ error }) => this.toastHost.show(`[${cell.id}] ${error.message}`, 'error', 5000));
         // Script runs relay up with the cell they came from, so ONE subscription on the
         // workspace covers a grid whose cells come and go. Each cell runs its own engine
@@ -3280,25 +3620,31 @@ export class VelaWorkspace {
             if (run.kind === 'strategy') this.announceStrategyRun(chart, run);
         });
         chart.on('priceStyle:change', ({ from, to }) => this.events.emit('cell:priceStyle', { id: cell.id, from, to }));
+        // Entering/seeking replay replaces the series without `bar` events; rebase
+        // anchors and lookbacks to the revealed tape instead of retaining live/future data.
+        chart.on('replay:start', () => this.rebaseAlertHistory(cell));
+        chart.on('replay:end', ({ reason }) => { if (reason !== 'market') this.rebaseAlertHistory(cell); });
+        // The committed market event follows ChartCell's projection; a directly requested
+        // new symbol can still have shown the OLD label during the preceding load:end.
+        chart.on('market:changed', () => this.rebaseAlertHistory(cell));
         // Price alerts are evaluated on the same print the chart draws — one tick per bar
         // update, so "crossed 143.50" fires on the bar where the line visibly crossed.
         chart.on('bar', (bar) => {
+            // A synchronous feed tick can land after a request but before ChartCell
+            // projects the new identity. Never judge it against the old symbol.
+            if (chart.loading || !this.alertMarketMatches(cell)) return;
             this.lastPrice.set(cell.id, bar.close);
             this.lastBarTime.set(cell.id, bar.time);
             this.pushClose(cell.id, bar.close, bar.time);
             this.evaluatePriceAlerts(cell, bar.close, bar.time);
+            if (cell.id === this.activeId) this.alertPanel.refreshTarget();
         });
         // A STATIC series (host `data`, a restored snapshot) never emits `bar`, so the
         // sheet would open with an empty level on a chart that is clearly showing a price.
         // Seed the last print off the renderer when a load settles (live ticks overwrite).
         chart.on('load:end', () => {
-            if (this.lastPrice.has(cell.id)) return;
-            const range = chart.getVisibleRange();
-            const last = range ? chart.renderer.barAt(range.to - 1) : null;
-            if (!last) return;
-            this.lastPrice.set(cell.id, last.close);
-            this.lastBarTime.set(cell.id, last.time);
-            this.pushClose(cell.id, last.close, last.time);
+            if (!this.lastPrice.has(cell.id)) this.rebaseAlertHistory(cell);
+            this.alertPanel.refresh();
         });
         chart.on('alert', (alert) => {
             // Provenance the way a user reads it — symbol, timeframe, and the indicator
@@ -3307,10 +3653,10 @@ export class VelaWorkspace {
                 .filter(Boolean)
                 .join(' ');
             this.alerts.unshift({ cellId: cell.id, source, title: alert.title ?? 'Alert', message: alert.message, time: alert.time });
-            this.alertList?.refresh();
             if (this.alerts.length > this.alertCap) this.alerts.pop();
+            this.alertPanel.refresh();
             this.toastHost.show(`${source} — ${alert.title ? alert.title + ' — ' : ''}${alert.message}`, 'info', 4000);
-            this.topbar.setAlertCount(this.alerts.length);
+            this.syncAlertCount();
         });
         // Favorites are a WORKSPACE preference: one shared toolbar, one star set — a star
         // toggled in any cell re-applies to every other cell (and the shared bar), and
@@ -3377,10 +3723,19 @@ export class VelaWorkspace {
         // the placement carries `null`, which clears them (the created copy takes over).
         chart.on('drawing:draft', ({ doc }) => this.propagateDraft(cell.id, doc));
         chart.on('drawing:edited', ({ id }) => {
+            this.alertPanel.refresh();
             this.propagateDrawingEdit(cell.id, id);
             this.markStateDirty();
         });
         chart.on('drawing:removed', ({ id }) => {
+            // A source may later be restored by Undo. Do not carry a crossing side from
+            // before the drawing disappeared across that unobservable interval.
+            for (let i = 0; i < this.priceAlerts.length; i += 1) {
+                const alert = this.priceAlerts[i];
+                if (alert && alert.cellId === cell.id && alert.source?.drawingId === id && alert.anchorPrice != null)
+                    this.priceAlerts[i] = { ...alert, anchorPrice: null };
+            }
+            this.alertPanel.refresh();
             this.propagateDrawingRemoval(cell.id, id);
             if (cell.id === this.activeId) this.drawToolbar?.refreshChartTools();
             this.markStateDirty();
@@ -3449,12 +3804,15 @@ export class VelaWorkspace {
             this.markStateDirty();
         });
         chart.on('pane:moved', () => this.markStateDirty());
-        // Mobile: long-press an axis strip → timezone / price-scale sheet (desktop keeps
-        // the right-click menu). The press's own pointerdown already activated the cell.
+        // This event is touch-only: offer compact axis options even when a phone in landscape
+        // uses desktop chrome. Mouse users still get the separate right-click menu.
+        // The press's own pointerdown already activated the cell.
         chart.renderer.onAxisLongPress((e) => {
-            if (this.layoutCtl.current !== 'mobile') return;
-            if (e.axis === 'time') this.openTimezoneDrawer();
-            else this.openPriceScaleDrawer(e.y);
+            if (e.axis === 'time') {
+                const canvas = cell.host.querySelector<HTMLCanvasElement>('canvas');
+                const rect = (canvas ?? cell.host).getBoundingClientRect();
+                this.openTimezoneDrawerAt(rect.left + e.x, rect.top + e.y);
+            } else cell.openPriceScaleMenu(e.x, e.y);
         });
     }
 
@@ -3492,7 +3850,7 @@ export class VelaWorkspace {
             // pointer move under the NEW grouping (and vanish entirely when disabled).
             for (const cell of this.cellsById.values()) {
                 cell.chart.renderer.setExternalCrosshair(null);
-                cell.setSyncedCrosshair(null);
+                cell.setSyncedCrosshairAt(null);
             }
             // A renderer without the seam silently never shows ghosts — warn only when
             // enabling while NO cell can display one (e.g. minimal custom renderers).
@@ -3572,6 +3930,78 @@ export class VelaWorkspace {
                 },
             },
         ];
+    }
+
+    /** Record actual new-cell inheritance while the donor and its seeded handles are
+     * still known. Tokens are deliberately runtime-only; a restored unrelated study is
+     * never assumed to be the same instance just because its type or title matches. */
+    private captureInheritedIndicators(pendingOnly = false): void {
+        for (const [targetId, donorId] of this.indicatorSyncInheritedFrom) {
+            if (!pendingOnly && this.indicatorOrigins.has(targetId)) continue;
+            const donor = this.cellsById.get(donorId), target = this.cellsById.get(targetId);
+            if (!donor || !target) continue;
+            let origins = this.indicatorOrigins.get(donorId);
+            if (!origins) this.indicatorOrigins.set(donorId, (origins = new Map()));
+            let targetOrigins = this.indicatorOrigins.get(targetId);
+            if (!targetOrigins) this.indicatorOrigins.set(targetId, (targetOrigins = new Map()));
+            const sourceHandles = donor.chart.indicators(), targetHandles = target.chart.indicators();
+            for (const source of sourceHandles) {
+                const ref = indicatorReference(sourceHandles, source.id);
+                if (!ref) continue;
+                let origin = origins.get(source.id);
+                if (pendingOnly && (origin === undefined || !this.deferredInheritedIndicators.get(targetId)?.has(origin))) continue;
+                if (origin === undefined) { origin = ++this.nextIndicatorOrigin; origins.set(source.id, origin); }
+                const inherited = resolveIndicatorReference(targetHandles, ref);
+                if (inherited) targetOrigins.set(inherited.id, origin);
+                else if (!this.manifestSettled && !source.nativeType && source.source) {
+                    let waiting = this.deferredInheritedIndicators.get(targetId);
+                    if (!waiting) this.deferredInheritedIndicators.set(targetId, (waiting = new Set()));
+                    waiting.add(origin);
+                }
+            }
+        }
+    }
+
+    private indicatorOrigin(source: IndicatorHandle): number | undefined {
+        for (const cell of this.cellsById.values()) {
+            if (cell.chart.indicators().includes(source)) return this.indicatorOrigins.get(cell.id)?.get(source.id);
+        }
+        return undefined;
+    }
+
+    private inheritedIndicator(targetId: string, source: IndicatorHandle): IndicatorHandle | undefined {
+        const origin = this.indicatorOrigin(source);
+        const origins = this.indicatorOrigins.get(targetId);
+        if (origin === undefined || !origins) return undefined;
+        return this.cellsById.get(targetId)?.chart.indicators().find((handle) =>
+            origins.get(handle.id) === origin && indicatorReferenceKey(handle) === indicatorReferenceKey(source));
+    }
+
+    private indicatorCopyDeferred(targetId: string, source: IndicatorHandle): boolean {
+        const origin = this.indicatorOrigin(source);
+        return !this.manifestSettled && origin !== undefined && !!this.deferredInheritedIndicators.get(targetId)?.has(origin);
+    }
+
+    /** Configure linked copies of specific indicator instances on the active chart. */
+    setIndicatorLiveSync(ids: readonly string[], mode: IndicatorLinkMode, charts: readonly string[] = []): number {
+        if (!this.activeId) return 0;
+        let count = 0;
+        for (const id of ids) count += this.indicatorLiveSync.set(this.activeId, id, mode, charts);
+        if (mode !== 'none') {
+            const wanted = mode === 'layout' ? [...this.cellsById.keys()].filter((id) => id !== this.activeId) : [...new Set(charts)].filter((id) => id !== this.activeId);
+            if (wanted.some((target) => ids.some((id) => {
+                const status = this.indicatorLiveSync.status(this.activeId!, id);
+                return !status.charts.includes(target) && !status.pending.includes(target);
+            }))) {
+                this.toast('Some charts could not be linked. Check the indicator and scripting engine on those charts.', 'error');
+            }
+        }
+        this.objectTree.refresh();
+        return count;
+    }
+
+    indicatorSyncStatus(id: string): { mode: IndicatorLinkMode; charts: string[]; pending: string[] } {
+        return this.activeId ? this.indicatorLiveSync.status(this.activeId, id) : { mode: 'none', charts: [], pending: [] };
     }
 
     /** A stable cross-chart identity for an indicator: its native type, else its title. */
@@ -3795,11 +4225,24 @@ export class VelaWorkspace {
         this.projectGroupMarks();
     }
 
-    /** Open the layout sheet at its sync block for ONE chart (the status line's marks are
-     *  the tap target — you mark the chart you are looking at, not the "active" one). */
+    /** Open the shared setup pane on the chart-syncing tab for one chart. */
     openSyncDrawer(cellId?: string): void {
+        // The historic phone/public door selects its chart first; the desktop badge
+        // opens on a chart's column without silently changing the active chart.
         if (cellId && this.cellsById.has(cellId) && cellId !== this.activeId) this.setActiveCell(cellId);
-        this.openMoreDrawer('layout', 'sync', cellId);
+        this.openLayoutSetup('sync', cellId);
+    }
+
+    private openLayoutSetup(tab: 'layout' | 'sync' = 'layout', cellId?: string, toggle = false, keyboard = false): void {
+        const pane = this.layoutSetup;
+        if (!pane) return;
+        if (toggle && pane.open) { this.dock.toggle('layoutSetup', false); return; }
+        pane.rememberFocus(this.root.ownerDocument.activeElement);
+        pane.selectTab(tab);
+        this.dock.toggle('layoutSetup', true);
+        pane.refresh();
+        if (cellId && tab === 'sync') pane.focusChart(cellId);
+        if (keyboard) pane.focusSelectedTab();
     }
 
     /** Re-draw every cell's emoji badge from the live links (cheap; runs on a link edit). */
@@ -3823,13 +4266,7 @@ export class VelaWorkspace {
         // chart shows it (as "◌") instead of hiding the affordance entirely.
         const linkable = !this.monoLayout && this.cellsById.size > 1;
         for (const [id, cellMarks] of marks) this.cellsById.get(id)?.setSyncMarks(cellMarks, linkable);
-        // The ring's job is done the moment any chart joins a group (the user has found
-        // the mechanism), or when the grid is no longer linkable at all.
-        if (this.groupTip && (!linkable || [...marks.values()].some((m) => m.length > 0))) {
-            this.dismissGroupTip(true);
-        } else if (!this.groupTip && linkable) {
-            this.maybeShowGroupTip();
-        }
+        this.layoutSetup?.refresh();
     }
 
     // ── drawing scope: the cell's document, or the SYMBOL's ─────────────────────────
@@ -3848,6 +4285,7 @@ export class VelaWorkspace {
         }
         this.markStateDirty();
         this.topbar.setLayout(this.def.id);
+        this.layoutSetup?.refresh();
     }
 
     /** Park one cell's drawings under its CURRENT symbol (global scope only). */
@@ -3979,8 +4417,8 @@ export class VelaWorkspace {
         return this.applyShareLink(url.trim());
     }
 
-    /** Open the separate, compact Manage layouts panel. */
-    openLayoutManager(): void {
+    /** Open the compact, anchored Manage layouts menu. */
+    openLayoutManager(anchor?: HTMLElement | null): void {
         this.layoutManager ??= new LayoutManagerPanel({
             host: this.root,
             activeName: () => this.activeLayoutName(),
@@ -3993,12 +4431,26 @@ export class VelaWorkspace {
             shareUrl: () => this.currentShareLink(),
             onCopyLink: () => this.copyCurrentShareLink(),
             onOpenLink: (url) => this.openWorkspaceLink(url),
+            savedLayouts: () => this.savedLayoutList(),
+            onSaveChanges: () => this.saveActiveLayout(),
+            onSaveAs: (name) => { this.saveLayoutWithThumbnail(name); return this.activeLayoutName() === name; },
+            onOpenSaved: (name) => this.openLayout(name),
+            onRenameSaved: (from, to) => this.renameLayout(from, to),
+            onDuplicateSaved: (name) => this.duplicateLayout(name),
+            onShareSaved: (name) => this.copyLayoutLink(name),
+            onExportSaved: (name) => this.exportLayout(name),
+            onDeleteSaved: (name) => this.deleteLayout(name),
+            onExportData: () => this.exportChartCsv('all', 'iso'),
+            onImportLayout: (json) => this.importLayout(json),
+            onOpenDrawingTemplates: () => this.openMoreDrawer('drawings'),
         });
-        this.layoutManager.open();
+        const fallback = this.layoutCtl.current === 'mobile'
+            ? this.root.querySelector<HTMLElement>('.vela-mb-more')
+            : this.root.querySelector<HTMLElement>('.vela-widget-layoutname, .vela-widget-layout');
+        this.layoutManager.open(anchor ?? fallback ?? this.root);
     }
 
-    /** The separate Indicator templates panel: topbar dropdown on desktop, compact
-     *  dialog on phone (the More drawer's own row is the door there). */
+    /** The separate Indicator templates pane, reached from the topbar or phone More. */
     openIndicatorTemplates(): void {
         if (this.layoutCtl.current === 'mobile') this.topbar.openTemplatesDialog(this.root);
         else this.topbar.openTemplatesMenu();
@@ -4092,7 +4544,7 @@ export class VelaWorkspace {
         const template = this.templates.get(name);
         if (!template) return undefined;
         return {
-            manifest: [],
+            manifest: (template.scripts ?? []).map((s) => ({ ...s })),
             natives: template.indicators.map((e) =>
                 (typeof e === 'string' ? { type: e, inputs: {} } : { ...e, inputs: { ...(e.inputs ?? {}) } }) as never,
             ),
@@ -4325,7 +4777,7 @@ export class VelaWorkspace {
     templateList(): Array<{ name: string; count: number; symbol?: string; timeframe?: string }> {
         return [...this.templates].map(([name, t]) => ({
             name,
-            count: t.indicators.length,
+            count: t.indicators.length + (t.scripts?.length ?? 0),
             ...(t.symbol ? { symbol: t.symbol } : {}),
             ...(t.timeframe ? { timeframe: t.timeframe } : {}),
         }));
@@ -4707,9 +5159,14 @@ export class VelaWorkspace {
         if (!builtin) return 0;
         const ids = target === 'all' ? [...this.cellsById.keys()] : this.activeId ? [this.activeId] : [];
         let changed = 0;
+        let orphanedDrawings = false;
         for (const cellId of ids) {
             const cell = this.cellsById.get(cellId);
             if (!cell) continue;
+            if (this.templateWouldOrphanDrawings(cell, { version: 1, indicators: builtin.indicators })) {
+                orphanedDrawings = true;
+                continue;
+            }
             cell.applyIndicatorTemplate({ indicators: builtin.indicators });
             changed += 1;
         }
@@ -4717,28 +5174,79 @@ export class VelaWorkspace {
             this.markStateDirty();
             this.toast(`“${builtin.name}” applied to ${changed} chart${changed === 1 ? '' : 's'}`, 'success');
         }
+        if (orphanedDrawings) this.toast('Template not applied to some charts: move drawings out of indicator panes first.', 'error');
         return changed;
+    }
+
+    /** Capture the selected instances, not every instance of the same indicator type. */
+    private captureIndicatorTemplate(ids: readonly string[]): ChartTemplate | null {
+        const cell = this.activeId ? this.cellsById.get(this.activeId) : undefined;
+        if (!cell) return null;
+        const byId = new Map(cell.chart.indicators().map((h) => [h.id, h]));
+        const indicators: ChartTemplate['indicators'] = [];
+        const scripts: NonNullable<ChartTemplate['scripts']> = [];
+        for (const id of ids) {
+            const h = byId.get(id);
+            if (!h) return null;
+            const inputs = h.inputValues();
+            if (h.nativeType) indicators.push({ type: h.nativeType, inputs, props: h.propValues(), ...(!h.visible ? { hidden: true } : {}) });
+            else if (h.source) scripts.push({ name: h.title, source: h.source, inputs, props: h.propValues(), ...(h.language ? { language: h.language } : {}), ...(!h.visible ? { hidden: true } : {}) });
+            else return null; // Do not pretend a source-less plugin can be restored.
+        }
+        if (ids.length === 0) return null;
+        return { version: 1, indicators, ...(scripts.length > 0 ? { scripts } : {}) };
+    }
+
+    /** Create a template from selected Object Tree rows, or append them to an existing one. */
+    saveSelectedIndicatorTemplate(name: string, ids: readonly string[], append = false): boolean {
+        const key = name.trim().slice(0, 40);
+        const captured = this.captureIndicatorTemplate(ids);
+        const old = this.templates.get(key);
+        if (!key || !captured || (append ? !old : !!old)) return false;
+        const next: ChartTemplate = append && old ? {
+            ...old,
+            indicators: [...old.indicators, ...captured.indicators],
+            ...((old.scripts?.length ?? 0) + (captured.scripts?.length ?? 0) > 0 ? { scripts: [...(old.scripts ?? []), ...(captured.scripts ?? [])] } : {}),
+        } : captured;
+        this.templates.set(key, next);
+        this.markStateDirty();
+        this.indicatorPicker?.sync();
+        this.toast(`Indicator template “${key}” ${append ? 'updated' : 'saved'}`, 'success');
+        return true;
     }
 
     saveTemplate(name: string, opts: { includeMarket?: boolean } = {}): boolean {
         const key = name.trim().slice(0, 40);
-        if (!key || !this.activeId) return false;
-        const cell = this.cellsById.get(this.activeId);
-        if (!cell) return false;
-        const ledger = cell.indicatorLedger();
-        const template: ChartTemplate = {
-            version: 1,
-            indicators: ledger.natives.map((e) => (typeof e === 'string' ? e : { ...e })),
-        };
-        if (opts.includeMarket) {
-            template.symbol = cell.symbol;
-            template.timeframe = cell.timeframe;
-        }
+        const cell = this.activeId ? this.cellsById.get(this.activeId) : undefined;
+        if (!key || !cell) return false;
+        const ids = cell.chart.indicators().map((h) => h.id);
+        const template = this.captureIndicatorTemplate(ids) ?? (ids.length === 0 ? { version: 1 as const, indicators: [] } : null);
+        if (!template) return false;
+        if (opts.includeMarket) { template.symbol = cell.symbol; template.timeframe = cell.timeframe; }
         this.templates.set(key, template);
         this.markStateDirty();
-        this.toast(`Template “${key}” saved (${template.indicators.length} indicator${template.indicators.length === 1 ? '' : 's'})`, 'success');
+        this.toast(`Template “${key}” saved (${ids.length} indicator${ids.length === 1 ? '' : 's'})`, 'success');
         this.indicatorPicker?.sync();
         return true;
+    }
+
+    /** The template ledger retains matching native handles, but removes other studies.
+     * Do not silently orphan a drawing in a pane whose last indicator would disappear. */
+    private templateWouldOrphanDrawings(cell: ChartCell, template: ChartTemplate): boolean {
+        const wanted = new Map<string, number>();
+        for (const entry of template.indicators) {
+            const type = typeof entry === 'string' ? entry : entry.type;
+            wanted.set(type, (wanted.get(type) ?? 0) + 1);
+        }
+        const kept = new Set<string>();
+        for (const handle of cell.chart.indicators()) {
+            const type = handle.nativeType;
+            const count = type ? wanted.get(type) ?? 0 : 0;
+            if (type && count > 0) { kept.add(handle.id); wanted.set(type, count - 1); }
+        }
+        const drawingPanes = new Set(cell.chart.drawings.all().map((drawing) => drawing.paneId ?? 'price'));
+        return cell.chart.panes.list().some((pane) => pane.id !== 'price' && drawingPanes.has(pane.id)
+            && pane.indicators.length > 0 && pane.indicators.every((indicator) => !kept.has(indicator.id)));
     }
 
     /**
@@ -4752,9 +5260,21 @@ export class VelaWorkspace {
         if (!template) return 0;
         const ids = target === 'all' ? [...this.cellsById.keys()] : target === 'active' ? (this.activeId ? [this.activeId] : []) : [target];
         let changed = 0;
+        let missingEngine = false;
+        let orphanedDrawings = false;
         for (const id of ids) {
             const cell = this.cellsById.get(id);
             if (!cell) continue;
+            // Never remove the chart's current studies only to discover afterwards that
+            // a source-backed template cannot run on this chart.
+            if ((template.scripts ?? []).some((s) => !cell.chart.hasEngine(s.language))) {
+                missingEngine = true;
+                continue;
+            }
+            if (this.templateWouldOrphanDrawings(cell, template)) {
+                orphanedDrawings = true;
+                continue;
+            }
             cell.applyIndicatorTemplate(template);
             // The optional market chips: only when the template carries them, so a
             // market-agnostic template never moves a chart.
@@ -4766,6 +5286,8 @@ export class VelaWorkspace {
             this.markStateDirty();
             this.toast(`Template “${name}” applied to ${changed} chart${changed === 1 ? '' : 's'}`, 'success');
         }
+        if (missingEngine) this.toast('Template not applied to some charts: the required scripting engine is unavailable.', 'error');
+        if (orphanedDrawings) this.toast('Template not applied to some charts: move drawings out of indicator panes first.', 'error');
         return changed;
     }
 
@@ -5127,62 +5649,8 @@ export class VelaWorkspace {
         });
     }
 
-    // ── one-time tips ───────────────────────────────────────────────────────────────
-    /**
-     * The ◌ coach mark. On a grid an unmarked chart shows a hollow ring on its status
-     * line — truthful, but a ring explains nothing. Once per workspace (a `seenTips`
-     * record, so it survives reloads and never nags), the first time such a chart is on
-     * screen, a small card points at the ring and says what pressing it does.
-     *
-     * Deliberately NOT a modal, NOT focus-stealing, and NOT tied to an event the user
-     * did not ask for: it appears a beat after the layout settles, and any of the three
-     * obvious answers (the ×, Escape, the badge itself) retires it for good.
-     */
-    private maybeShowGroupTip(): void {
-        if (this.destroyed || this.monoLayout || this.cellsById.size < 2) return;
-        // Never while a popover, dialog or the layout sheet is open: the card points at a
-        // badge INSIDE the grid, and a coach mark floating over the sheet points at
-        // nothing. Closing the last one re-arms it (see `trackDialog`).
-        if (this.openDialogs > 0 || this.syncSurfaceOpen) return;
-        if (this.groupTip || this.groupTipTimer != null || this.hasSeenTip('group-badge')) return;
-        const first = this.cellsById.get(this.order[0] ?? '') ?? this.cellsById.values().next().value;
-        const anchor = first?.groupBadgeAnchor();
-        // Only the "nothing yet" state: a chart already in a group does not need the ring
-        // explained, and a hidden badge (single chart) has nothing to point at.
-        if (!anchor || anchor.hidden || !anchor.hasAttribute('data-empty')) return;
-        const win = this.root.ownerDocument.defaultView;
-        if (!win) return;
-        this.groupTipTimer = win.setTimeout(() => {
-            this.groupTipTimer = null;
-            if (this.destroyed || this.hasSeenTip('group-badge')) return;
-            if (this.openDialogs > 0 || this.syncSurfaceOpen) return; // a sheet opened while we waited
-            // The badge may have gained a group during the beat — re-check, do not guess.
-            if (anchor.hidden || !anchor.hasAttribute('data-empty') || !anchor.isConnected) return;
-            this.groupTip = new Tip({
-                anchor,
-                content:
-                    '◌ means this chart is in no sync group. Press it to pick one — charts wearing the same group follow each other.',
-                onDismiss: () => {
-                    this.groupTip = null;
-                    this.markTipSeen('group-badge');
-                },
-            });
-        }, 900);
-    }
-
-    /** Retire the coach mark (optionally recording it as seen). */
-    private dismissGroupTip(remember: boolean): void {
-        const win = this.root.ownerDocument.defaultView;
-        if (this.groupTipTimer != null) {
-            win?.clearTimeout(this.groupTipTimer);
-            this.groupTipTimer = null;
-        }
-        const tip = this.groupTip;
-        this.groupTip = null;
-        if (remember) this.markTipSeen('group-badge');
-        tip?.dismiss();
-    }
-
+    // Retain the persisted seen-tip API for older saved workspaces. The automatic
+    // coach mark was removed so it cannot cover the chart uninvited.
     hasSeenTip(id: string): boolean {
         return this.seenTips.has(id);
     }
@@ -5281,6 +5749,7 @@ export class VelaWorkspace {
         this.link.setTag(this.linkGroup);
         if (this.linkGroup) this.broadcastLink(); // seed the peers with our current market
         this.markStateDirty();
+        this.layoutSetup?.refresh();
     }
 
     /** Broadcast this workspace's active market + range to peers on the same tag. */
@@ -5397,6 +5866,8 @@ export class VelaWorkspace {
         // Everything alive before the swap: the returning chart is not a newborn, so the
         // newborn-alignment passes below must leave its market/style/drawings alone.
         const preexisting = new Set([...this.cellsById.keys(), ...this.pool.keys()]);
+        const indicatorLinks = this.indicatorLiveSync.snapshot();
+        this.indicatorLiveSync.clear();
         const leaving = this.cellsById.get(outgoing);
         // Take the returning chart's state OUT while the outgoing one is parked: `poolSet`
         // trims the pool at the ceiling by eviction order, and the chart the user just
@@ -5408,7 +5879,9 @@ export class VelaWorkspace {
         if (leaving) {
             this.cellsById.delete(outgoing);
             this.events.emit('cell:destroyed', { id: outgoing });
-            this.pool.set(outgoing, leaving.dehydrate());
+            const pooled = leaving.dehydrate();
+            pooled.objectTreeGroups = this.objectTree.groupsFor(leaving.chart);
+            this.pool.set(outgoing, pooled);
             leaving.destroy();
         }
         this.pool.set(id, state); // newest, about to be consumed by the slot
@@ -5419,6 +5892,8 @@ export class VelaWorkspace {
         else if (home < 0) this.order.push(outgoing);
         this.order[slot] = id;
         this.buildCells(); // hydrates `id` from the pool it just left
+        this.indicatorLiveSync.restore(indicatorLinks);
+        this.indicatorLiveSync.reconcileLayout();
         this.alignNewCellMarket(preexisting);
         this.alignNewCellStyles(preexisting);
         this.alignNewCellDrawings(preexisting);
@@ -5434,6 +5909,7 @@ export class VelaWorkspace {
     /** Re-project the phone bar's hidden-chart badge (More → Hidden charts). */
     private syncMobileHidden(): void {
         this.mobileBar?.setHiddenCount(this.hiddenChartCount);
+        this.layoutSetup?.refresh();
     }
 
     /**
@@ -5643,8 +6119,8 @@ export class VelaWorkspace {
             const comparable = originTicker !== '' && parseSymbol(follower.symbol).ticker === originTicker;
             follower.chart.renderer.setExternalCrosshair(time, comparable ? price : null);
             // The readout half: the follower's status line shows ITS values at the
-            // leader's instant (TV's rule — crosshair sync lights every chart's values).
-            follower.setSyncedCrosshair(time == null ? null : follower.barAt(time));
+            // leader's instant, including when its own feed later loads or updates.
+            follower.setSyncedCrosshairAt(time);
         }
     }
 
@@ -5822,6 +6298,7 @@ export class VelaWorkspace {
         // shows another market (otherwise "alert at 50,000" floats over a $150 chart),
         // and bring it back the moment the symbol returns.
         this.syncAlertLines(this.cellsById.get(id));
+        this.alertPanel.refresh();
         this.markStateDirty();
         if (id !== this.activeId) return;
         const cell = this.cellsById.get(id);
@@ -5832,6 +6309,7 @@ export class VelaWorkspace {
         this.mobileBar?.setTimeframe(cell.timeframe);
         this.mobileBar?.setLayoutLabel(`${this.def.cols.length}×${this.def.rows.length}`);
         this.objectTree.setSymbol(cell.symbol);
+        this.alertPanel.refresh();
         this.bottombar?.setSession({ session: cell.session, enabled: cell.sessionAvailable });
         this.projectTimezone(); // the new symbol's market zone, once its metadata lands
         // The chip highlight must track the cell through EVERY market path: a timeframe
@@ -5852,7 +6330,7 @@ export class VelaWorkspace {
         this.mobileBar?.setPriceStyle(cell.priceStyle);
     }
 
-    /** Trigger ② — a cell's indicator ledger changed: count + picker only if active. */
+    /** Trigger ② — an active cell's indicator ledger changed: refresh its shared chrome. */
     private onCellIndicatorsChanged(id: string): void {
         this.markStateDirty();
         if (id !== this.activeId) return;
@@ -5860,6 +6338,8 @@ export class VelaWorkspace {
         if (!cell) return;
         this.topbar.setIndicatorCount(cell.indicatorCount);
         this.indicatorPicker?.sync();
+        this.topbar.setCompareSymbol(this.compareLabel());
+        this.compareSheet?.refresh();
     }
 
     /** Timeframe changes routed from the topbar menu / quick entry (chip state follows). */
@@ -5932,22 +6412,18 @@ export class VelaWorkspace {
     }
 
     private onLayoutModeChange(mode: LayoutMode): void {
+        this.dock.setLayout(mode);
         this.applyChromeForLayout(mode);
-        this.symbolPicker.close();
-        this.indicatorPicker?.close();
         this.tfDrawer?.close();
         this.drawingsDrawer?.close();
-        this.moreDrawer?.close();
+        // More is a standard pane now: keep it open through rotation like its peers.
         this.timezoneDrawer?.close();
-        this.priceScaleDrawer?.close();
-        this.alertsMenu?.destroy();
-        this.alertsMenu = null;
-        this.alertList?.destroy();
-        this.alertList = null;
         this.palette?.destroy();
         this.palette = null;
         for (const cell of this.cellsById.values()) {
-            cell.chart.renderer.closeDialogs();
+            // Indicator dialogs close on a size-class transition; chart settings adapts
+            // between its desktop card and phone pane without discarding the user's place.
+            cell.chart.renderer.closeDialogs({ preserveSettings: true });
             cell.chart.renderer.setLayoutMode(mode);
             cell.setControlsCompact(mode === 'mobile'); // the cluster keeps its reset chip, drops the cursor-only verbs
         }
@@ -6015,25 +6491,34 @@ export class VelaWorkspace {
         this.drawingsDrawer.open();
     }
 
-    /**
-     * One door for every "mark this chart" affordance — the status-line badge and the
-     * series context menu both land here. A phone gets the sheet (a popover would fight
-     * the touch layout); a desktop gets the layout popover, opened on THAT chart's
-     * column, so the tap lands on the right cell instead of on a panel to hunt through.
-     */
+    /** Both chart-specific doors open the same pane at that chart's column. */
     private openSyncSurface(cellId?: string): void {
         if (this.monoLayout || this.cellsById.size < 2) return;
         if (this.layoutCtl.current === 'mobile') this.openSyncDrawer(cellId);
-        else this.topbar?.openLayoutPicker(cellId);
+        else this.openLayoutSetup('sync', cellId);
     }
 
-    private openMoreDrawer(view: 'main' | 'layout' = 'main', focus?: 'manage' | 'sync', cellId?: string): void {
+    private openMoreDrawer(view: 'main' | 'layout' | 'manage' | 'drawings' = 'main', focus?: 'manage' | 'sync', cellId?: string): void {
+        if (view === 'layout' && focus !== 'manage') {
+            this.openLayoutSetup(focus === 'sync' ? 'sync' : 'layout', cellId);
+            return;
+        }
+        if (view === 'main' && this.morePanel.open) {
+            this.morePanel.toggle(false);
+            return;
+        }
+        this.ensureMoreDrawer().open(view, { ...(focus ? { focus } : {}), ...(cellId ? { cell: cellId } : {}) });
+    }
+
+    private ensureMoreDrawer(): MoreDrawer {
         // The drawer is the mobile counterpart of the topbar's tools — composition-
         // hidden entries lose their drawer rows too (handlers omitted ⇒ rows omitted).
         const has = (id: string): boolean => topbarHas(this.topbarComp, id);
         this.moreDrawer ??= new MoreDrawer({
             host: this.root,
-            onOpenLayoutManager: () => this.openLayoutManager(),
+            panel: this.morePanel,
+            onOpenLayoutManager: (anchor) => this.openLayoutManager(anchor),
+            ...(this.layoutSetup ? { onOpenLayoutSetup: () => this.openLayoutSetup() } : {}),
             onOpenIndicatorTemplates: () => this.openIndicatorTemplates(),
             indicatorTemplateCount: () => this.templateList().length,
             ...(has('undo-redo') ? { onUndo: () => this.undoHistory(), onRedo: () => this.redoHistory() } : {}),
@@ -6047,21 +6532,19 @@ export class VelaWorkspace {
             onPriceStyle: (id) => this.active.setPriceStyle(id),
             // One chart picker on the phone: the drawer's row raises the same sheet the
             // bar's chart-type stop does (a shell without the mobile bar keeps the list).
-            ...(this.mobileBar ? { onChartType: () => this.mobileBar!.openSheet() } : {}),
+            ...(this.mobileBar ? { onChartType: () => this.mobileBar!.openSheet(), canOpenChartType: () => this.layoutCtl.current === 'mobile' } : {}),
             // The editor has its own row below ("Pine Editor — Open"), which opens it rather
             // than merely toggling a panel — so it is not listed twice.
             panels: () => (has('panels') ? [...this.dock.list()].filter((p) => p.id !== 'pineEditor') : []),
             // The editor's own door on a phone: the More sheet opens it straight away
             // (TradingView keeps the Pine Editor one tap from the mobile menu).
             ...(this.pineEditor ? { onEditor: () => this.openEditor() } : {}),
+            ...(this.drawingsEnabled ? { onDrawings: () => this.openDrawingsDrawer() } : {}),
             onTogglePanel: (id) => this.dock.toggle(id),
             ...(has('alerts')
                 ? {
                       alerts: () => this.alerts.map((a) => ({ title: `${a.source} · ${a.title}`, message: a.message, time: a.time })),
-                      // Creation is the reason the view is opened on a phone: a bell that
-                      // only lists what a script already did cannot set a price level.
-                      onCreateAlert: () => this.openAlertCreate(),
-                      priceAlerts: () => this.morePriceAlerts(),
+                      onAlerts: () => this.dock.toggle('alerts', true),
                   }
                 : {}),
             // The chart-body menu's "Reset chart view" row, reachable on a phone through the
@@ -6069,13 +6552,13 @@ export class VelaWorkspace {
             onResetView: () => this.active.resetView(),
             // D1: the second series — same door on for the phone and the desktop sheet.
             onCompare: () => this.openCompare(),
-            // …and the rest of that menu as one sheet ("Chart actions…"), so the phone gets
-            // the bulk clears too — the one pair of verbs it had no door to at all.
-            onChartMenu: () => this.active.openChartMenu(),
-            // Display time zone: the sheet a hold on the time axis opens, now also a row a
+            // …and the rest as a small menu anchored to More ("Chart actions…"), so the
+            // phone gets the bulk clears and the same contributed actions as right-click.
+            onChartMenu: (anchor) => this.active.openChartMenu(anchor),
+            // Display time zone: the menu a hold on the time axis opens, now also a row a
             // user can find without knowing the gesture.
             timezone: () => this.timezone,
-            onTimeZone: () => this.openTimezoneDrawer(),
+            onTimeZone: (anchor) => this.openTimezoneDrawer(anchor),
             // The drawing toolbar's Cursors stop, on the phone: seven pointers, one row
             // each. TV keeps this on the left toolbar, which the phone hides.
             // The pointer is a CHART capability, not a topbar button: gating it on the
@@ -6182,11 +6665,9 @@ export class VelaWorkspace {
             onExportDrawingSetTemplate: (name) => this.exportDrawingSetTemplate(name),
             onImportDrawingSetTemplate: (json) => this.importDrawingSetTemplate(json),
             onOpenChange: (open) => {
-                this.trackDialog(open);
+                // More is a non-modal workspace pane; it must not increment the modal
+                // dialog count or block the chart's normal keyboard shortcuts.
                 this.mobileBar?.setExpanded('more', open);
-                // While the sheet is up its table numbers the charts, so "column 3" and
-                // the chart wearing "3" are visibly the same thing.
-                this.setSyncSurfaceOpen(open);
                 const anchor = this.pendingReplayAnchor;
                 if (!open && anchor) {
                     this.pendingReplayAnchor = null;
@@ -6194,7 +6675,7 @@ export class VelaWorkspace {
                 }
             },
         });
-        this.moreDrawer.open(view, { ...(focus ? { focus } : {}), ...(cellId ? { cell: cellId } : {}) });
+        return this.moreDrawer;
     }
 
     /** The contributed topbar actions the mobile menu lists, from one cluster. */
@@ -6216,26 +6697,16 @@ export class VelaWorkspace {
         return out;
     }
 
-    private openTimezoneDrawer(): void {
-        this.timezoneDrawer ??= new TimezoneDrawer({
+    private timezoneMenu(): TimezoneDrawer {
+        return this.timezoneDrawer ??= new TimezoneDrawer({
             host: this.root,
             timezone: () => this.timezone,
             onTimezone: (zone) => this.setTimezone(zone),
-            onOpenChange: (open) => this.trackDialog(open),
         });
-        this.timezoneDrawer.open();
     }
 
-    private openPriceScaleDrawer(y: number): void {
-        this.priceScalePressY = y;
-        this.priceScaleDrawer ??= new PriceScaleDrawer({
-            host: this.root,
-            chart: () => (this.activeId ? (this.cellsById.get(this.activeId)?.chart ?? null) : null),
-            pressY: () => this.priceScalePressY,
-            onOpenChange: (open) => this.trackDialog(open),
-        });
-        this.priceScaleDrawer.open();
-    }
+    private openTimezoneDrawer(anchor?: HTMLElement): void { this.timezoneMenu().open(anchor); }
+    private openTimezoneDrawerAt(clientX: number, clientY: number): void { this.timezoneMenu().openAt(clientX, clientY); }
 
     /** The aggregated alerts bell — entries carry their cell; selecting one activates it. */
     // ── bar replay chrome ──
@@ -6482,43 +6953,10 @@ export class VelaWorkspace {
         this.replayDatePop.show();
     }
 
-    /**
-     * The bell opens the grouped alert list. The old flat menu answered "what happened?"
-     * but not "on WHICH chart?" — in a 4- or 16-chart grid that is the only question
-     * worth asking. `anchor` is kept in the signature because the topbar slot hands it
-     * over; the dialog is centred rather than anchored (a 16-chart list under a bell
-     * button would hang off the screen).
-     */
-    private openAlertsMenu(_anchor: HTMLElement): void {
-        this.alertsMenu?.destroy();
-        this.alertsMenu = null;
-        this.alertList?.destroy();
-        this.alertList = null;
-        this.palette?.destroy();
-        this.palette = null;
-        this.alertList ??= new AlertList({
-            doc: this.root.ownerDocument,
-            host: this.root,
-            getAlerts: () => this.alerts,
-            getCharts: () => this.syncCharts(),
-            onGo: (cellId) => {
-                if (this.cellsById.has(cellId)) this.setActiveCell(cellId);
-            },
-            onClearChart: (cellId) => {
-                this.alerts = this.alerts.filter((a) => a.cellId !== cellId);
-                this.topbar.setAlertCount(this.alerts.length);
-                this.markStateDirty();
-            },
-            onClearAll: () => {
-                this.alerts = [];
-                this.topbar.setAlertCount(0);
-                this.markStateDirty();
-            },
-            onOpenChange: (open) => this.trackDialog(open),
-            onCreate: () => this.openAlertCreate(),
-            getArmed: () => this.armedAlertRows(),
-        });
-        this.alertList.open();
+    /** Keep desktop and portrait-phone badges in step with the bounded session log. */
+    private syncAlertCount(): void {
+        this.topbar.setAlertCount(this.alerts.length);
+        this.mobileBar?.setAlertCount(this.alerts.length);
     }
 
     /** Alert rows recorded for one chart (the per-cell badge reads this). */
@@ -6533,28 +6971,30 @@ export class VelaWorkspace {
         return this.alerts;
     }
 
-    /** Open the Compare sheet — symbol, the three displays, and the way back out. */
-    openCompare(): void {
-        this.compareSheet ??= new CompareSheet({
-            host: this.root,
-            getSymbol: () => this.compareSymbolOf(this.activeCell()),
-            getDisplay: () => this.compareDisplayOf(this.activeCell()),
-            onPickSymbol: () => {
-                this.comparePending = true;
-                this.symbolPicker.open('', 'Compare with');
-            },
-            onDisplay: (mode) => this.setCompareDisplay(mode),
-            onRemove: () => this.removeCompare(),
-            onOpenChange: (open) => this.trackDialog(open),
-        });
-        this.compareSheet.open();
+    /** An ordinary symbol door always exits compare-search mode. */
+    private openSymbolSearch(query = ''): void {
+        this.compareSearchEpoch++;
+        this.comparePending = false;
+        this.returnToCompareAfterSearch = false;
+        this.symbolPicker.open(query);
     }
 
-    /** Open the symbol search in COMPARE mode (the sheet's own symbol row). */
+    /** Open the Compare pane — symbol, the three displays, and removal. */
+    openCompare(): void {
+        this.compareSheet?.open();
+    }
+
+    private beginCompareSearch(): void {
+        this.compareSearchEpoch++;
+        this.comparePending = true;
+        this.returnToCompareAfterSearch = true;
+        this.symbolPicker.open('', 'Compare with');
+    }
+
+    /** Open the symbol search in compare mode (the pane's own symbol row). */
     openComparePicker(): void {
         this.openCompare();
-        this.comparePending = true;
-        this.symbolPicker.open('', 'Compare with');
+        this.beginCompareSearch();
     }
 
     /** The active cell, or null before the first one is built / after teardown. */
@@ -6565,7 +7005,12 @@ export class VelaWorkspace {
     /** The compare study's symbol on a cell (null = nothing compared there). */
     private compareSymbolOf(cell: ChartCell | null): string | null {
         const handle = cell?.chart.indicators().find((h) => h.nativeType === 'compare');
-        return handle ? this.compareSymbols.get(`${cell!.id}:${handle.id}`) ?? null : null;
+        if (!handle || !cell) return null;
+        const symbol = handle.inputValues().symbol;
+        // Unlike the old shell-only mirror, indicator inputs survive reload, undo and
+        // templates. A deliberately cleared string must not revive an old mirror value.
+        if (typeof symbol === 'string') return symbol || null;
+        return this.compareSymbols.get(`${cell.id}:${handle.id}`) ?? null;
     }
 
     /** The ticker the ACTIVE chart compares with (null = nothing compared) — the toolbar
@@ -6580,13 +7025,14 @@ export class VelaWorkspace {
     private compareDisplayOf(cell: ChartCell | null): CompareDisplay {
         const handle = cell?.chart.indicators().find((h) => h.nativeType === 'compare');
         if (!handle || !cell) return 'same-percent';
+        const display = handle.inputValues().display;
+        if (display === 'same-percent' || display === 'own-scale' || display === 'new-pane') return display;
         return this.compareDisplays.get(`${cell.id}:${handle.id}`) ?? 'same-percent';
     }
 
     /**
      * Point the active chart's Compare study at `symbol` (add it once, then re-target) and
-     * keep the current display. The sheet stays open behind the picker, so the user lands
-     * back on a painted dialog with the new symbol already in it.
+     * keep the current display. When search closes, return to the painted Compare pane.
      */
     setCompareSymbol(symbol: string): void {
         this.comparePending = false;
@@ -6596,7 +7042,7 @@ export class VelaWorkspace {
         const existing = chart.indicators().find((h) => h.nativeType === 'compare');
         const display = this.compareDisplayOf(cell);
         if (existing) {
-            existing.setInputs({ symbol, display });
+            this.writeCompareInputs(cell, existing, { symbol, display });
             this.compareSymbols.set(`${cell.id}:${existing.id}`, symbol);
             this.applyCompareDisplay(cell, existing.id, display);
         } else {
@@ -6620,7 +7066,7 @@ export class VelaWorkspace {
         const handle = chart.indicators().find((h) => h.nativeType === 'compare');
         if (!handle) return;
         this.compareDisplays.set(`${cell.id}:${handle.id}`, mode);
-        handle.setInputs({ display: mode });
+        this.writeCompareInputs(cell, handle, { display: mode });
         this.applyCompareDisplay(cell, handle.id, mode);
         this.compareSheet?.refresh();
         this.markStateDirty();
@@ -6643,6 +7089,32 @@ export class VelaWorkspace {
         this.markStateDirty();
     }
 
+    /** Discard only the mirrors for a cell whose old renderer is being replaced. */
+    private forgetCompareMirrors(cellId: string): void {
+        const prefix = `${cellId}:`;
+        for (const key of this.compareSymbols.keys()) if (key.startsWith(prefix)) this.compareSymbols.delete(key);
+        for (const key of this.compareDisplays.keys()) if (key.startsWith(prefix)) this.compareDisplays.delete(key);
+    }
+
+    /** Guard our synchronous input event; callers place the study once after writing. */
+    private writeCompareInputs(cell: ChartCell, handle: IndicatorHandle, values: Record<string, InputValue>): void {
+        const key = `${cell.id}:${handle.id}`;
+        this.compareWrites.add(key);
+        try { handle.setInputs(values); } finally { this.compareWrites.delete(key); }
+    }
+
+    /** Re-apply a restored or inherited Compare study's live placement once mounted. */
+    private restoreComparePlacement(cell: ChartCell): void {
+        const handle = cell.chart.indicators().find((h) => h.nativeType === 'compare');
+        const symbol = this.compareSymbolOf(cell);
+        if (!handle || !symbol) return;
+        const key = `${cell.id}:${handle.id}`;
+        const display = this.compareDisplayOf(cell);
+        this.compareSymbols.set(key, symbol);
+        this.compareDisplays.set(key, display);
+        this.applyCompareDisplay(cell, handle.id, display);
+    }
+
     /**
      * Apply a display to a mounted compare study: the pane/scale placement and, for the
      * Same-% mode, the price axis itself. Retried briefly because a freshly added native
@@ -6650,6 +7122,9 @@ export class VelaWorkspace {
      * pane of its own while the sheet claims "Same % scale".
      */
     private applyCompareDisplay(cell: ChartCell, id: string, mode: CompareDisplay, attempt = 0): void {
+        // A retry from an earlier choice must not move a freshly restored/rebuilt chart
+        // or override a more recent display choice while the renderer is still mounting.
+        if (this.cellsById.get(cell.id) !== cell || this.compareDisplayOf(cell) !== mode) return;
         const chart = cell.chart;
         const handle = chart.indicators().find((h) => h.id === id);
         if (!handle) return;
@@ -6665,13 +7140,18 @@ export class VelaWorkspace {
         const placed = (() => {
             if (!panes.supported) return true;
             try {
+                const matches = (): boolean => {
+                    const info = panes.list().find((p) => p.indicators.some((i) => i.id === id));
+                    if (!info) return false;
+                    if (mode === 'new-pane') return info.id !== 'price';
+                    return info.id === 'price' && info.indicators.find((i) => i.id === id)?.ownScale === (mode === 'own-scale');
+                };
+                // Avoid creating a fresh pane every time an already-correct New pane is
+                // re-applied (including a restored pane that also holds other studies).
+                if (matches()) return true;
                 if (mode === 'new-pane') panes.moveIndicator(id, { newPane: true });
                 else panes.moveIndicator(id, { pane: 'price', ownScale: mode === 'own-scale' });
-                // The engine's listing is the truth: is the study where the mode says?
-                const info = panes.list().find((p) => p.indicators.some((i) => i.id === id));
-                if (!info) return false;
-                if (mode === 'new-pane') return info.id !== 'price';
-                return info.id === 'price' && info.indicators.find((i) => i.id === id)?.ownScale === (mode === 'own-scale');
+                return matches();
             } catch {
                 return false;
             }
@@ -6708,22 +7188,137 @@ export class VelaWorkspace {
     private activePrice(): number | null {
         const id = this.activeId;
         if (!id) return null;
+        const cell = this.cellsById.get(id);
+        if (cell?.chart.replay.state.active) {
+            const bars = cell.chart.renderer.getBars?.() ?? [];
+            const shown = (bars[bars.length - 1] ?? cell.chart.lastBar)?.close;
+            return shown != null && Number.isFinite(shown) ? shown : null;
+        }
         const price = this.lastPrice.get(id);
         return price != null && Number.isFinite(price) ? price : null;
     }
 
-    /** Open the create-alert sheet for the active chart (bell `+`, More drawer, ⌥A on iOS
-     *  is out of scope — the sheet is the one door on the touch layout). */
+    /** Open the Create tab with a fresh draft on the active chart. */
     openAlertCreate(prefill?: { value: number; label: string; drawingId: string }): void {
         if (!this.activeId) return;
-        this.alertCreate ??= new AlertCreateSheet({
-            host: this.root,
-            symbol: () => (this.active?.symbol ?? '').toString(),
-            currentPrice: () => this.activePrice(),
-            onCreate: (req) => this.createPriceAlert(req),
-            onOpenChange: (open) => this.trackDialog(open),
-        });
-        this.alertCreate.open(prefill);
+        this.alertPanel.createOnActive(prefill);
+        this.dock.toggle('alerts', true);
+    }
+
+    private alertTarget(): AlertTarget | null {
+        const id = this.activeId;
+        const cell = id ? this.cellsById.get(id) : undefined;
+        if (!id || !cell) return null;
+        const number = this.syncCharts().find((chart) => chart.id === id)?.label ?? id;
+        // `chart.setMarket()` can request a new identity before ChartCell's committed
+        // projection catches up (or vice versa). Both must agree before arming.
+        const pending = cell.chart.loading || !this.alertMarketMatches(cell);
+        return {
+            cellId: id, symbol: String(cell.symbol ?? ''), timeframe: cell.timeframe, session: cell.session,
+            chartLabel: `Chart ${number}`, price: pending ? null : this.activePrice(), loading: pending,
+        };
+    }
+
+    /** Requested engine identity and projected cell identity must describe one market. */
+    private alertMarketMatches(cell: ChartCell): boolean {
+        const market = cell.chart.market;
+        return (market.symbol == null || market.symbol === cell.symbol)
+            && (market.timeframe == null || market.timeframe === cell.timeframe)
+            && (market.session ?? 'regular') === cell.session;
+    }
+
+    /** Last-line identity/drawing guard in addition to the form's visible review state. */
+    private createAlertForTarget(request: AlertRequest, target: AlertTarget): boolean {
+        const current = this.alertTarget();
+        if (!current || current.loading || current.cellId !== target.cellId || current.symbol !== target.symbol || current.timeframe !== target.timeframe || current.session !== target.session) return false;
+        if (request.source) {
+            const cell = this.cellsById.get(target.cellId);
+            const level = cell ? this.levelOfDrawing(cell, request.source.drawingId, this.alertBarTime(cell)) : null;
+            if (level == null || isMoveCondition(request.condition)) return false;
+            request = { ...request, value: level };
+        }
+        return this.createPriceAlert(request);
+    }
+
+    /** A current price is usable only on this alert's settled, original market. */
+    private alertAnchorPrice(alert: PriceAlert, cell: ChartCell | undefined): number | null {
+        if (!cell || cell.chart.loading || !this.alertMarketMatches(cell) || !alertWatchesSymbol(alert, String(cell.symbol ?? ''))) return null;
+        if (alert.source && this.levelOfDrawing(cell, alert.source.drawingId, this.alertBarTime(cell)) == null) return null;
+        if (cell.chart.replay.state.active) {
+            const bars = cell.chart.renderer.getBars();
+            const price = (bars[bars.length - 1] ?? cell.chart.lastBar)?.close;
+            return price != null && Number.isFinite(price) ? price : null;
+        }
+        const price = this.lastPrice.get(cell.id);
+        return price != null && Number.isFinite(price) ? price : null;
+    }
+
+    /** Open an independent editor on the owning chart, never silently retarget an alert. */
+    private beginPriceAlertEdit(id: string): AlertEditDraft | null {
+        const alert = this.priceAlerts.find((item) => item.id === id);
+        const cell = alert ? this.cellsById.get(alert.cellId) : undefined;
+        if (!alert || !cell || cell.chart.loading || !this.alertMarketMatches(cell) || this.alertIsOffChart(alert)) return null;
+        const level = alert.source ? this.levelOfDrawing(cell, alert.source.drawingId, this.alertBarTime(cell)) : alert.value;
+        if (level == null) return null;
+        if (cell.id !== this.activeId) this.setActiveCell(cell.id);
+        const target = this.alertTarget();
+        if (!target || target.loading || target.cellId !== alert.cellId || target.symbol !== alert.symbol) return null;
+        const drawing = alert.source ? cell.chart.drawings.all().find((item) => item.id === alert.source!.drawingId) : undefined;
+        return {
+            target,
+            request: { condition: alert.condition, value: level, frequency: alert.frequency, bars: alert.bars,
+                ...(alert.source ? { source: { ...alert.source } } : {}) },
+            sourceLabel: drawing ? getDrawingType(drawing.type)?.label ?? 'Drawing' : undefined,
+        };
+    }
+
+    /** Save only onto the same live chart/market/source the editor originally captured. */
+    private savePriceAlertEdit(id: string, request: AlertRequest, target: AlertTarget): boolean {
+        const index = this.priceAlerts.findIndex((item) => item.id === id);
+        const original = this.priceAlerts[index];
+        const current = this.alertTarget();
+        const cell = original ? this.cellsById.get(original.cellId) : undefined;
+        if (!original || !cell || !current || current.loading || current.cellId !== target.cellId || current.symbol !== target.symbol
+            || current.timeframe !== target.timeframe || current.session !== target.session || original.cellId !== target.cellId
+            || original.symbol !== target.symbol || !this.alertMarketMatches(cell)) return false;
+        if (!Object.prototype.hasOwnProperty.call(CONDITION_LABELS, request.condition) || !Number.isFinite(request.value)
+            || (request.frequency !== 'once' && request.frequency !== 'each') || !Number.isInteger(request.bars)
+            || request.bars < 1 || request.bars > 500 || (isMoveCondition(request.condition) && request.value <= 0)
+            || original.source?.drawingId !== request.source?.drawingId) return false;
+        let value = request.value;
+        if (original.source) {
+            const level = this.levelOfDrawing(cell, original.source.drawingId, this.alertBarTime(cell));
+            if (level == null || isMoveCondition(request.condition)) return false;
+            value = level;
+        }
+        const lineChanged = !original.source && (isMoveCondition(original.condition) !== isMoveCondition(request.condition)
+            || (!isMoveCondition(request.condition) && value !== original.value));
+        const updated: PriceAlert = { ...original, condition: request.condition, value, frequency: request.frequency, bars: request.bars,
+            anchorPrice: this.alertAnchorPrice(original, cell), lineId: lineChanged ? '' : original.lineId };
+        // Publish the new row before removing the old line, so shared references are counted.
+        // Another alert or a drawing-backed alert may still depend on the old exact line.
+        this.priceAlerts[index] = updated;
+        if (lineChanged) {
+            this.removeUnsharedAlertLine(original);
+            updated.lineId = this.drawAlertLevel(cell, updated) ?? '';
+        }
+        this.markStateDirty();
+        this.moreDrawer?.refreshAlerts?.();
+        this.alertPanel.refresh();
+        return true;
+    }
+
+    /** Pause or explicitly re-arm; no historical crossing is replayed on resume. */
+    private togglePriceAlert(id: string): boolean {
+        const index = this.priceAlerts.findIndex((item) => item.id === id);
+        const alert = this.priceAlerts[index];
+        if (!alert) return false;
+        const state = alert.state === 'active' ? 'paused' : 'active';
+        this.priceAlerts[index] = { ...alert, state, anchorPrice: state === 'active' ? this.alertAnchorPrice(alert, this.cellsById.get(alert.cellId)) : null };
+        this.markStateDirty();
+        this.moreDrawer?.refreshAlerts?.();
+        this.alertPanel.refresh();
+        return true;
     }
 
     /**
@@ -6734,9 +7329,10 @@ export class VelaWorkspace {
     private openAlertForDrawing(cell: ChartCell, drawingId: string): void {
         const doc = cell.chart.drawings.all().find((d) => d.id === drawingId);
         if (!doc) return;
-        const time = this.lastBarTime.get(cell.id) ?? Date.now();
+        const time = this.alertBarTime(cell);
         const level = drawingLevelAt(doc, time);
         if (level == null) return; // the line has no price here (a vertical tool)
+        if (cell.id !== this.activeId) this.setActiveCell(cell.id);
         this.openAlertCreate({ value: level, label: getDrawingType(doc.type)?.label ?? 'Drawing', drawingId });
     }
 
@@ -6754,7 +7350,7 @@ export class VelaWorkspace {
         if (!cell) return false;
         const symbol = String(cell.symbol ?? '');
         const alert: PriceAlert = {
-            id: nextAlertId(this.priceAlerts),
+            id: `a${++this.alertIdSerial}`,
             cellId: id,
             symbol,
             condition: req.condition,
@@ -6762,7 +7358,7 @@ export class VelaWorkspace {
             frequency: req.frequency,
             state: 'active',
             createdAt: Date.now(),
-            anchorPrice: this.lastPrice.get(id) ?? null,
+            anchorPrice: this.activePrice(),
             bars: req.bars,
             firedAt: 0,
             fires: 0,
@@ -6772,95 +7368,155 @@ export class VelaWorkspace {
         // A level the price ALREADY crossed would fire on the next tick for a condition the
         // user set on purpose — evaluate once against the current print so the state is
         // honest from the first frame (a `gt` above the market arms, a `gt` below fires).
-        const price = this.lastPrice.get(id);
+        const price = this.activePrice();
+        let firedImmediately = false;
         if (price != null) {
             // `prev: null` = "no side yet": a crossing cannot have happened at birth, but a
             // Greater/Less-than level the market is already past is true immediately.
-            const folded = advanceAlert(alert, { prev: null, now: price });
+            const folded = advanceAlert(alert, { prev: null, now: price, time: Date.now() });
+            firedImmediately = folded.fired;
             alert.state = folded.alert.state;
             alert.fires = folded.alert.fires;
-            alert.firedAt = folded.alert.firedAt;
+            alert.firedAt = folded.fired ? Date.now() : folded.alert.firedAt;
         }
         // A drawing-backed alert needs no level line: the drawing IS the line.
         alert.lineId = alert.source ? '' : (this.drawAlertLevel(cell, alert) ?? '');
         this.priceAlerts.push(alert);
         this.toast(`${alertRowLabel(alert)} — alert created`, 'success', 2600);
-        if (alert.state === 'fired') this.recordPriceAlert(alert);
+        if (firedImmediately) this.recordPriceAlert(alert);
         this.markStateDirty();
         this.moreDrawer?.refreshAlerts?.();
+        this.alertPanel.refresh();
         return true;
     }
 
-    /** Draw the dotted level with the cell's own hline tool (the reference's alert line). */
-    private drawAlertLevel(cell: ChartCell, alert: PriceAlert): string | null {
+    /** Draw or reconnect a price alert's own dotted level without taking a user drawing. */
+    private drawAlertLevel(cell: ChartCell, alert: PriceAlert, recoverLegacy = false): string | null {
         // A Moving alert's value is a DISTANCE, not a price — there is no level to draw.
-        if (isMoveCondition(alert.condition)) return null;
+        if (isMoveCondition(alert.condition)) { alert.lineOwned = false; return null; }
         try {
-            // A restored document already carries the line: user drawings persist with the
-            // cell, so re-arming would otherwise stack a SECOND dotted line on the level.
-            // Recovery is by what the line IS (a dotted hline at the alert's price) — a
-            // per-type `props` bag does not round-trip for an hline.
-            const existing = this.alertLineAt(cell, alert.value);
-            if (existing) return existing;
-            const time = this.lastBarTime.get(cell.id) ?? Date.now();
+            // An explicit durable drawing ID always wins on restoration. Unlike a price
+            // match it distinguishes an alert-owned line from the user's own dotted line.
+            if (alert.lineId && this.alertLineAt(cell, alert.value, alert.lineId)) return alert.lineId;
+            const shared = this.priceAlerts.find((other) => other.id !== alert.id && other.cellId === alert.cellId
+                && other.symbol === alert.symbol && !other.source && other.lineOwned && other.value === alert.value
+                && other.lineId && this.alertLineAt(cell, alert.value, other.lineId));
+            if (shared) { alert.lineOwned = true; return shared.lineId; }
+            if (recoverLegacy) {
+                // Old documents stored no ID/ownership. Reconnect their matching level,
+                // but never delete it: it might have been a manually drawn dotted line.
+                const legacy = this.alertLineAt(cell, alert.value);
+                if (legacy) { alert.lineOwned = false; return legacy; }
+            }
+            const time = this.alertBarTime(cell);
             const drawing = cell.chart.drawings.add('hline', {
                 anchors: [{ time, price: alert.value }],
                 style: { lineStyle: 'dotted', lineWidth: 1 },
             } as never);
+            alert.lineOwned = !!drawing;
             return drawing ? String(drawing.id) : null;
         } catch {
             // A renderer without user drawings (the LW path) still gets the alert — the
             // line is a convenience, never a precondition.
+            alert.lineOwned = false;
             return null;
         }
     }
 
-    /** The id of the dotted level line at `price` on this cell, when one is already drawn. */
-    private alertLineAt(cell: ChartCell, price: number): string | null {
+    /** A dotted price level, optionally restricted to one exact durable drawing ID. */
+    private alertLineAt(cell: ChartCell, price: number, id?: string): string | null {
         try {
             const hit = cell.chart.drawings
                 .all()
-                .find((d) => d.type === 'hline' && d.style?.lineStyle === 'dotted' && d.anchors?.[0]?.price === price);
+                .find((d) => (!id || d.id === id) && d.type === 'hline' && d.style?.lineStyle === 'dotted' && d.anchors?.[0]?.price === price);
             return hit ? String(hit.id) : null;
         } catch {
             return null;
         }
     }
 
+    /** Find an exact owned/unowned line in a pooled chart's serialized drawings. */
+    private pooledAlertLine(alert: PriceAlert, recoverLegacy = false): string | null {
+        type StoredLine = { id?: unknown; type?: unknown; style?: { lineStyle?: unknown }; anchors?: Array<{ price?: unknown }> };
+        const raw = this.pool.get(alert.cellId)?.drawings as { drawings?: unknown[] } | undefined;
+        if (!raw || !Array.isArray(raw.drawings)) return null;
+        const drawings = raw.drawings.filter((drawing): drawing is StoredLine => drawing != null && typeof drawing === 'object');
+        const matches = (drawing: StoredLine): boolean => drawing.type === 'hline' && drawing.style?.lineStyle === 'dotted' && drawing.anchors?.[0]?.price === alert.value;
+        const existing = alert.lineId && drawings.find((drawing) => drawing.id === alert.lineId && matches(drawing));
+        if (existing) return alert.lineId;
+        if (!recoverLegacy) return null;
+        const hit = drawings.find(matches);
+        if (typeof hit?.id !== 'string') return null;
+        alert.lineOwned = false;
+        return hit.id;
+    }
+
     /** Delete an armed alert (and the drawing it owns). */
     removePriceAlert(alertId: string): void {
         const idx = this.priceAlerts.findIndex((a) => a.id === alertId);
         if (idx < 0) return;
-        const removed = this.priceAlerts.splice(idx, 1)[0];
-        if (!removed) return;
-        const alert = removed;
-        const shared = this.priceAlerts.some((other) => other.lineId === alert.lineId && other.lineId !== '');
-        if (alert.lineId && !shared) {
-            const cell = this.cellsById.get(alert.cellId);
-            try {
-                cell?.chart.drawings.remove(alert.lineId);
-            } catch {
-                /* the cell may be gone — nothing to undraw */
-            }
-        }
+        const alert = this.priceAlerts.splice(idx, 1)[0];
+        if (!alert) return;
+        this.removeUnsharedAlertLine(alert);
         this.markStateDirty();
         this.moreDrawer?.refreshAlerts?.();
-        this.alertList?.refresh();
+        this.alertPanel?.refresh();
+    }
+
+    /** Remove an owned line only when no surviving alert/source still references it. */
+    private removeUnsharedAlertLine(alert: PriceAlert): void {
+        if (!alert.lineOwned) return; // a legacy-matched/manual line is not ours to remove
+        const cell = this.cellsById.get(alert.cellId);
+        const lineId = cell ? alert.lineId : (!alert.source && !isMoveCondition(alert.condition) ? this.pooledAlertLine(alert) : null);
+        const shared = !!lineId && this.priceAlerts.some((other) => other.cellId === alert.cellId && (other.lineId === lineId || other.source?.drawingId === lineId
+            || (!other.lineId && !other.source && !isMoveCondition(other.condition) && other.value === alert.value)));
+        if (lineId && !shared) {
+            try {
+                if (cell) cell.chart.drawings.remove(lineId);
+                else {
+                    // A hidden chart has no controller; remove only the owned line from
+                    // its pooled drawing document so it cannot reappear after deletion.
+                    const pooled = this.pool.get(alert.cellId);
+                    const doc = pooled?.drawings as { drawings?: unknown[] } | undefined;
+                    if (pooled && doc && Array.isArray(doc.drawings)) pooled.drawings = { ...doc, drawings: doc.drawings.filter((drawing) => !drawing || typeof drawing !== 'object' || (drawing as { id?: unknown }).id !== lineId) };
+                }
+            } catch {
+                /* the chart or its drawing may already be gone */
+            }
+        }
     }
 
     /** The Alert Manager's rows (one per armed level), newest first. */
-    private armedAlertRows(): Array<{ id: string; cellId: string; label: string; state: PriceAlert['state']; fires: number; offChart: string | null; onDelete: () => void }> {
-        return [...this.priceAlerts]
-            .reverse()
-            .map((a) => ({
+    private armedAlertRows(): ArmedAlertRow[] {
+        return [...this.priceAlerts].reverse().map((a) => {
+            const offChart = this.alertIsOffChart(a) ? a.symbol : null;
+            const cell = this.cellsById.get(a.cellId);
+            const waitingMarket = !!cell && (cell.chart.loading || !this.alertMarketMatches(cell));
+            const drawingLevel = a.source && !offChart && cell && !waitingMarket
+                ? this.levelOfDrawing(cell, a.source.drawingId, this.alertBarTime(cell)) : null;
+            const waitingDrawing = !!a.source && !!cell && !offChart && !waitingMarket && drawingLevel == null;
+            const editUnavailable = !cell ? 'Restore this chart to edit the alert.'
+                : waitingMarket ? 'Wait for this chart to finish loading.'
+                    : offChart ? `Return this chart to ${offChart} to edit the alert.`
+                        : waitingDrawing ? 'Restore the source drawing to edit the alert.'
+                            : !a.symbol ? 'The alert has no original symbol to edit safely.' : undefined;
+            return {
                 id: a.id,
                 cellId: a.cellId,
-                label: alertRowLabel(a),
+                // Status is shown separately, so the label stays stable across Pause/Resume.
+                label: alertRowLabel({ ...a, state: 'active', value: drawingLevel ?? a.value }),
                 state: a.state,
                 fires: a.fires,
-                offChart: this.alertIsOffChart(a) ? a.symbol : null,
+                offChart,
+                waitingChart: !cell,
+                waitingMarket,
+                waitingDrawing,
+                frequency: a.frequency,
+                drawingSource: !!a.source,
+                editUnavailable,
                 onDelete: () => this.removePriceAlert(a.id),
-            }));
+            };
+        });
     }
 
     /** Show/hide each armed level line so it only ever appears on its own symbol's chart. */
@@ -6868,10 +7524,11 @@ export class VelaWorkspace {
         if (!cell) return;
         const shown = String(cell.symbol ?? '');
         for (const alert of this.priceAlerts) {
-            if (alert.cellId !== cell.id || !alert.lineId) continue;
+            if (alert.cellId !== cell.id || !alert.lineId || !alert.lineOwned) continue;
             const mine = !!alert.symbol && !!shown && alert.symbol === shown;
             try {
-                cell.chart.drawings.update?.(alert.lineId, { visible: mine });
+                const line = cell.chart.drawings.all().find((drawing) => drawing.id === alert.lineId);
+                if (line && line.visible !== mine) cell.chart.drawings.update?.(alert.lineId, { visible: mine });
             } catch {
                 /* the line may be gone with the drawing it shared — nothing to sync */
             }
@@ -6884,13 +7541,6 @@ export class VelaWorkspace {
         const cell = this.cellsById.get(alert.cellId);
         if (!cell || !alert.symbol) return false;
         return String(cell.symbol ?? '') !== alert.symbol;
-    }
-
-    /** The More drawer's armed list (mobile's door to the same truth). */
-    private morePriceAlerts(): Array<{ id: string; label: string; state: PriceAlert['state']; fires: number; offChart: string | null; onDelete: () => void }> {
-        return [...this.priceAlerts]
-            .reverse()
-            .map((a) => ({ id: a.id, label: alertRowLabel(a), state: a.state, fires: a.fires, offChart: this.alertIsOffChart(a) ? a.symbol : null, onDelete: () => this.removePriceAlert(a.id) }));
     }
 
     /** Append a close to the cell's rolling window (one entry per BAR — a live tick that
@@ -6916,6 +7566,47 @@ export class VelaWorkspace {
                 times.shift();
             }
         }
+    }
+
+    /** Rebuild moving lookbacks and crossing anchors when the chart replaces its series. */
+    private rebaseAlertHistory(cell: ChartCell): void {
+        const rendered = cell.chart.renderer.getBars();
+        const last = cell.chart.lastBar;
+        const bars = rendered.length ? rendered.slice(-PRICE_HISTORY) : last ? [last] : [];
+        this.lastPrice.delete(cell.id);
+        this.lastBarTime.delete(cell.id);
+        this.closeHistory.delete(cell.id);
+        this.closeTimes.delete(cell.id);
+        for (const bar of bars) {
+            if (Number.isFinite(bar.close) && Number.isFinite(bar.time)) this.pushClose(cell.id, bar.close, bar.time);
+        }
+        const history = this.closeHistory.get(cell.id);
+        const times = this.closeTimes.get(cell.id);
+        const price = history?.[history.length - 1];
+        const time = times?.[times.length - 1];
+        if (price != null && time != null) {
+            this.lastPrice.set(cell.id, price);
+            this.lastBarTime.set(cell.id, time);
+            if (this.alertMarketMatches(cell)) for (let i = 0; i < this.priceAlerts.length; i += 1) {
+                const alert = this.priceAlerts[i];
+                if (alert && alert.cellId === cell.id && alert.state === 'active' && alertWatchesSymbol(alert, String(cell.symbol ?? ''))) {
+                    const hasSource = !alert.source || this.levelOfDrawing(cell, alert.source.drawingId, this.alertBarTime(cell)) != null;
+                    this.priceAlerts[i] = { ...alert, anchorPrice: hasSource ? price : null };
+                }
+            }
+        }
+        if (cell.id === this.activeId) this.alertPanel?.refreshReplay();
+        else this.alertPanel?.refresh();
+    }
+
+    /** Current chart time for a drawing's level; replay must not use a future live bar. */
+    private alertBarTime(cell: ChartCell): number {
+        if (cell.chart.replay.state.active) {
+            const bars = cell.chart.renderer.getBars();
+            const shown = (bars[bars.length - 1] ?? cell.chart.lastBar)?.time;
+            if (shown != null && Number.isFinite(shown)) return shown;
+        }
+        return this.lastBarTime.get(cell.id) ?? Date.now();
     }
 
     /** The price a drawing sits at, at `time` — the level a drawing-backed alert watches. */
@@ -6957,20 +7648,27 @@ export class VelaWorkspace {
             let watched = current;
             if (current.source) {
                 const level = this.levelOfDrawing(cell, current.source.drawingId, time);
-                if (level == null) continue;
+                if (level == null) {
+                    // For a ray before its anchor, or a temporarily absent source, no
+                    // crossing side exists. Re-seed on return instead of replaying a
+                    // crossing from the period when the source could not be watched.
+                    if (current.anchorPrice != null) { this.priceAlerts[i] = { ...current, anchorPrice: null }; changed = true; }
+                    continue;
+                }
                 watched = current.value === level ? current : { ...current, value: level };
             }
             const prev = watched.anchorPrice;
-            const { alert, fired } = advanceAlert(watched, { prev, now: price });
-            if (alert !== current) {
-                this.priceAlerts[i] = alert;
+            const { alert, fired } = advanceAlert(watched, { prev, now: price, time });
+            const next = fired ? { ...alert, firedAt: time } : alert;
+            if (next !== current) {
+                this.priceAlerts[i] = next;
                 changed = true;
             }
-            if (fired) this.recordPriceAlert({ ...alert, firedAt: time, fires: alert.fires });
+            if (fired) this.recordPriceAlert(next);
         }
         if (changed) {
             this.markStateDirty();
-            this.alertList?.refresh();
+            this.alertPanel?.refresh();
             this.moreDrawer?.refreshAlerts?.();
         }
     }
@@ -6989,8 +7687,8 @@ export class VelaWorkspace {
             time: alert.firedAt || Date.now(),
         });
         if (this.alerts.length > this.alertCap) this.alerts.pop();
-        this.topbar.setAlertCount(this.alerts.length);
-        this.alertList?.refresh();
+        this.syncAlertCount();
+        this.alertPanel.refresh();
         this.toastHost.show(`${label} — triggered`, 'success', 5000);
     }
 
@@ -7155,7 +7853,7 @@ export class VelaWorkspace {
         });
         this.keymap.register({ id: 'chart.reset-view', keys: 'alt+r', label: 'Reset view (all history)', category: 'Chart', run: () => this.active.chart.setVisibleRangePreset('ALL') });
         this.keymap.register({ id: 'chart.go-to-date', keys: 'alt+g', label: 'Go to a date on the chart', category: 'Chart', run: () => this.openGoToDate() });
-        this.keymap.register({ id: 'app.watchlist', keys: 'alt+w', label: 'Open the watchlist & symbol search', category: 'Chart', run: () => this.symbolPicker.open() });
+        this.keymap.register({ id: 'app.watchlist', keys: 'alt+w', label: 'Open the watchlist & symbol search', category: 'Chart', run: () => this.openSymbolSearch() });
         this.keymap.register({ id: 'chart.toggle-log', keys: 'alt+l', label: 'Toggle logarithmic scale', category: 'Chart', run: () => this.active.chart.renderer.set('logScale', !this.active.chart.renderer.get('logScale')) });
         this.keymap.register({
             id: 'chart.toggle-percent',
@@ -7197,7 +7895,7 @@ export class VelaWorkspace {
         // Chosen to match TradingView's defaults so a user arriving from there keeps their
         // hands: alert, invert, hide-all, copy/paste an object, go to date, layouts, and
         // bare digits for the interval.
-        this.keymap.register({
+        if (topbarHas(this.topbarComp, 'alerts')) this.keymap.register({
             id: 'alerts.create',
             keys: 'alt+a',
             label: 'Create an alert on this chart',
@@ -7396,14 +8094,14 @@ export class VelaWorkspace {
                 run: () => this.addToWatchlist(activeSymbol),
             });
         }
+        if (topbarHas(this.topbarComp, 'alerts')) out.push({
+            id: 'view:alerts',
+            label: 'Alerts — every chart, grouped',
+            category: 'View',
+            keywords: 'bell notifications list',
+            run: () => this.dock.toggle('alerts', true),
+        });
         out.push(
-            {
-                id: 'view:alerts',
-                label: 'Alerts — every chart, grouped',
-                category: 'View',
-                keywords: 'bell notifications list',
-                run: () => this.openAlertsMenu(this.topbar.el),
-            },
             {
                 id: 'view:shortcuts',
                 label: 'Keyboard shortcuts',
@@ -7431,6 +8129,8 @@ export class VelaWorkspace {
         if (this.destroyed) return;
         if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
         if (isEditableTarget(ev)) return; // never hijack a keystroke someone is TYPING
+        const target = ev.target as Element | null;
+        if (typeof target?.closest === 'function' && target.closest('.vela-panel')) return;
         const hit = resolveTyping(ev.key, { dialogs: this.openDialogs, symbolSearch: this.symbolPicker.isOpen, timeframeEntry: this.tfQuick.isOpen });
         if (!hit) return;
         ev.preventDefault();
@@ -7456,18 +8156,8 @@ export class VelaWorkspace {
         // the sheet (and its own backdrop, which must keep taking the dismiss tap) makes the
         // word "modal" true for a screen reader too.
         this.applyModalInert(this.openDialogs > 0);
-        if (open) {
-            this.keymap.pushScope('dialog');
-            // A coach mark must never float on top of a sheet: it points at a badge that
-            // the sheet is covering. Opening the sheet IS the journey it was pointing to,
-            // so this counts as answered.
-            if (this.groupTip) this.dismissGroupTip(true);
-        }
-        else {
-            this.keymap.popScope('dialog');
-            // A coach mark that was suppressed while the sheet was open gets its turn now.
-            if (this.openDialogs === 0) this.root.ownerDocument.defaultView?.setTimeout(() => this.maybeShowGroupTip(), 320);
-        }
+        if (open) this.keymap.pushScope('dialog');
+        else this.keymap.popScope('dialog');
     }
 
     /** Inert the chrome behind an open sheet (see `trackDialog`). The sheet and its own
@@ -7493,7 +8183,11 @@ export class VelaWorkspace {
         this.pool.set(id, state);
         if (this.pool.size > POOL_CAP) {
             const oldest = this.pool.keys().next().value;
-            if (oldest != null) this.pool.delete(oldest);
+            if (oldest != null) {
+                this.pool.delete(oldest);
+                this.compareAxisSwitched.delete(oldest);
+                this.forgetCompareMirrors(oldest);
+            }
             this.notePoolDrop();
         }
         this.syncMobileHidden();

@@ -102,6 +102,19 @@ describe('surface open/close events', () => {
         ]);
     });
 
+    it('a draggable popover still announces through its desktop overflow layer', () => {
+        const { host, heard } = hostWithEar(); host.dataset.layout = 'desktop';
+        const trigger = button(host);
+        const header = document.createElement('div'); header.className = 'vela-lm-head';
+        const pop = new Popover({ trigger, host, content: header });
+        pop.show(); pop.hide();
+        expect(heard.map((h) => [h.type, h.kind, h.target === pop.el, h.showing])).toEqual([
+            ['vela:surface-open', 'popover', true, true],
+            ['vela:surface-close', 'popover', true, true],
+        ]);
+        expect(host.querySelector('.vela-popover-layout-root')).toBeNull();
+    });
+
     it('popover: open once placed, close before it leaves the DOM', () => {
         const { host, heard } = hostWithEar();
         const trigger = button(host);

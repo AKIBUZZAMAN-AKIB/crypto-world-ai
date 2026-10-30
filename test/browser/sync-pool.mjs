@@ -41,11 +41,11 @@ try {
     );
 
     // The housekeeping row: arm, commit, undo — each step visible in the DOM.
-    const row = page.locator('.vela-lp-pool:not(.vela-lp-undo)');
+    const row = page.locator('[data-action="clear-hidden-charts"]');
     await page.evaluate(async () => {
         window.__ws.setLayout('1');
         await new Promise((r) => setTimeout(r, 700));
-        window.__ws.topbar.openLayoutPicker();
+        document.querySelector('button[aria-label^="Layout —"]').click();
     });
     await row.waitFor({ timeout: 5000 });
     const label = (await row.textContent())?.trim();
@@ -63,7 +63,7 @@ try {
     const cleared = await page.evaluate(() => ({ hidden: window.__ws.hiddenChartCount, undo: window.__ws.clearedChartCount }));
     assert(cleared.hidden === 0 && cleared.undo === 3, 'the second click clears the pool', cleared);
 
-    await page.evaluate(() => document.querySelector('.vela-lp-undo').click());
+    await page.evaluate(() => document.querySelector('[data-action="undo-hidden-charts"]').click());
     const undone = await page.evaluate(() => ({ hidden: window.__ws.hiddenChartCount, undo: window.__ws.clearedChartCount }));
     assert(undone.hidden === 3 && undone.undo === 0, 'Undo brings the batch back', undone);
 

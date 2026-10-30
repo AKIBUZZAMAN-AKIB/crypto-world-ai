@@ -96,6 +96,8 @@ interface SeriesBase {
     visible?: boolean;
     /** Per-surface visibility; absent ⇒ every surface {@link visible} allows. */
     display?: SeriesDisplay;
+    /** Pine's `editable=false` removes this plot from user-facing Style controls. */
+    editable?: boolean;
     /** `force_overlay` → render on the price pane regardless of the indicator's pane. */
     overlay?: boolean;
 }

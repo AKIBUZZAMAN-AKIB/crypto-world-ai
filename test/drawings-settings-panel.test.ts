@@ -80,6 +80,7 @@ function chart(initial: Drawing) {
 
 function setup(drawing: Drawing, opts: { barMs?: number } = {}) {
     const host = document.createElement('div');
+    host.className = 'vela-workspace vela-ui'; // workspace-level floating layer in the real app
     document.body.append(host);
     const popup = new DrawingSettingsPopup(host, DARK_THEME, { chartBarMs: () => opts.barMs ?? 5 * 60_000, timeZone: () => 'UTC' });
     const c = chart(drawing);

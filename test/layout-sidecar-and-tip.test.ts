@@ -101,52 +101,25 @@ describe('saved-layout side-cars', () => {
     });
 });
 
-describe('the ◌ coach mark', () => {
-    it('points at the empty group badge once, then stays gone', async () => {
+describe('minimal sync badge', () => {
+    it('keeps the sync badge without showing an unsolicited guide', async () => {
         vi.useFakeTimers();
         const ws = mount({ layout: '4' });
         const badge = ws.cells()[0]?.groupBadgeAnchor();
         expect(badge).not.toBeNull();
         expect(badge!.hasAttribute('data-empty')).toBe(true);
-
-        await vi.advanceTimersByTimeAsync(1000);
-        const tip = document.querySelector('.vela-tip');
-        expect(tip).not.toBeNull();
-        expect(tip!.getAttribute('role')).toBe('dialog');
-        expect(tip!.getAttribute('aria-modal')).toBe('false');
-        expect(tip!.textContent).toContain('no sync group');
-
-        // The × is one of the three exits — and it records the tip as seen.
-        (tip!.querySelector('.vela-tip-x') as HTMLButtonElement).click();
-        expect(document.querySelector('.vela-tip')).toBeNull();
-        expect(ws.hasSeenTip('group-badge')).toBe(true);
-
-        // A fresh workspace restoring that state does not show it again.
-        const state = ws.getState();
-        const again = mount({ layout: '4' });
-        again.applyState(state);
         await vi.advanceTimersByTimeAsync(2000);
         expect(document.querySelector('.vela-tip')).toBeNull();
-        vi.useRealTimers();
-    });
-
-    it('does not appear on a single-chart shell (nothing to sync with)', async () => {
-        vi.useFakeTimers();
-        mount({ layout: '1' });
-        await vi.advanceTimersByTimeAsync(2000);
-        expect(document.querySelector('.vela-tip')).toBeNull();
-        vi.useRealTimers();
-    });
-
-    it('retires itself when the chart joins a group', async () => {
-        vi.useFakeTimers();
-        const ws = mount({ layout: '4' });
-        await vi.advanceTimersByTimeAsync(1000);
-        expect(document.querySelector('.vela-tip')).not.toBeNull();
         ws.setGroupFor('symbol', ws.cells()[0]!.id, 'red');
-        await vi.advanceTimersByTimeAsync(10);
         expect(document.querySelector('.vela-tip')).toBeNull();
-        expect(ws.hasSeenTip('group-badge')).toBe(true);
         vi.useRealTimers();
+    });
+
+    it('still round-trips seen-tip metadata from existing workspaces', () => {
+        const ws = mount({ layout: '4' });
+        ws.markTipSeen('group-badge');
+        const again = mount({ layout: '4' });
+        again.applyState(ws.getState());
+        expect(again.hasSeenTip('group-badge')).toBe(true);
     });
 });

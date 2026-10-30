@@ -1,4 +1,5 @@
 import { defineConfig } from 'tsup';
+import { injectMonacoCssForTsup } from './tools/inline-monaco-css.mjs';
 
 export default defineConfig([
     // Library build — ESM + CJS + types, backends external (consumer provides them).
@@ -16,6 +17,8 @@ export default defineConfig([
             'providers/coinbase': 'src/data/providers/coinbase/index.ts',
         },
         format: ['esm', 'cjs'],
+        noExternal: ['monaco-editor'],
+        injectStyle: injectMonacoCssForTsup,
         dts: true,
         // No sourcemaps in the published package (the peer norm — the reference
         // charting libs ship none): maps only cost download size, they play no role
@@ -23,7 +26,9 @@ export default defineConfig([
         // repo and run the playground (serves src/ directly).
         sourcemap: false,
         clean: true,
-        treeshake: true,
+        // esbuild already tree-shakes bundled ESM. A second Rollup pass over Monaco
+        // and the multi-entry workspace can exhaust memory without improving runtime.
+        treeshake: false,
     },
     // Browser globals — self-contained IIFEs exposing `window.Vela`, in the reference
     // dev/prod pair: `vela.global.js` is the readable development build,
@@ -36,9 +41,11 @@ export default defineConfig([
         format: ['iife'],
         globalName: 'Vela',
         platform: 'browser',
+        noExternal: ['monaco-editor'],
+        injectStyle: injectMonacoCssForTsup,
         sourcemap: false,
         clean: false,
-        treeshake: true,
+        treeshake: false,
         minify: false,
     },
     {
@@ -47,10 +54,12 @@ export default defineConfig([
         format: ['iife'],
         globalName: 'Vela',
         platform: 'browser',
+        noExternal: ['monaco-editor'],
+        injectStyle: injectMonacoCssForTsup,
         outExtension: () => ({ js: '.global.min.js' }),
         sourcemap: false,
         clean: false,
-        treeshake: true,
+        treeshake: false,
         minify: true,
     },
 ]);

@@ -6,7 +6,7 @@ import { formatAxisValue, formatTimeStamp } from './ticks';
 import { readableText } from '../backend/gl/color';
 import { percentScaleFor } from './ChromeRenderer';
 import { cursorSpec } from '../../../core/cursor';
-import { ACCENT_BRIGHT, BEARISH, HIGHLIGHT } from '../../../core/palette';
+import { ACCENT_BRIGHT, BEARISH, CROSSHAIR, HIGHLIGHT } from '../../../core/palette';
 
 /** How long demonstration ink lives, and how long a magic spark lives (ms). */
 const INK_TTL = 2600;
@@ -42,7 +42,7 @@ export class CrosshairRenderer {
     /** Clear the cursor canvas and (re)draw the crosshair lines + axis chips. The optional
      *  `separatorHoverY` highlights the draggable pane separator under the cursor;
      *  `external` is a SYNCED ghost crosshair (another chart's pointer, pixel-resolved). */
-    render(scene: SceneGraph, coords: CoordinateSystem, theme: VelaTheme, separatorHoverY: number | null = null, external: { x: number; y: number | null; time: number; price?: number | null; line?: boolean } | null = null): void {
+    render(scene: SceneGraph, coords: CoordinateSystem, theme: VelaTheme, separatorHoverY: number | null = null, external: { x: number; y: number | null; time: number; price?: number | null; line?: boolean } | null = null, touchTracking = false): void {
         this.shade = null;
         const ctx = this.ctx;
         const canvas = this.canvas;
@@ -69,7 +69,7 @@ export class CrosshairRenderer {
         const ch = scene.crosshair;
         const dataW = coords.width;
         const dataH = coords.height;
-        if (!style.lines) {
+        if (!style.lines && !touchTracking) {
             // Arrow / None / Demonstration / Magic / Eraser: no crosshair lines and no axis
             // chips (the reference's rule — only Cross and Dot support the crosshair). The
             // eraser still shows its ring, and an open menu on it must show a target.
@@ -88,17 +88,27 @@ export class CrosshairRenderer {
         ctx.font = `${scene.style.fontSize}px ${theme.fontFamily}`;
         ctx.textBaseline = 'middle';
 
-        // snap the vertical line to the nearest bar center
+        // Snap to a bar grid only when there are bars. An empty chart has no real
+        // timestamps/price scale, but still shows lines at the touched position.
         const logical = Math.round(coords.xToLogical(ch.x));
-        const x = crisp(coords.logicalToX(logical), ov?.width ?? cs.width);
+        const lineX = coords.barCount > 0 ? coords.logicalToX(logical) : ch.x;
+        // A nearest bar just beyond the viewport must not hide the vertical line.
+        const x = crisp(Math.max(0, Math.min(dataW, lineX)), ov?.width ?? cs.width);
         if (vertical && ov?.shadeRight) {
             // From the bar's right edge: the bar under the line stays in the clear.
             const from = Math.max(0, Math.round(coords.logicalToX(logical + 0.5)));
             if (from < dataW) this.paintShade(ctx, ov.shadeRight, from, dataW, dataH);
         }
-        ctx.strokeStyle = ov?.color ?? cs.color ?? theme.textColor;
+        // The legacy default at 40% can all but disappear on either chart theme. Give
+        // that unmodified default a contrast-aware touch-only ink while inspection is
+        // active. Other color/opacity values, shapes and runtime overrides stay untouched;
+        // neither the saved config nor desktop hover appearance is changed.
+        const touchDefault = touchTracking && cs.color?.toLowerCase() === CROSSHAIR && cs.opacity === 0.4
+            && ov?.color === undefined && ov?.opacity === undefined;
+        const ink = touchDefault ? readableText(theme.background) : (ov?.color ?? cs.color ?? theme.textColor);
+        ctx.strokeStyle = ink;
         ctx.lineWidth = ov?.width ?? cs.width;
-        ctx.globalAlpha = ov?.opacity ?? cs.opacity;
+        ctx.globalAlpha = touchDefault ? 0.68 : (ov?.opacity ?? cs.opacity);
         setDash(ctx, ov?.style ?? cs.style);
         ctx.beginPath();
         if (vertical) {
@@ -113,7 +123,7 @@ export class CrosshairRenderer {
         ctx.setLineDash([]);
         ctx.lineWidth = 1;
         ctx.globalAlpha = 1;
-        if (style.id === 'dot' || shape === 'dot') this.drawDot(ctx, x, Math.round(ch.y) + 0.5, ov?.color ?? cs.color ?? theme.textColor);
+        if (style.id === 'dot' || shape === 'dot') this.drawDot(ctx, x, Math.round(ch.y) + 0.5, ink);
 
         // price chip on the right axis for the pane under the cursor. Linear scan
         // over the pane map (no sort/alloc) — panes don't overlap in Y, and this
@@ -133,12 +143,12 @@ export class CrosshairRenderer {
         // no vertical line, no time chip). Hiding the LINE always hides its chip, which is
         // what the override flags and the shape presets both mean.
         const dotShape = shape === 'dot';
-        if ((horizontal || dotShape) && cs.priceLabel !== false && pane && pane.axisFormat !== 'none') {
+        if ((horizontal || dotShape) && cs.priceLabel !== false && coords.barCount > 0 && pane && pane.axisFormat !== 'none') {
             const price = coords.yToPrice(ch.y, pane.scale, pane.bounds);
             this.chip(ctx, dataW + 1, ch.y, formatAxisValue(pane.scale, pane.bounds.height, price, percentScaleFor(scene, pane), scene.priceMintick, pane.axisFormat, scene.priceCompact), chipBg, 'left', false, theme.background);
         }
-        // time chip on the bottom axis
-        if ((vertical || dotShape) && cs.timeLabel !== false) this.chip(ctx, x, dataH + 1, formatTimeStamp(coords.logicalToTime(logical), scene.timezone, coords.barInterval), chipBg, 'center', true, theme.background);
+        // No synthetic time label while the first market data is still unavailable.
+        if ((vertical || dotShape) && cs.timeLabel !== false && coords.barCount > 0) this.chip(ctx, x, dataH + 1, formatTimeStamp(coords.logicalToTime(logical), scene.timezone, coords.barInterval), chipBg, 'center', true, theme.background);
     }
 
     /** The dot cursor's anchor: a filled disc with a thin ring in the chart surface color, so

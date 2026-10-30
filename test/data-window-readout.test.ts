@@ -48,6 +48,7 @@ describe('NativeRenderer.getDataWindowReadout', () => {
         expect(Number(readout.ohlc?.h)).toBeCloseTo(107);
         expect(Number(readout.ohlc?.l)).toBeCloseTo(103);
         expect(readout.ohlc?.up).toBe(true); // close 105 ≥ open 104
+        expect(readout.source).toBe('latest');
     });
 
     it('reads the HOVERED bar instead, and reports a down bar as down', () => {
@@ -59,6 +60,122 @@ describe('NativeRenderer.getDataWindowReadout', () => {
         const hovered = r.getDataWindowReadout();
         expect(Number(hovered.ohlc?.c)).toBeCloseTo(99);
         expect(hovered.ohlc?.up).toBe(false);
+        expect(hovered.source).toBe('crosshair');
+    });
+
+    it('reads the synced containing bar without re-emitting a local crosshair', () => {
+        const { r, anyR } = makeRenderer();
+        const data = bars([100, 101, 105]);
+        r.setBars(data);
+        let crosshairEvents = 0;
+        let readoutEvents = 0;
+        r.onCrosshairMove(() => crosshairEvents++);
+        const unsubscribe = r.onDataWindowChange(() => readoutEvents++);
+        r.setExternalCrosshair(data[0]!.time + HOUR / 2);
+        expect(r.getDataWindowReadout().source).toBe('synced');
+        expect(Number(r.getDataWindowReadout().ohlc?.c)).toBeCloseTo(100);
+        expect(crosshairEvents).toBe(0);
+        expect(readoutEvents).toBe(1);
+        // The local cursor takes precedence over a ghost.
+        anyR.hoverLogical = 1;
+        expect(r.getDataWindowReadout().source).toBe('crosshair');
+        expect(Number(r.getDataWindowReadout().ohlc?.c)).toBeCloseTo(101);
+        anyR.hoverLogical = null;
+        r.setExternalCrosshair(data[2]!.time + 2 * HOUR); // beyond the last bar
+        expect(r.getDataWindowReadout().source).toBe('latest');
+        expect(Number(r.getDataWindowReadout().ohlc?.c)).toBeCloseTo(105);
+        r.setExternalCrosshair(null);
+        unsubscribe();
+        r.setExternalCrosshair(data[1]!.time);
+        expect(readoutEvents).toBe(3);
+        expect(crosshairEvents).toBe(0);
+    });
+
+    it('falls back to the latest bar if a trim invalidates the hovered index', () => {
+        const { r, anyR } = makeRenderer();
+        r.setBars(bars([100, 101]));
+        anyR.hoverLogical = 500;
+        expect(r.getDataWindowReadout().source).toBe('latest');
+        expect(Number(r.getDataWindowReadout().ohlc?.c)).toBeCloseTo(101);
+    });
+
+    it('signals timezone and precision changes independently of config and crosshair events', () => {
+        const { r } = makeRenderer();
+        r.setBars(bars([100]));
+        let count = 0;
+        r.onDataWindowChange(() => count++);
+        r.applyFeature('timezone', 'Asia/Dhaka');
+        r.applyFeature('timezone', 'Asia/Dhaka'); // idempotent
+        r.setPricePrecision(0.01);
+        expect(count).toBe(2);
+    });
+
+    it('keeps prices and price-valued plots un-abbreviated even when a phone axis is compact', () => {
+        const { r, anyR } = makeRenderer();
+        const data = bars([68427.31]);
+        r.setBars(data);
+        const pane = anyR.scene.ensurePane('price', 'price', 0, 3);
+        pane.bounds = { top: 0, height: 200 };
+        pane.scale = { min: 68000, max: 69000 };
+        anyR.scene.priceMintick = 0.01;
+        anyR.axisLabelsCompact = true;
+        anyR.scene.indicators.set('ma', {
+            id: 'ma', title: 'Moving Average', paneId: 'price',
+            series: [{ id: 'plot', title: 'MA', kind: 'line', paneId: 'price',
+                points: [{ time: data[0]!.time, value: 68412.34 }],
+                style: { color: '#123456', width: 1, lineStyle: 'solid' } }],
+        });
+        const readout = r.getDataWindowReadout();
+        expect(readout.ohlc?.c).toBe('68427.31');
+        expect(readout.groups[0]?.rows[0]?.value).toBe('68412.34');
+        let legend = '';
+        anyR.inputsUI = { setPlotValues: (values: Map<string, Array<{ value: string }>>) => { legend = values.get('ma')?.[0]?.value ?? ''; } };
+        anyR.updateLegendValues();
+        expect(legend).toBe('68.41K'); // chart legend remains compact
+    });
+
+    it('notifies only when the final formatted frame changes, and stops work after unsubscribe', () => {
+        const { r, anyR } = makeRenderer();
+        r.setBars(bars([100.1234]));
+        const pane = anyR.scene.ensurePane('price', 'price', 0, 3);
+        pane.bounds = { top: 0, height: 200 };
+        pane.scale = { min: 90, max: 110 };
+        anyR.scene.priceMintick = 0.01;
+        let changes = 0;
+        const off = r.onDataWindowChange(() => changes++);
+        anyR.notifyDataWindowFrameChange();
+        const first = r.getDataWindowReadout().ohlc?.c;
+        anyR.notifyDataWindowFrameChange(); // an unchanged animation frame is silent
+        expect(changes).toBe(1);
+        anyR.scene.priceMintick = 0.1; // like scale/geometry settling after the event
+        expect(r.getDataWindowReadout().ohlc?.c).not.toBe(first);
+        anyR.notifyDataWindowFrameChange();
+        expect(changes).toBe(2);
+        off();
+        anyR.scene.priceMintick = 0.001;
+        anyR.notifyDataWindowFrameChange();
+        expect(changes).toBe(2);
+        expect(anyR.dataWindowFrameSignature).toBeNull();
+    });
+
+    it('publishes a study value only after the live indicator patch is applied', () => {
+        const { r, anyR } = makeRenderer();
+        const data = bars([100, 101]);
+        r.setBars(data);
+        anyR.scene.indicators.set('ma', {
+            id: 'ma', title: 'Moving Average', paneId: 'price',
+            series: [{ id: 'plot', title: 'MA', kind: 'line', paneId: 'price',
+                points: data.map((bar, i) => ({ time: bar.time, value: 99 + i })),
+                style: { color: '#123456', width: 1, lineStyle: 'solid' } }],
+        });
+        const seen: string[] = [];
+        r.onDataWindowChange(() => seen.push(r.getDataWindowReadout().groups[0]!.rows[0]!.value));
+        r.updateIndicator({ id: 'ma' }, {
+            kind: 'value', indicatorId: 'ma', dirty: { from: 0, to: 1 },
+            series: [{ kind: 'points', seriesId: 'plot', points: data.map((bar, i) => ({ time: bar.time, value: 120 + i })) }],
+        });
+        expect(seen).toHaveLength(1);
+        expect(Number(seen[0])).toBe(121);
     });
 
     it('carries volume only when the bar has it', () => {

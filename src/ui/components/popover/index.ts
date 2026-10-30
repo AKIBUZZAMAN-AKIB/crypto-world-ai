@@ -1,4 +1,4 @@
-export { Popover, closeOpenPopovers, isPopoverOpen, openPopoverTrigger, eventDismissedPopover, type PopoverOptions, type PopoverBoundary } from './view';
+export { Popover, closeOpenPopovers, isPopoverOpen, openPopoverTrigger, openPopoverElement, eventDismissedPopover, type PopoverOptions, type PopoverBoundary } from './view';
 export {
     popoverController,
     placePopover,

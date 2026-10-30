@@ -8,7 +8,7 @@
 
 import type { VelaTheme } from './options';
 import { isDarkColor, mix, withAlpha } from './color';
-import { ACCENT, ACCENT_BRIGHT, HIGHLIGHT } from './palette';
+import { ACCENT, ACCENT_BRIGHT, ACCENT_TEXT_LIGHT, HIGHLIGHT } from './palette';
 
 /** Theme-independent tokens — the shared spacing/shape/motion/type scale. */
 export const STATIC_TOKENS: Record<string, string> = {
@@ -51,6 +51,10 @@ export function themeTokens(t: VelaTheme): Record<string, string> {
         '--vela-fg-muted': dark ? '#868a96' : withAlpha(t.textColor, 0.68),
         '--vela-fg-faint': withAlpha(t.textColor, 0.35),
         '--vela-fg-bright': dark ? '#f0f3fa' : '#000000',
+        // Pure neutral ink for panel chrome. Market and drawing colours remain themed.
+        '--vela-mono-ink': dark ? '#ffffff' : '#000000',
+        '--vela-mono-muted': dark ? '#aaaaaa' : '#555555',
+        '--vela-mono-inverse': dark ? '#000000' : '#ffffff',
         '--vela-surface': t.background,
         // Panels and menus float ABOVE the chart, so their surface is the wash flattened onto
         // the chart background — opaque, or candles read through the panel.
@@ -84,6 +88,9 @@ export function themeTokens(t: VelaTheme): Record<string, string> {
         '--vela-scroll': withAlpha(t.textColor, 0.3),
         '--vela-accent': ACCENT,
         '--vela-accent-bright': ACCENT_BRIGHT,
+        // Text and line accents need more luminance on dark surfaces than the filled
+        // accent, whose white foreground already has to contrast in both themes.
+        '--vela-accent-ink': dark ? ACCENT_BRIGHT : ACCENT_TEXT_LIGHT,
         '--vela-highlight': HIGHLIGHT,
         // The inverse chip: a filled selected state (active tab, ticked checkbox). Its ink
         // must contrast the fill, so the pair flips together with the theme.
@@ -94,7 +101,7 @@ export function themeTokens(t: VelaTheme): Record<string, string> {
         '--vela-fg-on-fill': '#ffffff',
         // The star (favourites). Gold rather than the accent blue: a star that reads as a
         // star, and one glance separates "this is selected" from "this is pinned".
-        '--vela-star': dark ? '#f5b93b' : '#c98a08',
+        '--vela-star': dark ? '#f5b93b' : '#8e5b00',
         '--vela-up': t.upColor,
         '--vela-down': t.downColor,
         '--vela-danger': t.downColor,

@@ -3,7 +3,7 @@
 // test/browser/ own the measured half):
 //   5  the 16-chart ceiling is REACHABLE from the picker's canvas, not just the API
 //   8  the matrix carries grid semantics, pressed chips and a polite live region
-//   13 the desktop popover and the phone sheet expose the SAME link rows and table
+//   13 the shared desktop/phone pane exposes the SAME link rows and table
 //   15 every chart wears its slot number while a sync surface is up
 import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 
@@ -48,14 +48,8 @@ function mount(opts: Record<string, unknown> = {}): VelaWorkspace {
     return ws;
 }
 
-/** The private shell surface, as tests reach it (the browser checks use `window.__ws`). */
-type Shell = {
-    topbar: { openLayoutPicker(cellId?: string): void; layoutPicker: { close(): void } };
-};
-const shell = (ws: VelaWorkspace): Shell => ws as unknown as Shell;
-
 const openPicker = (ws: VelaWorkspace): void => {
-    shell(ws).topbar.openLayoutPicker();
+    ws.root.querySelector<HTMLElement>('button[aria-label^="Layout"]')!.click();
 };
 
 const tick = async (ms = 160): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -161,38 +155,45 @@ describe('gap 8 — grid semantics', () => {
 });
 
 describe('gap 13 — one surface, two shells', () => {
-    it('the desktop popover and the phone sheet expose the same link rows', async () => {
+    it('desktop and phone routing share the same live link rows', async () => {
         const ws = mount();
         openPicker(ws);
-        await tick(); // the popover renders its rows on the next frame
-        const desktop = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-sync-row .vela-lp-label')].map((e) => e.textContent);
-        // The phone sheet is built by the drawer; build it through the workspace's own door.
-        ws.openSyncDrawer?.();
-        await tick(400);
-        const phone = [...ws.root.querySelectorAll<HTMLElement>('.vela-md-sync[role="switch"] .vela-md-row-label')].map((e) => e.textContent);
-        expect(desktop.length).toBeGreaterThan(0);
-        expect(phone.length).toBeGreaterThan(0);
+        const pane = ws.root.querySelector<HTMLElement>('.vela-layout-setup')!;
+        [...pane.querySelectorAll<HTMLElement>('[role="tab"]')].find((tab) => tab.textContent === 'Chart syncing')!.click();
+        const desktop = [...pane.querySelectorAll<HTMLElement>('.vela-ls-syncrows [role="switch"] .vela-ls-row-label')].map((e) => e.textContent);
+        ws.root.dataset.layout = 'mobile';
+        ws['dock'].setLayout('mobile');
+        ws.openSyncDrawer();
+        await tick();
+        const mobilePane = ws.root.querySelector<HTMLElement>('.vela-layout-setup')!;
+        const phone = [...mobilePane.querySelectorAll<HTMLElement>('.vela-ls-syncrows [role="switch"] .vela-ls-row-label')].map((e) => e.textContent);
+        expect(mobilePane).toBe(pane);
+        expect(desktop).toEqual(['Date range', 'Time', 'Symbol', 'Interval', 'Crosshair', 'Drawings', 'Style']);
         expect(phone).toEqual(desktop);
     });
 
-    it('both shells build the same table (rows and columns)', async () => {
+    it('rotation reuses the same matrix, including all rows, columns and marks', () => {
         const ws = mount();
-        openPicker(ws);
-        await tick();
-        ws.openSyncDrawer?.();
-        const tables = [...ws.root.querySelectorAll<HTMLElement>('.vela-md-matrixwrap')];
-        const shapes = tables.map((t) => ({
-            shell: t.closest('.vela-lp') ? 'desktop' : 'phone',
-            rows: [...t.querySelectorAll<HTMLElement>('.vela-md-matrix-label')].map((l) => l.textContent),
-            cols: t.querySelectorAll('.vela-md-matrix-head[data-cell]').length,
-            cells: t.querySelectorAll('.vela-md-matrix-chip[data-cell]').length,
-        }));
-        const desktop = shapes.find((s) => s.shell === 'desktop');
-        const phone = shapes.find((s) => s.shell === 'phone');
-        expect(desktop && phone).toBeTruthy();
-        expect(phone!.rows).toEqual(desktop!.rows);
-        expect(phone!.cols).toBe(desktop!.cols);
-        expect(phone!.cells).toBe(desktop!.cells);
+        const ids = ws.cells().map((cell) => cell.id);
+        ws.sync.set('symbol', { [ids[0]!]: 'red', [ids[1]!]: 'red' }, false);
+        ws.openSyncDrawer();
+        const table = ws.root.querySelector<HTMLElement>('.vela-ls-matrix .vela-md-matrixwrap')!;
+        const shape = (): { rows: Array<string | null>; cols: number; cells: number; mark: string | null } => ({
+            rows: [...table.querySelectorAll<HTMLElement>('.vela-md-matrix-label')].map((label) => label.textContent),
+            cols: table.querySelectorAll('.vela-md-matrix-head[data-cell]').length,
+            cells: table.querySelectorAll('.vela-md-matrix-chip[data-cell]').length,
+            mark: table.querySelector(`.vela-md-matrix-chip[data-kind="symbol"][data-cell="${ids[0]}"]`)?.textContent ?? null,
+        });
+        const desktop = shape();
+        expect(table.dataset.shell).toBe('desktop');
+        ws.root.dataset.layout = 'mobile';
+        ws['dock'].setLayout('mobile');
+        ws.openSyncDrawer();
+        expect(ws.root.querySelector('.vela-ls-matrix .vela-md-matrixwrap')).toBe(table);
+        expect(table.dataset.shell).toBe('phone');
+        expect(shape()).toEqual(desktop);
+        expect(desktop.cols).toBe(4);
+        expect(desktop.mark).toBe('🔴');
     });
 });
 
@@ -204,7 +205,7 @@ describe('gap 15 — the numbers are on the charts', () => {
         expect(ws.root.hasAttribute('data-sync-open')).toBe(false);
         openPicker(ws);
         expect(ws.root.hasAttribute('data-sync-open')).toBe(true);
-        shell(ws).topbar.layoutPicker.close();
+        ws.root.querySelector<HTMLElement>('.vela-layout-setup .vela-panel-close')!.click();
         expect(ws.root.hasAttribute('data-sync-open')).toBe(false);
     });
 

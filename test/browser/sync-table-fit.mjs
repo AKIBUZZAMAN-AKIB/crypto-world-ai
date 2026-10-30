@@ -1,5 +1,5 @@
 // The table must never widen the page, and must scroll INSIDE itself — measured on the
-// phone sheet and the desktop popover at the sizes the product actually ships.
+// phone and desktop pane at the sizes the product actually ships.
 //
 // The rule used to be "more than 4 charts ⇒ the table overflows", which was true when
 // the cells were wide. The compact table (28px floor, `minmax(28px, 1fr)`) changed the
@@ -19,8 +19,8 @@ import { open, assert, report } from './helpers.mjs';
 const FLOOR = 28; // --vela-sx-cell: the design floor; WCAG 2.2 AA wants 24
 
 const measure = async (page) => page.evaluate(() => {
-    const wrap = document.querySelector('.vela-lp-charts .vela-md-matrixwrap, .vela-md-matrixwrap[data-shell="phone"]');
-    const panel = document.querySelector('.vela-lp');
+    const wrap = document.querySelector('.vela-layout-setup .vela-md-matrixwrap');
+    const panel = document.querySelector('.vela-layout-setup');
     if (!wrap) return { table: null, page: { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }, panel: null };
     const box = wrap.getBoundingClientRect();
     const heads = [...wrap.querySelectorAll('.vela-md-matrix-head[data-cell]')];
@@ -50,9 +50,10 @@ for (const charts of ['4', '8', '16']) {
         await page.evaluate((id) => window.__ws.setLayout(id), charts);
         await page.waitForTimeout(900);
         await page.click('button[aria-label^="Layout —"]');
+        await page.locator('.vela-layout-setup').getByRole('tab', { name: 'Chart syncing' }).click();
         await page.waitForTimeout(500);
         const m = await measure(page);
-        const heads = await page.evaluate(() => document.querySelectorAll('.vela-lp-charts .vela-md-matrix-head[data-cell]').length);
+        const heads = await page.evaluate(() => document.querySelectorAll('.vela-ls-matrix .vela-md-matrix-head[data-cell]').length);
         assert(heads === Number(charts), `${charts} charts ⇒ ${charts} columns`, heads);
         assert(m.page.scroll <= m.page.client, `${charts} charts: the page does not scroll sideways`, m.page);
         // The wrap is the scroll container, so extra columns are reachable without moving
@@ -80,9 +81,8 @@ for (const vp of [{ width: 390, height: 844 }, { width: 320, height: 568 }]) {
     try {
         await page.locator('.vela-mb-more').tap();
         await page.waitForTimeout(400);
-        // R87: "Chart syncing" is its own door now (the old Sync TAB inside the Layout
-        // sheet is gone). Open the door directly to reach the phone matrix.
-        await page.evaluate(() => [...document.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.trim().startsWith('Chart syncing'))?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+        await page.locator('.vela-md-row', { hasText: 'Layout setup' }).tap();
+        await page.locator('.vela-layout-setup').getByRole('tab', { name: 'Chart syncing' }).tap();
         await page.waitForTimeout(400);
         const m = await page.evaluate(() => {
             const wrap = document.querySelector('.vela-md-matrixwrap[data-shell="phone"]');

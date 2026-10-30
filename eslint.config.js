@@ -10,6 +10,9 @@ import tseslint from 'typescript-eslint';
  *    no new import of it is allowed anywhere — it is being replaced by Vela's own types.
  */
 export default tseslint.config(
+    // Bundled outputs and generated third-party worker text are not source files.
+    // Parsing the multi-megabyte Monaco bundles also wastes the lint heap.
+    { ignores: ['dist/**', '.scratchpad/**', 'src/vendor/monaco-editor-worker.ts'] },
     {
         files: ['src/**/*.ts'],
         languageOptions: {

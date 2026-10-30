@@ -58,6 +58,26 @@ const listRows = () => [...document.querySelectorAll<HTMLElement>('.vela-dd-row 
 const sections = () => [...document.querySelectorAll<HTMLElement>('.vela-dd-section')].map((s) => s.textContent);
 
 describe('drawings drawer — favourites tab', () => {
+    it('uses a Data Window-style pane shell with accessible maximize and close controls', () => {
+        const { drawer, host } = mount();
+        const panel = host.querySelector<HTMLElement>('.vela-drawer.vela-drawings-panel')!;
+        const max = host.querySelector<HTMLButtonElement>('.vela-dd-max')!;
+        const close = host.querySelector<HTMLButtonElement>('.vela-dd-close')!;
+        expect(panel).toBeTruthy();
+        expect(max.getAttribute('aria-label')).toBe('Maximize Drawings panel');
+        expect(close.getAttribute('aria-label')).toBe('Close Drawings panel');
+        drawer.open();
+        max.click();
+        expect(panel.getAttribute('data-maximized')).toBe('1');
+        expect(max.getAttribute('aria-pressed')).toBe('true');
+        expect(max.getAttribute('aria-label')).toBe('Restore Drawings panel');
+        max.click();
+        expect(panel.hasAttribute('data-maximized')).toBe(false);
+        expect(max.getAttribute('aria-label')).toBe('Maximize Drawings panel');
+        close.click();
+        drawer.destroy();
+    });
+
     it('leads the tab strip with a starred glyph tab and keeps the group tabs after it', () => {
         const { drawer } = mount();
         drawer.open();

@@ -322,6 +322,41 @@ describe('surfaces with exit CSS', () => {
         expect(pop.el.isConnected).toBe(false);
     });
 
+    it('a contained draggable popover reuses and removes its overflow layer across exits', async () => {
+        const h = host(); h.dataset.layout = 'desktop';
+        const header = document.createElement('div'); header.className = 'vela-lm-head';
+        const pop = new Popover({ trigger: button(h), host: h, content: header });
+        pop.show();
+        const wrapper = pop.el.parentElement;
+        expect(wrapper?.className).toBe('vela-popover-layout-root');
+        pop.hide();
+        expect(wrapper?.isConnected).toBe(true);
+        pop.show();
+        expect(pop.el.parentElement).toBe(wrapper);
+        expect(h.querySelectorAll('.vela-popover-layout-root')).toHaveLength(1);
+        exit.resolve(); await ticks();
+        expect(pop.open).toBe(true);
+        expect(wrapper?.isConnected).toBe(true);
+        pop.hide(); pop.destroy();
+        expect(wrapper?.isConnected).toBe(false);
+        expect(h.querySelectorAll('.vela-popover-layout-root')).toHaveLength(0);
+    });
+
+    it('removes an exiting desktop popover layer when reopened in mobile mode', () => {
+        const h = host(); h.dataset.layout = 'desktop';
+        const header = document.createElement('div'); header.className = 'vela-lm-head';
+        const pop = new Popover({ trigger: button(h), host: h, content: header });
+        pop.show();
+        const wrapper = pop.el.parentElement;
+        pop.hide();
+        h.dataset.layout = 'mobile';
+        pop.show();
+        expect(pop.el.parentElement).toBe(h);
+        expect(wrapper?.isConnected).toBe(false);
+        expect(h.querySelectorAll('.vela-popover-layout-root')).toHaveLength(0);
+        pop.destroy();
+    });
+
     it('popover: a fresh popover from the same trigger replaces the one leaving', () => {
         const h = host();
         const trigger = button(h);

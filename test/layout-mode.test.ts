@@ -20,6 +20,18 @@ describe('resolveLayoutMode', () => {
         expect(resolveLayoutMode('auto', COARSE_BREAKPOINT_PX - 1, false)).toBe('desktop');
     });
 
+    it('auto: touch landscape uses desktop chrome, portrait restores the phone bar', () => {
+        expect(resolveLayoutMode('auto', 390, true, 780)).toBe('mobile');
+        expect(resolveLayoutMode('auto', 780, true, 390)).toBe('desktop');
+        expect(resolveLayoutMode('auto', 568, true, 320)).toBe('desktop');
+        expect(resolveLayoutMode('auto', 390, true, 390)).toBe('mobile');
+        // Explicit mode remains a host's override, even when the device rotates.
+        expect(resolveLayoutMode('mobile', 780, true, 390)).toBe('mobile');
+        expect(resolveLayoutMode('desktop', 390, true, 780)).toBe('desktop');
+        // Unknown height must not manufacture a landscape reading.
+        expect(resolveLayoutMode('auto', 780, true, 0)).toBe('mobile');
+    });
+
     it('auto: an unmeasured container (width 0) stays desktop until observed', () => {
         expect(resolveLayoutMode('auto', 0, true)).toBe('desktop');
         expect(resolveLayoutMode('auto', -1, true)).toBe('desktop');

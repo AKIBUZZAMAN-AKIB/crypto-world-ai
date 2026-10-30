@@ -2,7 +2,9 @@
 import type { VelaTheme } from '../../../core/options';
 import { ACCENT, BEARISH, BULLISH, NEUTRAL, WARNING } from '../../../core/palette';
 import { injectStyles } from '../../styles';
-import { Popover, closeOpenPopovers, openPopoverTrigger, type PopoverBoundary, type PopoverOptions } from '../popover';
+import { iconEl } from '../../icons';
+import { enableCompactHorizontalStrip } from '../../scrolling';
+import { Popover, closeOpenPopovers, openPopoverTrigger, openPopoverElement, type PopoverBoundary, type PopoverOptions } from '../popover';
 import {
     buildPalette,
     combineColor,
@@ -18,8 +20,11 @@ const FIELD_CHECKER = transparencyChecker(8);
 
 /** Session-shared recently-picked colors (most-recent first). */
 const recents: string[] = [ACCENT, BULLISH, BEARISH, WARNING, NEUTRAL];
+let colorPopoverSequence = 0;
 
-function addRecent(hex6: string): void {
+/** Remember a user-selected color (without opacity) across picker instances this session. */
+export function rememberRecentColor(color: string): void {
+    const hex6 = splitColor(color).hex6;
     const i = recents.findIndex((c) => c.toLowerCase() === hex6.toLowerCase());
     if (i >= 0) recents.splice(i, 1);
     recents.unshift(hex6);
@@ -37,31 +42,41 @@ export type ColorCommit = 'live' | 'release';
 
 export interface ColorPickerOptions {
     commit?: ColorCommit;
+    /** Hide the opacity editor while preserving alpha when only hue is editable. */
+    showOpacity?: boolean;
 }
 
 /**
- * A self-contained color picker: a swatch grid (grays + hue × shade), a
- * recents row with a custom "+" picker, and an opacity slider over a transparency checker.
- * Emits `#RRGGBB` / `#RRGGBBAA` through `onChange`.
+ * A self-contained color picker: a swatch grid, automatically updated recents, a
+ * current-color well for custom colors, and an opacity slider. Emits `#RRGGBB` /
+ * `#RRGGBBAA` through `onChange`. The native custom chooser stays mounted while it streams.
  */
 export function buildColorPicker(color: string, theme: VelaTheme, onChange: (v: string) => void, options: ColorPickerOptions = {}): HTMLElement {
+    // The drawing toolbar also builds this picker without first constructing a ColorField.
+    if (typeof Document !== 'undefined' && document instanceof Document) injectStyles(COLOR_STYLE_ID, COLOR_CSS, document);
     const commit: ColorCommit = options.commit ?? 'live';
     const parsed = splitColor(color);
     let curHex = parsed.hex6;
     let curAlpha = parsed.alpha;
 
     const root = document.createElement('div');
-    root.style.cssText = 'display:flex;flex-direction:column;gap:9px;width:236px;';
+    root.className = 'vela-color-picker';
+    root.setAttribute('data-vela-no-tip', '');
+    root.style.cssText = 'display:flex;flex-direction:column;gap:6px;width:236px;max-width:100%;min-width:0;box-sizing:border-box;';
 
     const grid = document.createElement('div');
-    grid.style.cssText = 'display:grid;grid-template-columns:repeat(10,1fr);gap:4px;';
+    grid.className = 'vela-color-palette';
+    // Ten columns on normal widths; collapse to eight before targets get too tightly
+    // packed on very narrow phones. The 4px gaps keep neighboring hit areas distinct.
+    grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(min(20px,100%),1fr));gap:4px;';
     const swatches: HTMLButtonElement[] = [];
     for (const row of PALETTE) {
         for (const c of row) {
             const sw = document.createElement('button');
             sw.type = 'button';
             sw.dataset.c = c;
-            sw.style.cssText = `width:100%;aspect-ratio:1;border-radius:4px;border:none;cursor:pointer;background:${c};padding:0;`;
+            sw.setAttribute('aria-label', `Color ${c}`);
+            sw.style.cssText = `width:100%;aspect-ratio:1;border-radius:0;border:none;cursor:pointer;background:${c};padding:0;`;
             sw.addEventListener('click', (e) => {
                 e.stopPropagation();
                 pickHex(c);
@@ -73,7 +88,8 @@ export function buildColorPicker(color: string, theme: VelaTheme, onChange: (v: 
     const paintSelection = (): void => {
         for (const sw of swatches) {
             const on = (sw.dataset.c ?? '').toLowerCase() === curHex.toLowerCase();
-            sw.style.outline = on ? `2px solid ${theme.textColor}` : 'none';
+            sw.setAttribute('aria-pressed', String(on));
+            sw.style.outline = on ? `2px solid var(--vela-fg-bright, ${theme.textColor})` : 'none';
             sw.style.outlineOffset = '2px';
             sw.style.zIndex = on ? '1' : '';
             sw.style.position = on ? 'relative' : '';
@@ -81,61 +97,100 @@ export function buildColorPicker(color: string, theme: VelaTheme, onChange: (v: 
     };
 
     const recentRow = document.createElement('div');
-    recentRow.style.cssText = 'display:flex;align-items:center;gap:5px;flex-wrap:wrap;border-top:1px solid var(--vela-border);padding-top:9px;';
-    // Swatches get their own wrapper so re-rendering them never detaches the native
-    // color input — the browser closes its chooser the moment its input leaves the DOM.
+    recentRow.style.cssText = 'display:flex;align-items:center;gap:4px;min-width:0;border-top:1px solid var(--vela-border);padding-top:6px;';
+    // Keep recent swatches separate from the native input: rebuilding the swatches
+    // must never detach the input while its browser color chooser is open.
     const recentSwatches = document.createElement('div');
-    recentSwatches.style.cssText = 'display:contents;';
-    const add = document.createElement('label');
-    add.style.cssText = `width:17px;height:17px;border-radius:var(--vela-radius-sm);border:1px dashed var(--vela-border-strong);cursor:pointer;display:flex;align-items:center;justify-content:center;color:${theme.textColor};font:14px ${theme.fontFamily};position:relative;`;
-    add.textContent = '+';
+    recentSwatches.className = 'vela-color-recents';
+    recentSwatches.setAttribute('role', 'group');
+    recentSwatches.setAttribute('aria-label', 'Recent colors');
+    recentSwatches.style.cssText = 'display:flex;align-items:center;gap:4px;flex:1 1 auto;min-width:0;padding:2px;overflow-x:auto;scrollbar-width:thin;overscroll-behavior-x:contain;';
+    enableCompactHorizontalStrip(recentSwatches);
+    const customWell = document.createElement('label');
+    customWell.className = 'vela-color-custom';
+    customWell.style.cssText = `box-sizing:border-box;width:24px;max-width:100%;height:24px;flex:none;border-radius:0;border:1px solid var(--vela-border-strong);cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative;background:${curHex};`;
+    const editBadge = document.createElement('span');
+    editBadge.style.cssText = 'display:flex;align-items:center;justify-content:center;width:16px;height:16px;box-sizing:border-box;background:rgba(0,0,0,0.8);border:1px solid rgba(255,255,255,0.7);pointer-events:none;';
+    const editIcon = iconEl('pen');
+    editIcon.style.cssText += ';width:11px;height:11px;color:#fff;background-color:currentColor;pointer-events:none;';
+    editBadge.appendChild(editIcon);
     const customInput = document.createElement('input');
     customInput.type = 'color';
+    customInput.setAttribute('aria-label', 'Custom color');
     customInput.value = curHex;
-    customInput.style.cssText = 'position:absolute;inset:0;opacity:0;cursor:pointer;';
-    // `input` streams while the chooser is open (preview); `change` is the committed pick.
+    customInput.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;';
+    customInput.addEventListener('focus', () => { customWell.style.outline = '2px solid var(--vela-fg-bright)'; });
+    customInput.addEventListener('blur', () => { customWell.style.outline = 'none'; });
+    // `input` streams a live preview; `change` adds only the committed color to recents.
     customInput.addEventListener('input', () => previewHex(customInput.value));
-    customInput.addEventListener('change', () => pickHex(customInput.value, true));
-    add.appendChild(customInput);
-    recentRow.append(recentSwatches, add);
-    const renderRecents = (): void => {
+    customInput.addEventListener('change', () => pickHex(customInput.value));
+    customWell.append(editBadge, customInput);
+    recentRow.append(recentSwatches, customWell);
+    const renderRecents = (focusColor?: string): void => {
         recentSwatches.replaceChildren();
+        let restore: HTMLButtonElement | null = null;
         for (const c of recents) {
             const sw = document.createElement('button');
             sw.type = 'button';
-            sw.style.cssText = `width:17px;height:17px;border-radius:var(--vela-radius-sm);border:1px solid var(--vela-border);cursor:pointer;background:${c};padding:0;`;
+            sw.dataset.recentColor = c;
+            sw.setAttribute('aria-label', `Recent color ${c}`);
+            sw.setAttribute('aria-pressed', String(c.toLowerCase() === curHex.toLowerCase()));
+            sw.style.cssText = `width:20px;height:20px;flex:none;border-radius:0;border:1px solid var(--vela-border);cursor:pointer;background:${c};padding:0;`;
             sw.addEventListener('click', (e) => {
                 e.stopPropagation();
-                pickHex(c);
+                pickHex(c, document.activeElement === sw);
             });
             recentSwatches.appendChild(sw);
+            if (c === focusColor) restore = sw;
+        }
+        recentSwatches.scrollLeft = 0;
+        restore?.focus({ preventScroll: true });
+    };
+    const paintRecents = (): void => {
+        for (const sw of [...recentSwatches.children] as HTMLButtonElement[]) {
+            sw.setAttribute('aria-pressed', String(sw.dataset.recentColor?.toLowerCase() === curHex.toLowerCase()));
         }
     };
 
-    const opLabel = document.createElement('div');
+    const opLabel = document.createElement('span');
+    opLabel.className = 'vela-color-opacity-label';
     opLabel.textContent = 'Opacity';
-    opLabel.style.cssText = `font:11px ${theme.fontFamily};color:var(--vela-fg-muted);`;
+    opLabel.style.cssText = `flex:none;font:11px ${theme.fontFamily};color:var(--vela-fg-muted);`;
     const opRow = document.createElement('div');
-    opRow.style.cssText = 'display:flex;align-items:center;gap:10px;';
+    opRow.style.cssText = 'display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;';
     const track = document.createElement('div');
-    track.style.cssText = 'flex:1;position:relative;height:13px;border-radius:7px;cursor:pointer;';
+    track.className = 'vela-color-opacity-track';
+    track.tabIndex = 0;
+    track.setAttribute('role', 'slider');
+    track.setAttribute('aria-label', 'Opacity');
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.style.cssText = 'flex:1;min-width:min(24px,100%);position:relative;height:24px;border-radius:0;cursor:pointer;touch-action:none;';
+    const rail = document.createElement('div');
+    rail.className = 'vela-color-opacity-rail';
+    rail.style.cssText = 'position:absolute;top:50%;left:0;right:0;height:13px;transform:translateY(-50%);pointer-events:none;';
     const knob = document.createElement('div');
-    knob.style.cssText = 'position:absolute;top:50%;width:15px;height:15px;border-radius:50%;background:var(--vela-selected-bg);box-shadow:0 1px 3px rgba(0,0,0,0.55);transform:translate(-50%,-50%);pointer-events:none;';
-    track.appendChild(knob);
+    knob.className = 'vela-color-opacity-thumb';
+    // The handle must not inherit the selected accent: its track can be that same hue.
+    knob.style.cssText = 'position:absolute;top:50%;width:15px;height:15px;border-radius:50%;background:var(--vela-fg-bright);box-shadow:0 0 0 1px var(--vela-bg),0 1px 3px rgba(0,0,0,0.55);transform:translate(-50%,-50%);pointer-events:none;';
+    track.append(rail, knob);
     const pctBox = document.createElement('input');
     pctBox.type = 'text';
     pctBox.inputMode = 'numeric';
-    pctBox.title = 'Opacity (%)';
-    pctBox.style.cssText = `width:46px;box-sizing:border-box;text-align:center;font:var(--vela-font-size-md) ${theme.fontFamily};color:var(--vela-fg);background:transparent;border:1px solid var(--vela-border);border-radius:5px;padding:3px 4px;outline:none;`;
+    pctBox.setAttribute('aria-label', 'Opacity percentage');
+    pctBox.style.cssText = `width:46px;max-width:100%;min-height:28px;box-sizing:border-box;text-align:center;font:var(--vela-font-size-md) ${theme.fontFamily};color:var(--vela-fg);background:transparent;border:1px solid var(--vela-border);border-radius:0;padding:3px 4px;outline:none;`;
     pctBox.addEventListener('focus', () => {
         pctBox.style.borderColor = 'var(--vela-border-strong)';
         pctBox.select();
     });
-    opRow.append(track, pctBox);
+    opRow.append(opLabel, track, pctBox);
     const paintOpacity = (): void => {
-        track.style.background = `linear-gradient(to right, ${curHex}00, ${curHex}ff), ${CHECKER}`;
+        rail.style.background = `linear-gradient(to right, ${curHex}00, ${curHex}ff), ${CHECKER}`;
         knob.style.left = `${curAlpha * 100}%`;
-        pctBox.value = `${Math.round(curAlpha * 100)}%`;
+        const percent = Math.round(curAlpha * 100);
+        pctBox.value = `${percent}%`;
+        track.setAttribute('aria-valuenow', String(percent));
+        track.setAttribute('aria-valuetext', `${percent}% opacity`);
     };
     // A typed value is one discrete edit, so it commits once under either `commit` policy.
     // Unparseable input snaps back to the current opacity.
@@ -194,27 +249,63 @@ export function buildColorPicker(color: string, theme: VelaTheme, onChange: (v: 
     });
     track.addEventListener('pointerup', endDrag);
     track.addEventListener('pointercancel', endDrag);
+    track.addEventListener('keydown', (e) => {
+        const percent = Math.round(curAlpha * 100);
+        let next: number;
+        if (e.key === 'Home') next = 0;
+        else if (e.key === 'End') next = 100;
+        else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = percent + (e.shiftKey ? 10 : 1);
+        else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = percent - (e.shiftKey ? 10 : 1);
+        else return;
+        e.preventDefault();
+        e.stopPropagation();
+        curAlpha = Math.max(0, Math.min(100, next)) / 100;
+        paintOpacity();
+        emit();
+    });
 
     function emit(): void {
         onChange(combineColor(curHex, curAlpha));
     }
     function previewHex(hex: string): void {
         curHex = splitColor(hex).hex6;
+        customWell.style.background = curHex;
         paintSelection();
+        paintRecents();
         paintOpacity();
         emit();
     }
-    function pickHex(hex: string, custom = false): void {
+    function pickHex(hex: string, restoreFocus = false): void {
         previewHex(hex);
-        addRecent(curHex);
+        rememberRecentColor(curHex);
         customInput.value = curHex;
-        if (custom) renderRecents();
+        // Update immediately for palette, recent and committed custom picks alike.
+        // A keyboard-activated recent is recreated, so return focus to its new node.
+        renderRecents(restoreFocus ? curHex : undefined);
     }
 
+    // A host can refresh the source color while this picker stays open. Preserve text
+    // currently being typed, and do not emit another edit in response to synchronization.
+    root.addEventListener('vela-color-sync', (event) => {
+        const value = (event as CustomEvent<string>).detail;
+        if (typeof value !== 'string') return;
+        const next = splitColor(value);
+        if (next.hex6 === curHex && next.alpha === curAlpha) return;
+        curHex = next.hex6;
+        curAlpha = next.alpha;
+        const typed = document.activeElement === pctBox ? pctBox.value : null;
+        customInput.value = curHex;
+        customWell.style.background = curHex;
+        paintSelection();
+        paintRecents();
+        paintOpacity();
+        if (typed !== null) pctBox.value = typed;
+    });
     renderRecents();
     paintSelection();
     paintOpacity();
-    root.append(grid, recentRow, opLabel, opRow);
+    root.append(grid, recentRow);
+    if (options.showOpacity !== false) root.append(opRow);
     return root;
 }
 
@@ -227,6 +318,7 @@ export interface ColorFieldOpts {
     popover?: Pick<PopoverOptions, 'host' | 'position' | 'boundary' | 'zIndex' | 'gap' | 'align'>;
     /** Opacity-drag commit policy of the popover picker (default `'live'`) — see {@link ColorCommit}. */
     commit?: ColorCommit;
+    showOpacity?: boolean;
 }
 
 /** Closed-state swatch shape. `circle` is the settings-dialog preview (a square chip
@@ -235,9 +327,9 @@ export function colorField(
     theme: VelaTheme,
     getVal: () => string,
     onVal: (v: string) => void,
-    opts?: { shape?: ColorFieldShape; id?: string; popover?: ColorFieldOpts['popover']; commit?: ColorCommit },
+    opts?: { shape?: ColorFieldShape; id?: string; popover?: ColorFieldOpts['popover']; commit?: ColorCommit; showOpacity?: boolean },
 ): HTMLElement {
-    return new ColorField({ theme, getVal, onVal, shape: opts?.shape, id: opts?.id, popover: opts?.popover, commit: opts?.commit }).el;
+    return new ColorField({ theme, getVal, onVal, shape: opts?.shape, id: opts?.id, popover: opts?.popover, commit: opts?.commit, showOpacity: opts?.showOpacity }).el;
 }
 
 export class ColorField {
@@ -248,6 +340,7 @@ export class ColorField {
     private readonly theme: VelaTheme;
     private readonly popoverOpts: ColorFieldOpts['popover'];
     private readonly commit: ColorCommit | undefined;
+    private readonly showOpacity: boolean | undefined;
 
     constructor(opts: ColorFieldOpts) {
         injectStyles(COLOR_STYLE_ID, COLOR_CSS, document);
@@ -256,9 +349,13 @@ export class ColorField {
         this.onVal = opts.onVal;
         this.popoverOpts = opts.popover;
         this.commit = opts.commit;
+        this.showOpacity = opts.showOpacity;
 
         const trigger = document.createElement('button');
         trigger.type = 'button';
+        trigger.setAttribute('aria-label', 'Choose color');
+        trigger.setAttribute('aria-haspopup', 'dialog');
+        trigger.setAttribute('aria-expanded', 'false');
         if (opts.id) trigger.id = opts.id;
         trigger.className = opts.shape === 'circle' ? 'vela-color-field vela-color-field-circle' : 'vela-color-field';
         const swatch = document.createElement('span');
@@ -267,16 +364,23 @@ export class ColorField {
         this.el = trigger;
         this.swatch = swatch;
         this.paint();
-        trigger.addEventListener('vela-sync', () => this.paint());
-        // Suppress the default mousedown focus: when this press outside-dismisses an open
-        // popover, Chrome's focus action can scroll the dialog body under the pointer.
+        trigger.addEventListener('vela-sync', () => {
+            this.paint();
+            if (openPopoverTrigger() === trigger) {
+                const picker = openPopoverElement()?.querySelector('.vela-color-picker');
+                picker?.dispatchEvent(new CustomEvent('vela-color-sync', { detail: this.getVal() }));
+            }
+        });
+        // Suppress mouse focus scrolling when this press dismisses another popover.
+        // Do not cancel touch/pen pointerdown: WebKit otherwise drops the ensuing click.
         trigger.addEventListener('pointerdown', (e) => {
+            if (e.pointerType !== 'mouse') return;
             e.preventDefault();
             trigger.focus({ preventScroll: true });
         });
         trigger.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.toggle();
+            this.toggle(e.detail === 0);
         });
     }
 
@@ -285,7 +389,7 @@ export class ColorField {
         this.swatch.style.background = `linear-gradient(${v}, ${v}), ${FIELD_CHECKER}`;
     }
 
-    private toggle(): void {
+    private toggle(fromKeyboard = false): void {
         if (openPopoverTrigger() === this.el) {
             closeOpenPopovers();
             return;
@@ -295,9 +399,17 @@ export class ColorField {
             theme: this.theme,
             align: this.popoverOpts?.align ?? 'end',
             gap: this.popoverOpts?.gap ?? 6,
-            host: this.popoverOpts?.host,
-            position: this.popoverOpts?.position,
-            boundary: this.popoverOpts?.boundary as PopoverBoundary | undefined,
+            // Color surfaces must escape both a clipped chart cell and an embedded
+            // workspace: position against the visible viewport, but never outside it.
+            host: this.popoverOpts?.host ?? this.el.ownerDocument.body,
+            position: this.popoverOpts?.position ?? 'fixed',
+            boundary: (this.popoverOpts?.boundary ?? 'viewport') as PopoverBoundary,
+            fitWithinBoundary: true,
+            restoreFocusOnEscape: true,
+            onClose: () => {
+                this.el.setAttribute('aria-expanded', 'false');
+                this.el.removeAttribute('aria-controls');
+            },
             zIndex: this.popoverOpts?.zIndex,
             className: 'vela-color-field-pop',
             content: buildColorPicker(
@@ -307,10 +419,21 @@ export class ColorField {
                     this.onVal(val);
                     this.paint();
                 },
-                { commit: this.commit },
+                { commit: this.commit, showOpacity: this.showOpacity },
             ),
         });
+        pop.el.id = `vela-color-picker-${++colorPopoverSequence}`;
+        pop.el.setAttribute('role', 'dialog');
+        pop.el.setAttribute('aria-label', 'Color picker');
         pop.show();
+        this.el.setAttribute('aria-expanded', 'true');
+        this.el.setAttribute('aria-controls', pop.el.id);
+        if (fromKeyboard) {
+            const selected = pop.el.querySelector<HTMLButtonElement>('.vela-color-palette button[aria-pressed="true"]')
+                ?? pop.el.querySelector<HTMLButtonElement>('.vela-color-palette button');
+            selected?.focus({ preventScroll: true });
+            pop.reposition();
+        }
     }
 }
 

@@ -19,19 +19,23 @@ const state = () =>
     page.evaluate(() => ({
         names: window.__ws.templateList().map((t) => `${t.name}:${t.count}`),
         house: window.__ws.defaultTemplate(),
-        open: !!document.querySelector('.vela-tm'),
+        open: !!document.querySelector('.vela-templates-panel:not([hidden])'),
         flash: document.querySelector('.vela-tm-flash')?.textContent ?? '',
     }));
 
 const openMenu = async () => {
-    if (await page.locator('.vela-tm').count()) return;
+    if (await page.locator('.vela-templates-panel').isVisible()) return;
     await page.locator('.vela-widget-templates').click();
     await page.waitForSelector('.vela-tm', { timeout: 5000 });
 };
 const closeMenu = async () => {
-    if (!(await page.locator('.vela-tm').count())) return;
+    if (!(await page.locator('.vela-templates-panel').isVisible())) return;
+    await page.locator('.vela-templates-panel [role="tab"][aria-selected="true"]').focus();
     await page.keyboard.press('Escape');
-    await page.waitForFunction(() => !document.querySelector('.vela-tm'), null, { timeout: 5000 });
+    await page.waitForTimeout(120);
+    // An open tooltip consumes the first Escape before the pane.
+    if (await page.locator('.vela-templates-panel').isVisible()) await page.keyboard.press('Escape');
+    await page.locator('.vela-templates-panel').waitFor({ state: 'hidden', timeout: 5000 });
 };
 const rowKebab = async (name) => {
     await openMenu();
@@ -81,7 +85,7 @@ try {
     const box = await page.evaluate(() => {
         const el = document.querySelector('.vela-tm');
         const r = el.getBoundingClientRect();
-        const bg = getComputedStyle(el).backgroundColor;
+        const bg = getComputedStyle(el.closest('.vela-templates-panel')).backgroundColor;
         return {
             x: r.x,
             y: r.y,
@@ -97,7 +101,7 @@ try {
     box.builtins = [...technical, ...financial];
     facts.panel = box;
     facts.categories = await page.evaluate(() => ({
-        title: document.querySelector('.vela-tm-title')?.textContent ?? '',
+        title: document.querySelector('.vela-templates-panel .vela-panel-title')?.textContent ?? '',
         tabs: [...document.querySelectorAll('.vela-tm-tab')].map((t) => t.textContent),
     }));
     assert(facts.categories.title === 'Indicator templates', 'the panel is called Indicator templates', facts.categories.title);
@@ -135,7 +139,7 @@ try {
 
     // ── 4. applying closes the menu (TV closes on pick) ──────────────────────────
     await page.click('.vela-tm-row[data-name="Morning set"]');
-    await page.waitForFunction(() => !document.querySelector('.vela-tm'), null, { timeout: 5000 });
+    await page.locator('.vela-templates-panel').waitFor({ state: 'hidden', timeout: 5000 });
     assert(!(await state()).open, 'picking a template applies and closes', 'closed');
 
     // ── 5. the star is TV's "Set as default" ─────────────────────────────────────
@@ -145,7 +149,7 @@ try {
     s = await state();
     facts.house = s;
     assert(s.house === 'Morning set', 'the row star sets the house template', s.house);
-    const sub = await page.evaluate(() => document.querySelector('.vela-tm-sub')?.textContent ?? '');
+    const sub = await page.evaluate(() => document.querySelector('.vela-tm-pane-summary')?.textContent ?? '');
     assert(/New charts start with/.test(sub), 'the header says what new charts will start with', sub);
     await page.click('.vela-tm-item[data-name="Morning set"] .vela-tm-star');
     await page.waitForTimeout(200);
@@ -216,7 +220,7 @@ try {
     await page.click(builtinRow);
     await page.waitForTimeout(400);
     const built = await page.evaluate(() => ({
-        open: !!document.querySelector('.vela-tm'),
+        open: !!document.querySelector('.vela-templates-panel:not([hidden])'),
         emas: window.__ws.active.chart.indicators().filter((h) => h.nativeType === 'ema').length,
         lengths: window.__ws
             .active
@@ -270,7 +274,7 @@ try {
     const phoneFacts = await mp.evaluate(() => {
         const row = document.querySelector('.vela-tm-item[data-name="Phone set"]');
         const r = row?.getBoundingClientRect();
-        const sheet = document.querySelector('.vela-tm-dialog');
+        const sheet = document.querySelector('.vela-templates-panel');
         return {
             row: !!row,
             h: r ? Math.round(r.height) : null,
@@ -289,8 +293,8 @@ try {
     const phoneApplied = await mp.evaluate(() => {
         return {
             closed: (() => {
-                const panel = document.querySelector('.vela-tm-dialog');
-                return !panel || panel.hidden === true || !document.querySelector('.vela-tm');
+                const panel = document.querySelector('.vela-templates-panel');
+                return !panel || panel.hidden === true;
             })(),
             toast: document.body.textContent.includes('applied'),
             indicators: window.__ws.active.chart.indicators().length,

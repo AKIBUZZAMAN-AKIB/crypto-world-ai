@@ -909,6 +909,32 @@ describe('load states — the cleared chart + the loading affordance', () => {
         expect(seen).toHaveLength(2); // exactly one end per start
     });
 
+    it('reports every requested identity during an overlapping load without breaking the load pair', async () => {
+        const feed = new SwitchFeed();
+        feed.gatedLoads.add('SLOW');
+        feed.gatedLoads.add('FAST');
+        const renderer = new FakeRenderer();
+        const chart = make({ symbol: 'AAA', timeframe: '60', volume: false }, { renderer, engines: [], dataFeed: feed });
+        await chart.ready();
+        expect(chart.loading).toBe(false);
+        const requests: Array<{ symbol: string; bars: number; loading: boolean }> = [];
+        let starts = 0, ends = 0;
+        chart.on('market:requested', (event) => requests.push({ symbol: event.symbol, bars: renderer.bars.length, loading: chart.loading }));
+        chart.on('load:start', () => { starts += 1; });
+        chart.on('load:end', () => { ends += 1; });
+        const slow = chart.setMarket({ symbol: 'SLOW' });
+        expect(chart.loading).toBe(true);
+        const fast = chart.setMarket({ symbol: 'FAST' });
+        expect(requests).toEqual([{ symbol: 'SLOW', bars: 50, loading: true }, { symbol: 'FAST', bars: 0, loading: true }]);
+        expect(starts).toBe(1);
+        expect(ends).toBe(0);
+        feed.release();
+        await Promise.all([slow, fast]);
+        expect(chart.market.symbol).toBe('FAST');
+        expect(chart.loading).toBe(false);
+        expect(ends).toBe(1);
+    });
+
     it('load:end fires alone (bars: 0) for a failed load and for a parked symbol', async () => {
         const feed = new SwitchFeed();
         feed.failLoads.add('DOWN');

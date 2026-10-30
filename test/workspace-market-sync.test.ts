@@ -124,13 +124,14 @@ describe('market links', () => {
         expect(pairs(ws).map((p) => p.split('/')[1])).toEqual(['60', '15', '240', 'D']);
     });
 
-    it('the layout dropdown’s Symbol switch links without rewriting the pairs on screen', () => {
+    it('the Layout Setup pane’s Symbol switch links without rewriting the pairs on screen', () => {
         const ws = mountWorkspace({ ...PAGE });
         const root = document.querySelector('.vela-workspace')!;
         const layoutButton = root.querySelector<HTMLElement>('button[aria-label^="Layout"]');
         expect(layoutButton).not.toBeNull();
         layoutButton!.click();
-        const rows = [...root.querySelectorAll<HTMLElement>('.vela-lp-sync-row')];
+        [...root.querySelectorAll<HTMLElement>('.vela-ls-tab')].find((tab) => tab.textContent === 'Chart syncing')!.click();
+        const rows = [...root.querySelectorAll<HTMLElement>('.vela-ls-syncrows [role="switch"]')];
         const symbolRow = rows.find((r) => r.textContent?.includes('Symbol'));
         expect(symbolRow).toBeTruthy();
         expect(symbolRow!.getAttribute('aria-checked')).toBe('false');

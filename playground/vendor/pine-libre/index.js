@@ -589,10 +589,13 @@ var Parser = class _Parser {
   }
   parseIfStatement() {
     const start = this.next();
+    const indent = this.stmtIndent;
     const cond = this.parseExpr();
     const then = this.parseBodyBlock("if");
     let elseBody = null;
-    if (this.isKw("else")) {
+    // Pine binds `else` to the `if` at the same indentation. A deeper nested `if`
+    // without its own else must leave a dedented else for its enclosing block.
+    if (this.isKw("else") && this.lineIndent === indent) {
       const elseTok = this.peek();
       this.pos++;
       if (this.isKw("if")) {
@@ -3018,7 +3021,7 @@ function buildModel(sink, bars, opts) {
       lineStyle: rec.lineStyle
     };
     if (rec.base !== void 0) style.base = rec.base;
-    series.push({ id, title: rec.title, paneId, kind: rec.kind, points, style });
+    series.push({ id, title: rec.title, paneId, kind: rec.kind, points, style, editable: rec.editable !== false, ...(rec.display ? { display: rec.display } : {}) });
   }
   for (const rec of sink.markers.values()) {
     const markers = [];
@@ -3028,7 +3031,9 @@ function buildModel(sink, bars, opts) {
       title: rec.title,
       paneId,
       kind: "markers",
-      markers
+      markers,
+      editable: rec.editable !== false,
+      ...(rec.display ? { display: rec.display } : {})
     });
   }
   const candleSeries = [];
@@ -3044,7 +3049,8 @@ function buildModel(sink, bars, opts) {
       title: rec.title,
       paneId,
       kind: rec.kind,
-      candles
+      candles,
+      editable: rec.editable !== false
     });
   }
   const fills = [];
@@ -5282,6 +5288,18 @@ function shiftedTime(rt, offset) {
   if (!bar) return null;
   return bar.time;
 }
+function pinePlotDisplay(value) {
+  if (typeof value !== "string" || value === "all") return void 0;
+  const tokens = ["pane", "price_scale", "status_line", "data_window", "none", "pine_screener"].filter((token) => value.includes(token));
+  if (tokens.length === 0) return void 0;
+  if (tokens.includes("none")) return { pane: false, priceScale: false, legend: false, dataWindow: false };
+  return {
+    pane: tokens.includes("pane"),
+    priceScale: tokens.includes("price_scale"),
+    legend: tokens.includes("status_line"),
+    dataWindow: tokens.includes("data_window")
+  };
+}
 function registerDraw(r) {
   r.set("plot", (c) => {
     const rt = c.rt;
@@ -5306,7 +5324,9 @@ function registerDraw(r) {
       width,
       lineStyle: "solid",
       offset,
-      visible: true
+      visible: true,
+      editable: c.arg(9, "editable") !== false,
+      display: pinePlotDisplay(c.arg(10, "display"))
     });
     rec.values[rt.barIndex] = value;
     rec.colors[rt.barIndex] = c.argExpr(2, "color") ? color : null;
@@ -5325,6 +5345,8 @@ function registerDraw(r) {
     const textColorArg = c.arg(7, "textcolor");
     const sizeToken = c.arg(9, "size");
     const rec = rt.sink.ensureMarkers(c.id, title);
+    rec.editable = c.arg(8, "editable") !== false;
+    rec.display = pinePlotDisplay(c.arg(11, "display"));
     const bar = rt.bar;
     if (!bar) return null;
     const truthy2 = series !== null && series !== false;
@@ -5368,6 +5390,8 @@ function registerDraw(r) {
     const textColorArg = c.arg(7, "textcolor");
     const sizeToken = c.arg(9, "size");
     const rec = rt.sink.ensureMarkers(c.id, title);
+    rec.editable = c.arg(8, "editable") !== false;
+    rec.display = pinePlotDisplay(c.arg(11, "display"));
     const bar = rt.bar;
     if (!bar) return null;
     if (series === null || series === false) {
@@ -5409,6 +5433,8 @@ function registerDraw(r) {
     if (!bar) return null;
     const value = toNum(series);
     const rec = rt.sink.ensureMarkers(c.id, title);
+    rec.editable = c.arg(7, "editable") !== false;
+    rec.display = pinePlotDisplay(c.arg(9, "display"));
     if (value === null || value === 0) {
       rec.points[rt.barIndex] = null;
       return null;
@@ -5428,6 +5454,8 @@ function registerDraw(r) {
     const low = toNum(c.arg(2, "low"));
     const close = toNum(c.arg(3, "close"));
     const record = rt.sink.ensureCandles(c.id, strArg(c, 4, "title", kind === "bars" ? "Bars" : "Candles"), kind);
+    record.editable = c.arg(8, "editable") !== false;
+    record.display = pinePlotDisplay(c.arg(10, "display"));
     const color = colorCss(c.arg(5, "color"), null) || null;
     const wickColor = colorCss(c.arg(6, "wickcolor"), null) || color;
     const borderColor = colorCss(c.arg(7, "bordercolor"), null) || null;
@@ -6852,8 +6880,14 @@ function store(c) {
 function handle(kind, id) {
   return { __pine: kind, id };
 }
+/** A Pine method keeps its receiver separate from its explicit argument list. Present
+ *  one consistent, function-style index to drawing builtins: receiver at zero, args after. */
+function argAt(c, index, name) {
+  if (c.receiver !== void 0) return index === 0 ? c.receiver : c.arg(index - 1, name);
+  return c.arg(index, name);
+}
 function idOf(c, index, name) {
-  const v = c.arg(index, name);
+  const v = argAt(c, index, name);
   if (v && typeof v === "object" && "__pine" in v) {
     const id = v.id;
     if (typeof id === "string") return id;
@@ -6887,7 +6921,9 @@ function arrowStyle(v) {
       return { style: styleOf2(v), arrowLeft: false, arrowRight: false };
   }
 }
-function pointX(p) {
+function pointX(p, xloc) {
+  if (xloc === "bar_time" && Number.isFinite(p.time)) return p.time;
+  if (xloc === "bar_index" && Number.isFinite(p.index)) return p.index;
   return Number.isNaN(p.index) ? p.time : p.index;
 }
 function extendOf(v) {
@@ -6898,7 +6934,7 @@ function xlocOf(v) {
   return v === "bar_time" ? "bar_time" : "bar_index";
 }
 function pointOf(c, index, name) {
-  const v = c.arg(index, name);
+  const v = argAt(c, index, name);
   if (v && typeof v === "object" && v.__pine === "point") return v;
   return null;
 }
@@ -6907,12 +6943,15 @@ function registerDrawing(r) {
     const obj = store(c).create({ kind: "point", time, index, price });
     return { __pine: "point", id: obj.id, time: obj.time, index: obj.index, price: obj.price };
   };
-  r.set("chart.point.new", (c) => makePoint(c, numOrNa(c.arg(0, "time")), intArg(c, 1, "index", 0), numOrNa(c.arg(2, "price"))));
-  r.set("chart.point.from_index", (c) => makePoint(c, NaN, intArg(c, 0, "index", 0), numOrNa(c.arg(1, "price"))));
-  r.set("chart.point.from_time", (c) => makePoint(c, numOrNa(c.arg(0, "time")), NaN, numOrNa(c.arg(1, "price"))));
+  r.set("chart.point.new", (c) => {
+    const index = numOrNa(argAt(c, 1, "index"));
+    return makePoint(c, numOrNa(argAt(c, 0, "time")), Number.isFinite(index) ? Math.trunc(index) : NaN, numOrNa(argAt(c, 2, "price")));
+  });
+  r.set("chart.point.from_index", (c) => makePoint(c, NaN, intArg(c, 0, "index", 0), numOrNa(argAt(c, 1, "price"))));
+  r.set("chart.point.from_time", (c) => makePoint(c, numOrNa(argAt(c, 0, "time")), NaN, numOrNa(argAt(c, 1, "price"))));
   r.set("chart.point.now", (c) => {
     const bar = c.rt.currentBar;
-    return makePoint(c, bar?.time ?? NaN, c.rt.barIndex, toNum(c.arg(0, "price")) ?? numOrNa(c.rt.valueByName("close")));
+    return makePoint(c, bar?.time ?? NaN, c.rt.barIndex, toNum(argAt(c, 0, "price")) ?? numOrNa(c.rt.valueByName("close")));
   });
   r.set("chart.point.copy", (c) => {
     const p = pointOf(c, 0, "id");
@@ -6925,17 +6964,21 @@ function registerDrawing(r) {
     return makePoint(c, p.time, p.index, p.price);
   });
   r.set("line.new", (c) => {
+    const first = pointOf(c, 0, "first_point");
+    const second = pointOf(c, 1, "second_point");
+    const pointForm = Boolean(first && second);
+    const xloc = xlocOf(argAt(c, pointForm ? 2 : 4, "xloc"));
     const obj = store(c).create({
       kind: "line",
-      xloc: xlocOf(c.arg(4, "xloc")),
-      x1: numOrNa(c.arg(0, "x1")),
-      y1: numOrNa(c.arg(1, "y1")),
-      x2: numOrNa(c.arg(2, "x2")),
-      y2: numOrNa(c.arg(3, "y2")),
-      extend: extendOf(c.arg(5, "extend")),
-      color: css(c.arg(6, "color")),
-      width: intArg(c, 8, "width", 1),
-      ...arrowStyle(c.arg(7, "style")),
+      xloc,
+      x1: pointForm ? pointX(first, xloc) : numOrNa(argAt(c, 0, "x1")),
+      y1: pointForm ? first.price : numOrNa(argAt(c, 1, "y1")),
+      x2: pointForm ? pointX(second, xloc) : numOrNa(argAt(c, 2, "x2")),
+      y2: pointForm ? second.price : numOrNa(argAt(c, 3, "y2")),
+      extend: extendOf(argAt(c, pointForm ? 3 : 5, "extend")),
+      color: css(argAt(c, pointForm ? 4 : 6, "color")),
+      width: intArg(c, pointForm ? 6 : 8, "width", 1),
+      ...arrowStyle(argAt(c, pointForm ? 5 : 7, "style")),
       deleted: false
     });
     return handle("line", obj.id);
@@ -6966,7 +7009,7 @@ function registerDrawing(r) {
   const lineSetter = (field, coerce) => (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj[field] = coerce(c.arg(1, field));
+    obj[field] = coerce(argAt(c, 1, field));
     return null;
   };
   r.set("line.set_x1", lineSetter("x1", numOrNa));
@@ -6977,7 +7020,7 @@ function registerDrawing(r) {
   r.set("line.set_style", (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    const arrow = arrowStyle(c.arg(1, "style"));
+    const arrow = arrowStyle(argAt(c, 1, "style"));
     obj.style = arrow.style;
     obj.arrowLeft = arrow.arrowLeft;
     obj.arrowRight = arrow.arrowRight;
@@ -6988,23 +7031,23 @@ function registerDrawing(r) {
   r.set("line.set_xloc", (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj.x1 = numOrNa(c.arg(1, "x1"));
-    obj.x2 = numOrNa(c.arg(2, "x2"));
-    obj.xloc = xlocOf(c.arg(3, "xloc"));
+    obj.x1 = numOrNa(argAt(c, 1, "x1"));
+    obj.x2 = numOrNa(argAt(c, 2, "x2"));
+    obj.xloc = xlocOf(argAt(c, 3, "xloc"));
     return null;
   });
   r.set("line.set_xy1", (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj.x1 = numOrNa(c.arg(1, "x"));
-    obj.y1 = numOrNa(c.arg(2, "y"));
+    obj.x1 = numOrNa(argAt(c, 1, "x"));
+    obj.y1 = numOrNa(argAt(c, 2, "y"));
     return null;
   });
   r.set("line.set_xy2", (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj.x2 = numOrNa(c.arg(1, "x"));
-    obj.y2 = numOrNa(c.arg(2, "y"));
+    obj.x2 = numOrNa(argAt(c, 1, "x"));
+    obj.y2 = numOrNa(argAt(c, 2, "y"));
     return null;
   });
   const pointSetter = (which) => (c) => {
@@ -7013,46 +7056,49 @@ function registerDrawing(r) {
     const point = pointOf(c, 1, "point");
     if (point) {
       if (which === "first") {
-        obj.x1 = pointX(point);
+        obj.x1 = pointX(point, obj.xloc);
         obj.y1 = point.price;
       } else {
-        obj.x2 = pointX(point);
+        obj.x2 = pointX(point, obj.xloc);
         obj.y2 = point.price;
       }
       return null;
     }
     if (which === "first") {
-      obj.x1 = numOrNa(c.arg(1, "x"));
-      obj.y1 = numOrNa(c.arg(2, "y"));
+      obj.x1 = numOrNa(argAt(c, 1, "x"));
+      obj.y1 = numOrNa(argAt(c, 2, "y"));
     } else {
-      obj.x2 = numOrNa(c.arg(1, "x"));
-      obj.y2 = numOrNa(c.arg(2, "y"));
+      obj.x2 = numOrNa(argAt(c, 1, "x"));
+      obj.y2 = numOrNa(argAt(c, 2, "y"));
     }
     return null;
   };
   r.set("line.set_first_point", pointSetter("first"));
   r.set("line.set_second_point", pointSetter("second"));
   r.set("label.new", (c) => {
+    const point = pointOf(c, 0, "point");
+    const pointForm = Boolean(point);
+    const xloc = xlocOf(argAt(c, pointForm ? 2 : 3, "xloc"));
     const obj = store(c).create({
       kind: "label",
-      xloc: xlocOf(c.arg(3, "xloc")),
-      x: numOrNa(c.arg(0, "x")),
-      y: numOrNa(c.arg(1, "y")),
+      xloc,
+      x: pointForm ? pointX(point, xloc) : numOrNa(argAt(c, 0, "x")),
+      y: pointForm ? point.price : numOrNa(argAt(c, 1, "y")),
       yloc: (() => {
-        const v = c.arg(4, "yloc");
+        const v = argAt(c, pointForm ? 3 : 4, "yloc");
         return v === "abovebar" || v === "belowbar" ? v : "price";
       })(),
-      text: strArg(c, 2, "text", ""),
+      text: strArg(c, pointForm ? 1 : 2, "text", ""),
       style: (() => {
-        const v = c.arg(6, "style");
+        const v = argAt(c, pointForm ? 5 : 6, "style");
         return typeof v === "string" ? v : "label_down";
       })(),
-      color: css(c.arg(5, "color")) ?? "#2196f3",
-      textColor: css(c.arg(7, "textcolor")) ?? (c.rt.isV6 ? "#ffffff" : "#000000"),
-      size: typeof c.arg(8, "size") === "string" ? c.arg(8, "size") : "normal",
-      textAlign: typeof c.arg(9, "textalign") === "string" ? c.arg(9, "textalign") : "center",
-      tooltip: c.arg(10, "tooltip") === null ? null : toStr(c.arg(10, "tooltip")),
-      fontFamily: mapFont(c.arg(11, "text_font_family")),
+      color: css(argAt(c, pointForm ? 4 : 5, "color")) ?? "#2196f3",
+      textColor: css(argAt(c, pointForm ? 6 : 7, "textcolor")) ?? (c.rt.isV6 ? "#ffffff" : "#000000"),
+      size: typeof argAt(c, pointForm ? 7 : 8, "size") === "string" ? argAt(c, pointForm ? 7 : 8, "size") : "normal",
+      textAlign: typeof argAt(c, pointForm ? 8 : 9, "textalign") === "string" ? argAt(c, pointForm ? 8 : 9, "textalign") : "center",
+      tooltip: argAt(c, pointForm ? 9 : 10, "tooltip") === null ? null : toStr(argAt(c, pointForm ? 9 : 10, "tooltip")),
+      fontFamily: mapFont(argAt(c, pointForm ? 10 : 11, "text_font_family")),
       bold: false,
       italic: false,
       deleted: false
@@ -7080,7 +7126,7 @@ function registerDrawing(r) {
   const labelSetter = (field, coerce) => (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj[field] = coerce(c.arg(1, field));
+    obj[field] = coerce(argAt(c, 1, field));
     return null;
   };
   r.set("label.set_text", labelSetter("text", (v) => toStr(v ?? "")));
@@ -7096,16 +7142,16 @@ function registerDrawing(r) {
   r.set("label.set_xloc", (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj["x"] = numOrNa(c.arg(1, "x"));
-    obj["xloc"] = xlocOf(c.arg(2, "xloc"));
+    obj["x"] = numOrNa(argAt(c, 1, "x"));
+    obj["xloc"] = xlocOf(argAt(c, 2, "xloc"));
     return null;
   });
   r.set("label.set_yloc", labelSetter("yloc", (v) => v === "abovebar" || v === "belowbar" ? v : "price"));
   r.set("label.set_xy", (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj["x"] = numOrNa(c.arg(1, "x"));
-    obj["y"] = numOrNa(c.arg(2, "y"));
+    obj["x"] = numOrNa(argAt(c, 1, "x"));
+    obj["y"] = numOrNa(argAt(c, 2, "y"));
     return null;
   });
   r.set("label.set_point", (c) => {
@@ -7113,7 +7159,7 @@ function registerDrawing(r) {
     if (!obj) return null;
     const p = pointOf(c, 1, "point");
     if (p) {
-      obj["x"] = p.index;
+      obj["x"] = pointX(p, obj.xloc);
       obj["y"] = p.price;
     }
     return null;
@@ -7121,31 +7167,35 @@ function registerDrawing(r) {
   r.set("label.set_text_formatting", (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    const v = c.arg(1, "text_formatting");
+    const v = argAt(c, 1, "text_formatting");
     obj["bold"] = v === "bold";
     obj["italic"] = v === "italic";
     return null;
   });
   r.set("box.new", (c) => {
+    const topLeft = pointOf(c, 0, "top_left");
+    const bottomRight = pointOf(c, 1, "bottom_right");
+    const pointForm = Boolean(topLeft && bottomRight);
+    const xloc = xlocOf(argAt(c, pointForm ? 6 : 8, "xloc"));
     const obj = store(c).create({
       kind: "box",
-      xloc: xlocOf(c.arg(8, "xloc")),
-      left: numOrNa(c.arg(0, "left")),
-      top: numOrNa(c.arg(1, "top")),
-      right: numOrNa(c.arg(2, "right")),
-      bottom: numOrNa(c.arg(3, "bottom")),
-      borderColor: css(c.arg(4, "border_color")),
-      borderWidth: intArg(c, 5, "border_width", 1),
-      borderStyle: styleOf2(c.arg(6, "border_style")),
-      extend: extendOf(c.arg(7, "extend")),
-      bgColor: css(c.arg(9, "bgcolor")),
-      text: c.arg(10, "text") === null ? null : toStr(c.arg(10, "text")),
-      textSize: typeof c.arg(11, "text_size") === "string" ? c.arg(11, "text_size") : "normal",
-      textColor: css(c.arg(12, "text_color")),
-      hAlign: typeof c.arg(13, "text_halign") === "string" ? c.arg(13, "text_halign") : "center",
-      vAlign: typeof c.arg(14, "text_valign") === "string" ? c.arg(14, "text_valign") : "center",
-      wrap: typeof c.arg(15, "text_wrap") === "string" ? c.arg(15, "text_wrap") !== "none" : true,
-      fontFamily: mapFont(c.arg(16, "text_font_family")),
+      xloc,
+      left: pointForm ? pointX(topLeft, xloc) : numOrNa(argAt(c, 0, "left")),
+      top: pointForm ? topLeft.price : numOrNa(argAt(c, 1, "top")),
+      right: pointForm ? pointX(bottomRight, xloc) : numOrNa(argAt(c, 2, "right")),
+      bottom: pointForm ? bottomRight.price : numOrNa(argAt(c, 3, "bottom")),
+      borderColor: css(argAt(c, pointForm ? 2 : 4, "border_color")),
+      borderWidth: intArg(c, pointForm ? 3 : 5, "border_width", 1),
+      borderStyle: styleOf2(argAt(c, pointForm ? 4 : 6, "border_style")),
+      extend: extendOf(argAt(c, pointForm ? 5 : 7, "extend")),
+      bgColor: css(argAt(c, pointForm ? 7 : 9, "bgcolor")),
+      text: argAt(c, pointForm ? 8 : 10, "text") === null ? null : toStr(argAt(c, pointForm ? 8 : 10, "text")),
+      textSize: typeof argAt(c, pointForm ? 9 : 11, "text_size") === "string" ? argAt(c, pointForm ? 9 : 11, "text_size") : "normal",
+      textColor: css(argAt(c, pointForm ? 10 : 12, "text_color")),
+      hAlign: typeof argAt(c, pointForm ? 11 : 13, "text_halign") === "string" ? argAt(c, pointForm ? 11 : 13, "text_halign") : "center",
+      vAlign: typeof argAt(c, pointForm ? 12 : 14, "text_valign") === "string" ? argAt(c, pointForm ? 12 : 14, "text_valign") : "center",
+      wrap: typeof argAt(c, pointForm ? 13 : 15, "text_wrap") === "string" ? argAt(c, pointForm ? 13 : 15, "text_wrap") !== "none" : true,
+      fontFamily: mapFont(argAt(c, pointForm ? 14 : 16, "text_font_family")),
       bold: false,
       italic: false,
       deleted: false
@@ -7174,7 +7224,7 @@ function registerDrawing(r) {
   const boxSetter = (field, coerce) => (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj[field] = coerce(c.arg(1, field));
+    obj[field] = coerce(argAt(c, 1, field));
     return null;
   };
   r.set("box.set_left", boxSetter("left", numOrNa));
@@ -7196,7 +7246,7 @@ function registerDrawing(r) {
   r.set("box.set_text_formatting", (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    const v = c.arg(1, "text_formatting");
+    const v = argAt(c, 1, "text_formatting");
     obj["bold"] = v === "bold";
     obj["italic"] = v === "italic";
     return null;
@@ -7204,8 +7254,8 @@ function registerDrawing(r) {
   const boxCorner = (xField, yField) => (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj[xField] = numOrNa(c.arg(1, "x"));
-    obj[yField] = numOrNa(c.arg(2, "y"));
+    obj[xField] = numOrNa(argAt(c, 1, "x"));
+    obj[yField] = numOrNa(argAt(c, 2, "y"));
     return null;
   };
   r.set("box.set_lefttop", boxCorner("left", "top"));
@@ -7215,7 +7265,7 @@ function registerDrawing(r) {
     if (!obj) return null;
     const p = pointOf(c, 1, "point");
     if (p) {
-      obj["left"] = pointX(p);
+      obj["left"] = pointX(p, obj.xloc);
       obj["top"] = p.price;
     }
     return null;
@@ -7225,7 +7275,7 @@ function registerDrawing(r) {
     if (!obj) return null;
     const p = pointOf(c, 1, "point");
     if (p) {
-      obj["right"] = pointX(p);
+      obj["right"] = pointX(p, obj.xloc);
       obj["bottom"] = p.price;
     }
     return null;
@@ -7233,13 +7283,13 @@ function registerDrawing(r) {
   r.set("box.set_xloc", (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj["left"] = numOrNa(c.arg(1, "left"));
-    obj["right"] = numOrNa(c.arg(2, "right"));
-    obj["xloc"] = xlocOf(c.arg(3, "xloc"));
+    obj["left"] = numOrNa(argAt(c, 1, "left"));
+    obj["right"] = numOrNa(argAt(c, 2, "right"));
+    obj["xloc"] = xlocOf(argAt(c, 3, "xloc"));
     return null;
   });
   r.set("table.new", (c) => {
-    const position = typeof c.arg(0, "position") === "string" ? c.arg(0, "position") : "top_right";
+    const position = typeof argAt(c, 0, "position") === "string" ? argAt(c, 0, "position") : "top_right";
     const columns = Math.max(1, intArg(c, 1, "columns", 1));
     const rows = Math.max(1, intArg(c, 2, "rows", 1));
     const obj = store(c).create({
@@ -7247,10 +7297,10 @@ function registerDrawing(r) {
       position,
       columns,
       rows,
-      bgColor: css(c.arg(3, "bgcolor")),
-      frameColor: css(c.arg(4, "frame_color")),
+      bgColor: css(argAt(c, 3, "bgcolor")),
+      frameColor: css(argAt(c, 4, "frame_color")),
       frameWidth: intArg(c, 5, "frame_width", 0),
-      borderColor: css(c.arg(6, "border_color")),
+      borderColor: css(argAt(c, 6, "border_color")),
       borderWidth: intArg(c, 7, "border_width", 0),
       cells: Array.from({ length: rows }, () => Array.from({ length: columns }, () => null)),
       merges: [],
@@ -7291,25 +7341,25 @@ function registerDrawing(r) {
     const row = intArg(c, 2, "row", 0);
     const cell = ensureCell(obj, col, row);
     if (!cell) return null;
-    const text = c.arg(3, "text");
+    const text = argAt(c, 3, "text");
     if (text !== null) cell.text = toStr(text);
-    const width = toNum(c.arg(4, "width"));
+    const width = toNum(argAt(c, 4, "width"));
     if (width !== null) cell.width = width;
-    const height = toNum(c.arg(5, "height"));
+    const height = toNum(argAt(c, 5, "height"));
     if (height !== null) cell.height = height;
-    const textColor = css(c.arg(6, "text_color"));
+    const textColor = css(argAt(c, 6, "text_color"));
     if (textColor) cell.textColor = textColor;
-    if (typeof c.arg(7, "text_halign") === "string") cell.hAlign = c.arg(7, "text_halign");
-    if (typeof c.arg(8, "text_valign") === "string") cell.vAlign = c.arg(8, "text_valign");
-    const size = c.arg(9, "text_size");
+    if (typeof argAt(c, 7, "text_halign") === "string") cell.hAlign = argAt(c, 7, "text_halign");
+    if (typeof argAt(c, 8, "text_valign") === "string") cell.vAlign = argAt(c, 8, "text_valign");
+    const size = argAt(c, 9, "text_size");
     if (typeof size === "string") cell.textSize = size;
     else if (typeof size === "number") cell.textSize = size;
-    const bg = css(c.arg(10, "bgcolor"));
+    const bg = css(argAt(c, 10, "bgcolor"));
     if (bg) cell.bgColor = bg;
-    const tooltip = c.arg(11, "tooltip");
+    const tooltip = argAt(c, 11, "tooltip");
     if (tooltip !== null) cell.tooltip = toStr(tooltip);
-    cell.fontFamily = mapFont(c.arg(12, "text_font_family"));
-    const formatting = c.arg(13, "text_formatting");
+    cell.fontFamily = mapFont(argAt(c, 12, "text_font_family"));
+    const formatting = argAt(c, 13, "text_formatting");
     cell.bold = formatting === "bold";
     cell.italic = formatting === "italic";
     return null;
@@ -7319,7 +7369,7 @@ function registerDrawing(r) {
     if (!obj) return null;
     const cell = ensureCell(obj, intArg(c, 1, "column", 0), intArg(c, 2, "row", 0));
     if (!cell) return null;
-    apply(cell, c.arg(3, "value"));
+    apply(cell, argAt(c, 3, "value"));
     return null;
   };
   r.set("table.cell_set_text", cellField((cell, v) => cell.text = toStr(v ?? "")));
@@ -7373,7 +7423,7 @@ function registerDrawing(r) {
   const tableSetter = (field, coerce) => (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj[field] = coerce(c.arg(1, field));
+    obj[field] = coerce(argAt(c, 1, field));
     return null;
   };
   r.set("table.set_bgcolor", tableSetter("bgColor", (v) => css(v)));
@@ -7387,7 +7437,7 @@ function registerDrawing(r) {
       kind: "linefill",
       line1: idOf(c, 0, "line1"),
       line2: idOf(c, 1, "line2"),
-      color: css(c.arg(2, "color")),
+      color: css(argAt(c, 2, "color")),
       deleted: false
     });
     return handle("linefill", obj.id);
@@ -7408,11 +7458,11 @@ function registerDrawing(r) {
   r.set("linefill.set_color", (c) => {
     const obj = store(c).get(idOf(c, 0, "id"));
     if (!obj) return null;
-    obj.color = css(c.arg(1, "color"));
+    obj.color = css(argAt(c, 1, "color"));
     return null;
   });
   r.set("polyline.new", (c) => {
-    const pointsArg = c.arg(0, "points");
+    const pointsArg = argAt(c, 0, "points");
     const points = [];
     if (pointsArg instanceof PineArray) {
       for (const item of pointsArg.items) {
@@ -7427,9 +7477,9 @@ function registerDrawing(r) {
       points,
       curved: boolArg(c, 1, "curved", false),
       closed: boolArg(c, 2, "closed", false),
-      lineColor: css(c.arg(4, "line_color")),
-      fillColor: css(c.arg(5, "fill_color")),
-      lineStyle: styleOf2(c.arg(6, "line_style")),
+      lineColor: css(argAt(c, 4, "line_color")),
+      fillColor: css(argAt(c, 5, "fill_color")),
+      lineStyle: styleOf2(argAt(c, 6, "line_style")),
       lineWidth: intArg(c, 7, "line_width", 1),
       deleted: false
     });
@@ -9832,10 +9882,12 @@ var PineEngine = class {
           symbol = toStr(evalConst(call.symbolExpr, env));
           timeframe = toStr(evalConst(call.timeframeExpr, env));
         } catch {
-          throw new PineRuntimeError(
-            "request.security() needs constant symbol and timeframe arguments so the data can be fetched before the run",
-            "UNSUPPORTED_FEATURE"
-          );
+          // Some valid Pine scripts wrap request.security() in a helper whose timeframe
+          // is a function parameter (for example, daily/weekly/monthly level helpers).
+          // Such a call cannot be prefetched statically. Leave it absent from securityData;
+          // if the branch actually runs, Runtime.switchContext reports the missing series
+          // as a warning/na instead of rejecting the whole script before execution.
+          continue;
         }
         if (!symbol || !timeframe) continue;
         wanted.set(`${symbol}|${timeframe}`, { symbol, timeframe });

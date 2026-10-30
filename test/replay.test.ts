@@ -906,6 +906,33 @@ describe('chart.replay tick replay (setTicks)', () => {
         expect(renderer.updated[1]).toMatchObject({ open: 149.8, high: 150.9, low: 149.5, close: 149.9 });
     });
 
+    it('does not publish an unseen completed bar when seeking or stopping mid-tick', async () => {
+        const { chart, renderer } = make();
+        await chart.ready();
+        const full = [...renderer.bars];
+        await chart.replay.start({ from: full[49]!.time });
+        chart.replay.setTicks(threeTicks);
+        const seen: number[] = [];
+        chart.on('bar', (bar) => seen.push(bar.close));
+        fakeTimers();
+        chart.replay.play(600);
+        await advance(600);
+        chart.replay.pause();
+        expect(seen).toEqual([150.5]);
+        await chart.replay.start({ from: full[59]!.time });
+        expect(seen).toEqual([150.5]); // restoring stored bar 150 is not a real tick
+        chart.replay.play(600);
+        await advance(600);
+        chart.replay.pause();
+        expect(seen).toEqual([150.5, 160.5]);
+        vi.useRealTimers();
+        chart.replay.stop();
+        expect(seen).toEqual([150.5, 160.5]); // stored bar 160 is not a real tick
+        await flush(); // resuming live may legitimately deliver the newest market bar
+        expect(seen).not.toContain(160);
+        expect(renderer.bars).toEqual(full);
+    });
+
     it('a seek or a stop mid-bar puts the stored bar back and aborts the tick requests', async () => {
         const { chart, renderer } = make();
         await chart.ready();

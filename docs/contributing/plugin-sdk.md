@@ -237,7 +237,7 @@ registerWidgetAction({
     run: (ctx) => {
         // ctx.chart (the CURRENT inner chart) · ctx.symbol / timeframe / priceStyle
         // ctx.setSymbol / setTimeframe / setPriceStyle / openSymbolSearch(query?)
-        // ctx.togglePanel(id, open?) — open/close a docked side panel (dock stays exclusive)
+        // ctx.togglePanel(id, open?) — open/close a side panel (one dock plus floating cards)
         // ctx.dockStrip(el) — dock an element as a full-width strip between the charts and
         //   the bottom bar (the charts shrink); returns the undock
         // ctx.replay (workspace) — bar replay across every cell on one clock; drive it
@@ -668,9 +668,13 @@ registerLegendCallout({
 
 ## Side panels — `registerSidePanel`
 
-A **side panel** is a docked column on the chart's right edge — the object tree and the data
-window are the two built-in ones, and a contributed panel joins them as an equal: same header
-and close button, same single-open dock, its own toggle button in the topbar's panel group.
+A **side panel** starts as a docked column on the chart's right edge. Contributed panels
+join the built-ins with the same header, Close and Float/Dock controls, plus their own topbar
+button. On desktop one side column and multiple movable cards can be open at once; portrait
+phone chrome presents one bottom pane. The workspace's built-in `layoutSetup` panel uses
+this same dock and persistence model, but is opened by its dedicated Layout setup button
+(or the single phone More entry) rather than a duplicate panel button. Its Layout and Chart
+syncing views are tabs; the compact Manage layouts menu remains a separate surface.
 
 The shell owns that chrome and hands `mount` the panel's **body** to fill; the contribution
 never reaches into the widget's DOM:
@@ -686,11 +690,11 @@ registerSidePanel({
     icon: 'flow',
     order: 30,                   // among the panel buttons (built-ins are 10 and 20; default 100)
     width: 320,                  // declared width in px (default 280)
-    resizable: true,             // drag the inner edge; double-click returns to `width`
+    resizable: true,             // drag/keyboard the edge; double-click resets
     minWidth: 240,
     maxWidth: 560,
     overlay: false,              // true floats the panel OVER the chart (with a pin to dock it)
-    maximizable: false,          // true adds a Maximize/Restore button to the header
+    maximizable: false,          // true adds desktop Maximize/Restore (phone always has it)
     mount: (ctx, body, header) => {
         const list = document.createElement('div');
         body.appendChild(list);                       // `body` is the panel's scrolling area
@@ -711,25 +715,35 @@ registerSidePanel({
   slot own the row). The close button and the row itself stay the shell's, and the topbar
   toggle keeps the DECLARED `title` as its tooltip.
 
-- **Width is a per-panel choice.** Omit `resizable` for a fixed column; with it, the drag is
-  clamped to `[minWidth, maxWidth]` (defaults 200/640) and the width the user settles on is
-  saved with the shell's state document, under the panel id.
+- **Width is a per-panel choice.** Omit `resizable` for a fixed docked column; with it, the
+  dock's inner-edge drag is clamped to `[minWidth, maxWidth]` (defaults 200/640). Every
+  free-floating card has a two-axis resize button after Close: resizable contributions keep
+  their declared bounds, while a fixed contribution can still be resized as a card (minimum
+  160 px where the host permits). Its chosen width is saved and is also used if it is docked
+  again. Arrow keys resize without dragging; a click or tap does not open size controls.
 - **Placement is a per-panel choice too.** A panel docks by default — a column beside the
-  chart, which shrinks to make room. With `overlay: true` the panel floats over the chart's
-  right edge instead: the chart keeps its width and layout, and the panel covers whatever
-  sits under it. Pick it for panels wide enough that a column would crush the plot (a code
-  editor). A floating panel's header carries a **pin**: pressed, the panel docks as a column
-  after all (the chart makes room), released, it floats again — the user's choice, saved with
-  the shell's state next to the widths. Resizing and width persistence work the same way in
-  both placements.
-- **A panel can be maximized.** With `maximizable: true` the header carries a Maximize button
-  that spreads the panel over every chart of the shell, whatever its placement, and turns
-  into Restore. The contribution drives the same state from code — `header.setMaximized(on)`,
-  read back through `header.maximized`. It is a moment, not a placement: it is not
-  persisted, and closing the panel restores it. Pick it for panels that are sometimes the
-  main work surface (an editor).
-- **The dock is exclusive.** Opening a panel closes the one showing — the chart keeps its
-  width, and only one column is ever docked. `onOpen` is where a lazy panel renders.
+  chart, which shrinks to make room. With `overlay: true` it starts anchored over the chart's
+  right edge instead, leaving the chart its width. The legacy **pin** switches between that
+  anchored overlay and a side column. Separately, the desktop Float/Dock control can make
+  either placement a freely movable card; Dock returns it to a side column. User choices and
+  dimensions persist. A card extending beyond the screen does not enlarge the host page;
+  keyboard focus temporarily brings an off-screen control into view without overwriting the
+  saved position. The floating resize button changes both dimensions and honors the
+  contribution's bounds when `resizable` is enabled.
+- **A panel can be maximized.** With `maximizable: true` the desktop header carries a
+  Maximize button that spreads the panel over the chart area and turns into Restore. Every
+  portrait phone pane stays attached to the bottom and offers a separate height-resize strip
+  immediately above its stationary header, plus a toggle immediately before Close that fills
+  the visible workspace and restores the prior height. The contribution drives the same state from code —
+  `header.setMaximized(on)`, read back through `header.maximized`. It is a moment, not a
+  placement: it is not persisted, and closing the panel restores it. Pick desktop maximize
+  for panels that are sometimes the main work surface (an editor).
+- **The side column is exclusive, not the floating cards.** The Float/Dock button beside
+  Close changes the user's desktop mode without remounting the body. Opening another dock
+  replaces the previous column while other floating cards remain live; redocking a card
+  replaces that column. The legacy `overlay` pin remains available. Portrait phone chrome
+  shows one pane and temporarily suspends the other cards; desktop rotation restores them.
+  `onOpen` is where a lazy panel renders, including when a suspended card resumes.
 - **`onChart` is the rebind hook**, not a one-shot: the widget hands over a new chart instance
   after a symbol/timeframe rebuild, and a workspace re-points the panel at the active cell.
 - Register at import time; after a late registration call `widget.refreshActions()`. Only

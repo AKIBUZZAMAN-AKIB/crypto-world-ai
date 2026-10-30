@@ -66,17 +66,32 @@ export interface TrackSizes {
 
 /**
  * The docked side panels — a SHELL-level pref (one dock serves every cell of a workspace).
- * `open` is the single panel showing (the dock is exclusive); `widths` holds only the columns
- * the user actually resized, by panel id, so a panel's declared width stays in charge until
- * then; `pinned` lists the floating (overlay) panels the user pinned as columns. Absent
- * altogether in documents written before the dock existed.
+ * `open` is the side column (or a floating fallback for older readers); `floatingOpen` lists
+ * concurrently open desktop cards. `widths` holds only user-resized panels, and `pinned`
+ * retains the legacy anchored-overlay pin choice. Absent in documents predating the dock.
  */
+export interface FloatingPanelPosition {
+    /** Top-left as fractions of the desktop dock host, clamped on presentation. */
+    x: number;
+    y: number;
+}
+
 export interface PanelsState {
     open?: string;
     widths?: Record<string, number>;
     pinned?: string[];
-    /** Mobile bottom-sheet top offsets, as a fraction of the host height (0…0.7). */
+    /** Panels whose desktop mode is a freely movable card, including closed panels. */
+    floating?: string[];
+    /** Open floating panels; `open` continues to identify the side dock (or one fallback). */
+    floatingOpen?: string[];
+    /** Last user-set floating positions, independent of phone geometry. */
+    floatPositions?: Record<string, FloatingPanelPosition>;
+    /** Legacy mobile top offsets; phone presentation now derives the top from height. */
     tops?: Record<string, number>;
+    /** Mobile pane heights as fractions of the host height. */
+    heights?: Record<string, number>;
+    /** Independent desktop side-panel heights, also as host fractions. */
+    desktopHeights?: Record<string, number>;
 }
 
 /**
@@ -106,6 +121,8 @@ export interface ObjectGroupState {
     id: string;
     name: string;
     ids: string[];
+    indicators?: string[];
+    indicatorRefs?: Array<{ id: string; key: string; ordinal: number }>;
     parent?: string;
 }
 
@@ -149,6 +166,8 @@ export interface CellState {
     rendererConfig?: unknown;
     /** Runtime view flags that do not ride `getConfig()` but ARE chart edits. */
     runtime?: CellRuntimeState;
+    /** The shell switched this chart to percent for Compare; restore price on removal. */
+    compareAutoPercent?: boolean;
     /** The pane stack: order, collapse/maximize and each indicator's pane/scale. */
     panes?: PaneState[];
     /** Object Tree groups/folders, including nesting, for this chart. */
@@ -169,12 +188,12 @@ export interface CellState {
 }
 
 /** One persisted manifest-instance entry (see `CellState.indicators`). */
-export type PersistedManifestEntry = string | { name: string; inputs?: Record<string, unknown>; props?: Record<string, unknown>; hidden?: boolean };
+export type PersistedManifestEntry = string | { name: string; inputs?: Record<string, unknown>; props?: Record<string, unknown>; hidden?: boolean; source?: string; language?: string };
 
 /** One persisted native-indicator entry (see `CellState.indicators`). The bare TYPE is
  *  the historical shape and still the common case; the object form carries the input
  *  DELTAS and/or the hidden flag so native settings and visibility survive a reload. */
-export type PersistedNativeEntry = string | { type: string; inputs?: Record<string, unknown>; hidden?: boolean };
+export type PersistedNativeEntry = string | { type: string; inputs?: Record<string, unknown>; props?: Record<string, unknown>; hidden?: boolean };
 
 /** One entry of the document's `charts` array: a chart's state plus its cell IDENTITY. */
 export interface ChartState extends CellState {
@@ -199,12 +218,14 @@ export interface ChartTemplate {
     /** The indicator ledger: type id + inputs (+ hidden flag), exactly what a cell
      *  persists, so an apply is a restore of the same shape. */
     indicators: PersistedNativeEntry[];
+    /** Source-backed studies alongside native studies. Drawings are never included. */
+    scripts?: Array<{ name: string; source: string; inputs?: Record<string, unknown>; props?: Record<string, unknown>; hidden?: boolean; language?: string }>;
     /** Optional link to the market it was captured on (`includeMarket` when saving). */
     symbol?: string;
     timeframe?: string;
 }
 
-/** One armed price alert, as the document stores it (no ids that belong to a live session). */
+/** One armed price alert, as the document stores it (no alert IDs from a live session). */
 export interface SavedPriceAlert {
     cellId: string;
     symbol: string;
@@ -215,6 +236,9 @@ export interface SavedPriceAlert {
     state: 'active' | 'fired' | 'paused';
     createdAt: number;
     fires: number;
+    /** Persisted drawing ID and ownership of a price-level line (not the runtime alert ID). */
+    lineId?: string;
+    lineOwned?: boolean;
     /** The drawing the alert follows, when it was armed from a drawing's clock button. */
     source?: { drawingId: string };
 }
@@ -327,7 +351,7 @@ export interface WorkspaceState {
         defaultTemplate?: string;
         /** APPEARANCE template charts that are NEW open with (chart settings → Templates). */
         defaultAppearance?: string;
-        /** Whether the compact Manage layouts panel currently exposes a sharing link. */
+        /** Whether the compact Manage layouts menu currently exposes a sharing link. */
         sharing?: boolean;
     };
     /**
@@ -345,6 +369,13 @@ export interface WorkspaceState {
     drawingSyncDefault?: DrawingSyncMode;
     /** Source drawing → target cell → the clone's generated id (ids are regenerated on insert). */
     drawingSyncClones?: Record<string, Record<string, string>>;
+    /** Independent, bidirectional indicator-settings links within this layout. */
+    indicatorSyncLinks?: Array<{
+        mode: 'layout' | 'charts';
+        members: Array<{ cellId: string; key: string; ordinal: number }>;
+        /** Latest edit, including while all other linked charts are pooled. */
+        values?: { inputs: Record<string, number | string | boolean>; props: Record<string, number | string | boolean> };
+    }>;
     /**
      * INDICATOR defaults, by indicator type id — what "Save as default" in the indicator
      * settings dialog writes and every new instance of that type opens with.
@@ -510,6 +541,7 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
                 state: a.state === 'fired' || a.state === 'paused' ? a.state : 'active',
                 createdAt: typeof a.createdAt === 'number' ? a.createdAt : 0,
                 fires: typeof a.fires === 'number' && a.fires >= 0 ? Math.floor(a.fires) : 0,
+                ...(typeof a.lineId === 'string' && a.lineId.length > 0 ? { lineId: a.lineId, lineOwned: a.lineOwned === true } : {}),
                 // A drawing-backed alert keeps its binding only when the id survived the
                 // round-trip; an unknown shape simply restores as a plain level alert.
                 source:
@@ -565,6 +597,29 @@ export function sanitizeState(doc: unknown): WorkspaceState | null {
     if (d.drawingSyncDefault === 'none' || d.drawingSyncDefault === 'layout' || d.drawingSyncDefault === 'global') out.drawingSyncDefault = d.drawingSyncDefault;
     const clones = sanitizeDrawingSyncClones(d.drawingSyncClones);
     if (clones) out.drawingSyncClones = clones;
+    if (Array.isArray(d.indicatorSyncLinks)) {
+        const links: NonNullable<WorkspaceState['indicatorSyncLinks']> = [];
+        for (const raw of d.indicatorSyncLinks) {
+            if (!raw || typeof raw !== 'object') continue;
+            const link = raw as Record<string, unknown>;
+            if ((link.mode !== 'layout' && link.mode !== 'charts') || !Array.isArray(link.members)) continue;
+            const members = link.members.flatMap((v): Array<{ cellId: string; key: string; ordinal: number }> => {
+                if (!v || typeof v !== 'object') return [];
+                const m = v as Record<string, unknown>;
+                return typeof m.cellId === 'string' && typeof m.key === 'string' && typeof m.ordinal === 'number' && Number.isInteger(m.ordinal) && m.ordinal >= 0 ? [{ cellId: m.cellId, key: m.key, ordinal: m.ordinal }] : [];
+            });
+            const primitiveBag = (v: unknown): Record<string, number | string | boolean> => {
+                if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+                return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, value]) =>
+                    typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)),
+                )) as Record<string, number | string | boolean>;
+            };
+            const rawValues = link.values && typeof link.values === 'object' && !Array.isArray(link.values) ? link.values as Record<string, unknown> : undefined;
+            const values = rawValues ? { inputs: primitiveBag(rawValues.inputs), props: primitiveBag(rawValues.props) } : undefined;
+            if (members.length > 0) links.push({ mode: link.mode, members, ...(values ? { values } : {}) });
+        }
+        if (links.length > 0) out.indicatorSyncLinks = links;
+    }
     const appearance = sanitizeAppearanceTemplates(d.appearanceTemplates);
     if (appearance) out.appearanceTemplates = appearance;
     const indicatorDefaults = sanitizeIndicatorDefaults(d.indicatorDefaults);
@@ -824,6 +879,17 @@ function sanitizeTemplates(raw: unknown): Record<string, ChartTemplate> | null {
             }
         }
         const template: ChartTemplate = { version: 1, indicators };
+        if (Array.isArray(t.scripts)) {
+            const scripts = t.scripts.flatMap((v): NonNullable<ChartTemplate['scripts']> => {
+                if (!v || typeof v !== 'object' || Array.isArray(v)) return [];
+                const e = v as Record<string, unknown>;
+                if (typeof e.name !== 'string' || typeof e.source !== 'string' || !e.source) return [];
+                const inputs = e.inputs && typeof e.inputs === 'object' && !Array.isArray(e.inputs) ? e.inputs as Record<string, unknown> : undefined;
+                const props = e.props && typeof e.props === 'object' && !Array.isArray(e.props) ? e.props as Record<string, unknown> : undefined;
+                return [{ name: e.name, source: e.source, ...(inputs ? { inputs } : {}), ...(props ? { props } : {}), ...(e.hidden === true ? { hidden: true } : {}), ...(typeof e.language === 'string' ? { language: e.language } : {}) }];
+            });
+            if (scripts.length > 0) template.scripts = scripts;
+        }
         if (typeof t.symbol === 'string' && t.symbol) template.symbol = t.symbol;
         if (typeof t.timeframe === 'string' && t.timeframe) template.timeframe = t.timeframe;
         out[key] = template;
@@ -885,6 +951,7 @@ function sanitizeCell(raw: unknown): CellState | null {
     if (typeof c.replayWatermark === 'boolean') out.replayWatermark = c.replayWatermark;
     if (typeof c.indicatorTitles === 'boolean') out.indicatorTitles = c.indicatorTitles;
     if (typeof c.indicatorValues === 'boolean') out.indicatorValues = c.indicatorValues;
+    if (c.compareAutoPercent === true) out.compareAutoPercent = true;
     if (c.rendererConfig != null && typeof c.rendererConfig === 'object') out.rendererConfig = c.rendererConfig;
     if (c.drawings != null && typeof c.drawings === 'object') out.drawings = c.drawings;
     if (c.runtime != null && typeof c.runtime === 'object' && !Array.isArray(c.runtime)) {
@@ -927,7 +994,13 @@ function sanitizeCell(raw: unknown): CellState | null {
             const g = raw as Record<string, unknown>;
             if (typeof g.id !== 'string' || typeof g.name !== 'string' || !Array.isArray(g.ids)) continue;
             const ids = (g.ids as unknown[]).filter((x): x is string => typeof x === 'string');
-            groups.push({ id: g.id, name: g.name, ids, ...(typeof g.parent === 'string' ? { parent: g.parent } : {}) });
+            const indicators = Array.isArray(g.indicators) ? g.indicators.filter((x): x is string => typeof x === 'string') : [];
+            const indicatorRefs = Array.isArray(g.indicatorRefs) ? g.indicatorRefs.flatMap((v): Array<{ id: string; key: string; ordinal: number }> => {
+                if (!v || typeof v !== 'object') return [];
+                const r = v as Record<string, unknown>;
+                return typeof r.id === 'string' && typeof r.key === 'string' && typeof r.ordinal === 'number' && Number.isInteger(r.ordinal) && r.ordinal >= 0 ? [{ id: r.id, key: r.key, ordinal: r.ordinal }] : [];
+            }) : [];
+            groups.push({ id: g.id, name: g.name, ids, ...(indicators.length > 0 ? { indicators } : {}), ...(indicatorRefs.length > 0 ? { indicatorRefs } : {}), ...(typeof g.parent === 'string' ? { parent: g.parent } : {}) });
         }
         out.objectTreeGroups = groups;
     }
@@ -940,11 +1013,13 @@ function sanitizeCell(raw: unknown): CellState | null {
             ? ind.manifest.flatMap((n): PersistedManifestEntry[] => {
                   if (typeof n === 'string') return [n];
                   if (n != null && typeof n === 'object' && typeof (n as { name?: unknown }).name === 'string') {
-                      const e = n as { name: string; inputs?: unknown; props?: unknown; hidden?: unknown };
+                      const e = n as { name: string; inputs?: unknown; props?: unknown; hidden?: unknown; source?: unknown; language?: unknown };
                       const inputs = bag(e.inputs);
                       const props = bag(e.props);
                       const hidden = e.hidden === true;
-                      return [inputs || props || hidden ? { name: e.name, ...(inputs ? { inputs } : {}), ...(props ? { props } : {}), ...(hidden ? { hidden } : {}) } : e.name];
+                      const source = typeof e.source === 'string' && e.source ? e.source : undefined;
+                      const language = typeof e.language === 'string' ? e.language : undefined;
+                      return [inputs || props || hidden || source ? { name: e.name, ...(inputs ? { inputs } : {}), ...(props ? { props } : {}), ...(hidden ? { hidden } : {}), ...(source ? { source } : {}), ...(language ? { language } : {}) } : e.name];
                   }
                   return [];
               })
@@ -955,10 +1030,11 @@ function sanitizeCell(raw: unknown): CellState | null {
             ? ind.natives.flatMap((n): PersistedNativeEntry[] => {
                   if (typeof n === 'string') return [n];
                   if (n != null && typeof n === 'object' && typeof (n as { type?: unknown }).type === 'string') {
-                      const e = n as { type: string; inputs?: unknown; hidden?: unknown };
+                      const e = n as { type: string; inputs?: unknown; props?: unknown; hidden?: unknown };
                       const inputs = bag(e.inputs);
+                      const props = bag(e.props);
                       const hidden = e.hidden === true;
-                      return [inputs || hidden ? { type: e.type, ...(inputs ? { inputs } : {}), ...(hidden ? { hidden } : {}) } : e.type];
+                      return [inputs || props || hidden ? { type: e.type, ...(inputs ? { inputs } : {}), ...(props ? { props } : {}), ...(hidden ? { hidden } : {}) } : e.type];
                   }
                   return [];
               })
@@ -1017,6 +1093,21 @@ function sanitizePanels(raw: unknown): PanelsState | null {
         const pinned = p.pinned.filter((id): id is string => typeof id === 'string' && id !== '');
         if (pinned.length > 0) out.pinned = [...new Set(pinned)];
     }
+    for (const key of ['floating', 'floatingOpen'] as const) {
+        if (!Array.isArray(p[key])) continue;
+        const ids = (p[key] as unknown[]).filter((id): id is string => typeof id === 'string' && id !== '');
+        if (ids.length) out[key] = [...new Set(ids)];
+    }
+    if (p.floatPositions != null && typeof p.floatPositions === 'object' && !Array.isArray(p.floatPositions)) {
+        const positions: Record<string, FloatingPanelPosition> = {};
+        for (const [id, value] of Object.entries(p.floatPositions as Record<string, unknown>)) {
+            if (!id || id === '__proto__' || !value || typeof value !== 'object' || Array.isArray(value)) continue;
+            const { x, y } = value as Record<string, unknown>;
+            if (typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= 1
+                && typeof y === 'number' && Number.isFinite(y) && y >= 0 && y <= 1) positions[id] = { x, y };
+        }
+        if (Object.keys(positions).length) out.floatPositions = positions;
+    }
     if (p.tops != null && typeof p.tops === 'object') {
         const tops: Record<string, number> = {};
         for (const [id, value] of Object.entries(p.tops as Record<string, unknown>)) {
@@ -1024,7 +1115,17 @@ function sanitizePanels(raw: unknown): PanelsState | null {
         }
         if (Object.keys(tops).length > 0) out.tops = tops;
     }
-    return out.open || out.widths || out.pinned || out.tops ? out : null;
+    for (const key of ['heights', 'desktopHeights'] as const) {
+        const rawHeights = p[key];
+        if (rawHeights == null || typeof rawHeights !== 'object' || Array.isArray(rawHeights)) continue;
+        const heights: Record<string, number> = {};
+        for (const [id, value] of Object.entries(rawHeights as Record<string, unknown>)) {
+            if (id && typeof value === 'number' && Number.isFinite(value) && value >= 0.05 && value <= 1) heights[id] = value;
+        }
+        if (Object.keys(heights).length > 0) out[key] = heights;
+    }
+    return out.open || out.widths || out.pinned || out.floating || out.floatingOpen || out.floatPositions
+        || out.tops || out.heights || out.desktopHeights ? out : null;
 }
 
 function sanitizeTrackSizes(raw: unknown): Record<string, TrackSizes> | null {

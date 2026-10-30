@@ -251,8 +251,8 @@ describe('the More sheet', () => {
         const row = [...host.querySelectorAll('.vela-md-row')].find((r) => r.textContent?.startsWith('Cursor'))!;
         expect(row.textContent).toContain('Cross');
         (row as HTMLButtonElement).click();
-        const rows = [...host.querySelectorAll<HTMLElement>('.vela-md-cursorrow')];
-        expect(rows.map((r) => r.dataset.cursor)).toEqual(['cross', 'dot', 'arrow', 'demo', 'magic', 'eraser', 'none']);
+        const rows = [...host.querySelectorAll<HTMLElement>('.vela-cursor-menu .vela-choice-row')];
+        expect(rows.map((r) => r.dataset.value)).toEqual(['cross', 'dot', 'arrow', 'demo', 'magic', 'eraser', 'none']);
         expect(rows.filter((r) => r.getAttribute('aria-checked') === 'true')).toHaveLength(1);
         (rows[3] as HTMLButtonElement).click();
         expect(picked).toEqual(['demo']);

@@ -236,6 +236,36 @@ export interface DataWindowReadout {
     time: string;
     ohlc: DataWindowOHLC | null;
     groups: DataWindowGroup[];
+    /** Which bar the renderer resolved. Omitted by renderers that cannot report provenance. */
+    source?: 'latest' | 'crosshair' | 'synced';
+}
+
+/** A visible numeric indicator plot in the candle table. */
+export interface DataWindowTableColumn {
+    /** Stable within this chart, even when two studies have the same display title. */
+    id: string;
+    label: string;
+}
+
+/** One chart-visible bar and its aligned, display-formatted study values. */
+export interface DataWindowTableRow {
+    /** Bar opening time in epoch milliseconds. */
+    timestamp: number;
+    date: string;
+    time: string;
+    /** Full displayed-bar OHLC values, without chart-axis rounding. */
+    ohlc: DataWindowOHLC;
+    /** Full, unabbreviated volume; null means the feed supplied none. */
+    volume: string | null;
+    /** One value per column; null is an unavailable plot point, not zero. */
+    values: Array<string | null>;
+}
+
+/** A newest-first slice of the bars currently available to the chart. */
+export interface DataWindowTableSlice {
+    total: number;
+    columns: DataWindowTableColumn[];
+    rows: DataWindowTableRow[];
 }
 
 /** Raised by the renderer when the user edits an input in the settings dialog. */
@@ -243,8 +273,8 @@ export interface InputChangeEvent {
     indicatorId: string;
     key: string;
     value: InputValue;
-    /** What was edited: a script input (default) or a declaration prop (the "Properties" tab). */
-    kind?: 'input' | 'prop';
+    /** Script input, declaration prop, generated plot style, or interval visibility setting. */
+    kind?: 'input' | 'prop' | 'style' | 'visibility';
 }
 
 export interface VisibleRange {
@@ -294,6 +324,8 @@ export interface IChartRenderer {
      * differently sized series and would squash it into a sliver at the right edge.
      */
     setBars(bars: OHLCV[], opts?: { preserveView?: boolean; resetView?: boolean }): void;
+    /** Active chart interval (e.g. `60`, `1D`, `1W`) for interval-aware indicator visibility. */
+    setTimeframe?(timeframe: string): void;
     /** Append a new bar or replace the forming (last) bar, decided by time. */
     updateBar(bar: OHLCV): void;
 
@@ -387,6 +419,9 @@ export interface IChartRenderer {
      *  (when given) refreshes the declaration-prop values the same way. */
     setIndicatorInputs(handle: IndicatorRenderHandle, values: Record<string, InputValue>, props?: Record<string, InputValue>): void;
 
+    /** Apply a generated Style/Visibility setting without rerunning the Pine script. */
+    setIndicatorVisualSetting?(indicatorId: string, kind: 'style' | 'visibility', key: string, value: InputValue): void;
+
     /**
      * Supply a symbol picker so the settings dialog's `input.symbol` control opens the host's own
      * ticker-selection UI (the host wires this). Optional — without it, `input.symbol` is a plain
@@ -464,6 +499,9 @@ export interface IChartRenderer {
     /** The renderer tells core when the user toggles an indicator's visibility in-chart (the legend eye). */
     onToggleIndicatorVisible?(cb: (id: string, visible: boolean) => void): Unsubscribe;
     onCrosshairMove(cb: (e: CrosshairEvent) => void): Unsubscribe;
+    /** Exit a renderer's local long-press touch tracking (e.g. when its cell loses focus).
+     *  Optional for renderers without touch tracking; does not clear synced ghost markers. */
+    endTouchTracking?(): void;
     /**
      * The bar CONTAINING `time` (epoch ms), or null when the instant is outside the
      * loaded series — the synced-crosshair readout a follower's status line renders.
@@ -487,12 +525,33 @@ export interface IChartRenderer {
     setExternalCrosshair?(time: Millis | null, price?: number | null): void;
 
     /**
-     * A pre-formatted readout of the bar under the crosshair — or of the latest bar when the
-     * cursor is off the plot, so the snapshot is always useful. Pull it on crosshair movement
-     * to drive a host data-window panel. Optional: a renderer that tracks no hovered bar omits
-     * it (`RendererControl.dataWindowReadout()` then returns null).
+     * A pre-formatted readout of the local or synced crosshair bar — or the latest bar when
+     * neither is on data. Pull it on crosshair or readout-only changes to drive a Data Window.
+     * Optional: a renderer without a readout omits it (`RendererControl.dataWindowReadout()`
+     * then returns null).
      */
     getDataWindowReadout?(): DataWindowReadout;
+    /**
+     * A bounded, newest-first slice of currently displayed bars and visible numeric study
+     * plots. `offset` is measured from the latest bar; `count` is the requested row count
+     * (the native renderer caps one slice at 500). Replay must expose only revealed bars.
+     * Optional for third-party renderers.
+     */
+    getDataWindowTable?(offset: number, count: number): DataWindowTableSlice;
+    /**
+     * Reveal one currently displayed candle without changing zoom, and briefly mark its
+     * background. `newestOffset` is the row's newest-first index at the time it was
+     * painted; validate its timestamp because live bars may have arrived since then.
+     * Return false when the candle is no longer loaded. Optional for third-party renderers.
+     */
+    revealTableCandle?(timestamp: number, newestOffset: number): boolean;
+    /**
+     * The formatted readout changed without a local crosshair or chart-data event — for
+     * example a synced ghost moved, a study was value-patched, the display timezone
+     * changed, or precision resolved. Optional; it never emits a local crosshair event or
+     * propagates sync itself.
+     */
+    onDataWindowChange?(cb: () => void): Unsubscribe;
 
     getVisibleRange(): VisibleRange | null;
     setVisibleRange(range: VisibleRange): void;
@@ -559,7 +618,7 @@ export interface IChartRenderer {
      * chart-settings gear dialog). Optional — used by a host to keep its own dialogs mutually
      * exclusive with the renderer's. A no-op when nothing is open.
      */
-    closeDialogs?(): void;
+    closeDialogs?(options?: { preserveSettings?: boolean }): void;
     /**
      * Open (or toggle) the renderer's own settings dialog, when it has one. `section` names
      * the tab to land on (matched against the dialog's section titles, unknown ones ignored);

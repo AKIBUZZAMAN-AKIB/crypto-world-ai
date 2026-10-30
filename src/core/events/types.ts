@@ -24,6 +24,12 @@ export interface VelaEventMap extends Record<string, unknown> {
     prev: { symbol: string; timeframe: string };
   };
   /**
+   * An identity switch was requested, before its old bars are cleared. Fires for every
+   * switch, including one superseding an unfinished load. The request may be superseded;
+   * use `market:changed` for committed switches and `load:end` for the first paint.
+   */
+  "market:requested": { symbol: string; timeframe: string };
+  /**
    * A bar load began with nothing painted: the FIRST load (fires during construction —
    * subscribers attached later see only its `load:end`), or an identity switch
    * (symbol/provider/timeframe), which blanks the old series in the same breath. Fires

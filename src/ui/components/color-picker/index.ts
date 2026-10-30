@@ -2,6 +2,7 @@ export {
     ColorField,
     colorField,
     buildColorPicker,
+    rememberRecentColor,
     closeColorPopover,
     type ColorFieldOpts,
     type ColorCommit,

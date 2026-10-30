@@ -14,6 +14,7 @@ import { SyncMatrix } from './sync-matrix';
 import { Tooltip } from '../ui/components/tooltip';
 import { announceSurface } from '../ui/surface-events';
 import { holdForExit, type SurfaceExit } from '../ui/surface-exit';
+import { makePanelDraggable, panelResizeGrip, type PanelDrag } from '../ui/panel-drag';
 import { IMPLICIT_GROUP } from '../state/document';
 import { groupMarkColor } from '../workspace/sync-marks';
 import { iconEl } from '../ui/icons';
@@ -33,10 +34,12 @@ function relativeTime(ms: number): string {
 }
 
 const STYLE_ID = 'vela-widget-layout-picker-v16';
-// One monochrome selection language across the panel: lit cells and sync ON
-// switches both speak --vela-selected-*.
+// Lit cells and sync ON switches share the paired --vela-selected-* tokens.
 const CSS = `
-.vela-lp-layer { position: absolute; z-index: var(--vela-z-menu); }
+/* Bound the positioning layer itself, not just its scrolling child: otherwise a
+   wide internal grid expands the absolute layer and widens the whole document. */
+.vela-lp-layer { position: absolute; z-index: var(--vela-z-menu); width: min(536px, calc(100% - 16px)); max-width: calc(100% - 16px); }
+.vela-lp-layer[data-panel-resized='1'] > .vela-lp { box-sizing: border-box; height: 100%; max-height: 100%; }
 .vela-lp {
     /* Responsive by construction: the popover never grows past the window. It is a COLUMN
        because it owns the only scrollbar — the table used to scroll inside a scrolling
@@ -46,8 +49,8 @@ const CSS = `
        block — canvas + presets on the left, links over the matrix on the right. */
     display: flex;
     flex-direction: column;
-    width: min(536px, calc(100vw - 16px));
-    max-width: calc(100vw - 16px);
+    width: 100%;
+    max-width: 100%;
     max-height: calc(100vh - 16px);
     overflow: auto;
     /* The card sits on the WORKSPACE surface, not the elevated one: measured on the
@@ -77,7 +80,10 @@ const CSS = `
        the layout the narrow breakpoint already used; making it the default is what
        turns one 685x825 card into a 2-column 530x560 one. */
     display: grid;
-    grid-template-columns: 132px minmax(0, 1fr);
+    /* Do not squash controls when the viewport is narrower than the panel's natural
+       content. The compact panel remains bounded; its content scrolls horizontally. */
+    min-width: 430px;
+    grid-template-columns: 132px minmax(286px, 1fr);
     align-items: start;
     column-gap: 12px;
     row-gap: 8px;
@@ -85,12 +91,19 @@ const CSS = `
 .vela-lp-cols > .vela-lp-vsep { display: none; }
 /* R87 premium pane header for the setup-only desktop panel. */
 .vela-lp-panehead {
+    position: sticky;
+    top: -8px;
+    z-index: 3;
+    flex: none;
+    background: var(--vela-surface);
     display: flex;
     align-items: center;
     gap: 12px;
     padding: 12px 12px 10px;
     margin: -2px -2px 10px;
     border-bottom: 1px solid var(--vela-border);
+    cursor: grab;
+    touch-action: none;
 }
 .vela-lp-panemark {
     flex: none;
@@ -101,10 +114,10 @@ const CSS = `
     border-radius: 10px;
     background: color-mix(in srgb, var(--vela-accent) 15%, transparent);
     border: 1px solid color-mix(in srgb, var(--vela-accent) 45%, transparent);
-    color: var(--vela-accent);
+    color: var(--vela-accent-ink, var(--vela-accent));
 }
 .vela-lp-panemark .vela-icon { font-size: 17px; width: 17px; height: 17px; }
-.vela-lp-paneid { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vela-lp-paneid { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .vela-lp-panekicker { font-size: 9.5px; font-weight: 750; letter-spacing: 0.14em; text-transform: uppercase; color: var(--vela-fg-muted); }
 .vela-lp-panetitle { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; color: var(--vela-fg-bright); }
 .vela-lp-panehint { font-size: 11px; color: var(--vela-fg-muted); }
@@ -154,10 +167,11 @@ const CSS = `
     transition: background var(--vela-dur-fast) var(--vela-ease), border-color var(--vela-dur-fast) var(--vela-ease);
 }
 .vela-lp-sq:hover { background: var(--vela-hover-strong); border-color: var(--vela-border-strong); }
-/* Selected/previewed squares — the shared monochrome selection chip. */
+/* The squares have no text; the theme-aware accent ink keeps them distinct
+   from the unselected squares on both light and dark surfaces. */
 .vela-lp-sq[data-on='1'] {
-    background: var(--vela-selected-bg);
-    border-color: var(--vela-selected-bg);
+    background: var(--vela-accent-ink, var(--vela-accent));
+    border-color: var(--vela-accent-ink, var(--vela-accent));
 }
 .vela-lp-presets { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
 .vela-lp-preset { all: unset; padding: 4px 7px; border-radius: 5px; cursor: pointer; /* 11.5px label: muted sits at 4.50 (the AA line exactly) — this ink lands at ~5.9 with the same quiet tone. */ color: color-mix(in srgb, var(--vela-fg) 78%, transparent); font-size: 11.5px; white-space: nowrap; transition: transform 120ms var(--vela-ease); }
@@ -637,6 +651,7 @@ export function paintLayoutGrid(squares: readonly HTMLButtonElement[], shape: La
         const on = shape !== null && Number(sq.dataset.r) < shape.rows && Number(sq.dataset.c) < shape.cols;
         if (on) sq.dataset.on = '1';
         else delete sq.dataset.on;
+        sq.setAttribute('aria-pressed', String(on));
     }
 }
 
@@ -768,6 +783,7 @@ export class LayoutPicker {
     private readonly layer: HTMLElement;
     /** The picker card inside the layer — the element open/close are announced on. */
     private readonly panel: HTMLElement;
+    private readonly drag: PanelDrag;
     private readonly squares: HTMLButtonElement[] = []; // row-major, 16 entries
     /** The canvas container — the single tab stop for all sixteen squares. */
     private gridEl: HTMLElement | null = null;
@@ -802,7 +818,7 @@ export class LayoutPicker {
         // applied "Nope" instead of discarding it (measured; the field's own handler
         // never got the key because this one is on the capture path).
         const t = e.target as HTMLElement | null;
-        if (t && this.panel.contains(t) && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+        if (t && this.layer.contains(t) && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
         this.close();
     };
 
@@ -826,31 +842,29 @@ export class LayoutPicker {
         panel.addEventListener('keydown', this.onPanelKeydown);
         this.layer.appendChild(panel);
         this.panel = panel;
+        this.drag = makePanelDraggable(this.layer, {
+            handle: '.vela-lp-panehead',
+            resizeHandle: '.vela-size-grip',
+            boundary: () => opts.host.getBoundingClientRect(),
+        });
 
-        // R87 premium header — the setup-only panel had no title at all, just column
-        // captions. A titled pane (icon tile + kicker + title + subtitle) matches the
-        // phone Layout setup door and tells the trader what this surface is for.
-        if (this.opts.setupOnly) {
-            const head = doc.createElement('div');
-            head.className = 'vela-lp-panehead';
-            const mark = doc.createElement('span');
-            mark.className = 'vela-lp-panemark';
-            mark.appendChild(iconEl('layout', doc));
-            const id = doc.createElement('div');
-            id.className = 'vela-lp-paneid';
-            const kicker = doc.createElement('span');
-            kicker.className = 'vela-lp-panekicker';
-            kicker.textContent = 'Workspace';
-            const title = doc.createElement('b');
-            title.className = 'vela-lp-panetitle';
-            title.textContent = 'Layout setup';
-            const sub = doc.createElement('small');
-            sub.className = 'vela-lp-panehint';
-            sub.textContent = 'Choose a chart grid and sync settings';
-            id.append(kicker, title, sub);
-            head.append(mark, id);
-            panel.appendChild(head);
-        }
+        // Both setup-only and combined layout panels have the same compact move/resize
+        // header; the controls below remain separate and scroll independently.
+        const head = doc.createElement('div');
+        head.className = 'vela-lp-panehead';
+        head.tabIndex = 0;
+        head.setAttribute('aria-label', 'Move layout panel');
+        const mark = doc.createElement('span');
+        mark.className = 'vela-lp-panemark';
+        mark.appendChild(iconEl('layout', doc));
+        const id = doc.createElement('div');
+        id.className = 'vela-lp-paneid';
+        const title = doc.createElement('b');
+        title.className = 'vela-lp-panetitle';
+        title.textContent = this.opts.setupOnly ? 'Layout setup' : 'Layout';
+        id.append(title);
+        head.append(mark, id, panelResizeGrip(doc, 'layout panel'));
+        panel.appendChild(head);
 
         const cols = doc.createElement('div');
         cols.className = 'vela-lp-cols';
@@ -920,10 +934,6 @@ export class LayoutPicker {
         const chartsHeading = doc.createElement('div');
         chartsHeading.className = 'vela-lp-heading';
         chartsHeading.textContent = 'Chart syncing';
-        // The one line that matters: the numbers below are the numbers on the charts.
-        const chartsHint = doc.createElement('div');
-        chartsHint.className = 'vela-lp-charthint';
-        chartsHint.textContent = 'Same mark, same group · numbers match the charts';
         const chartsScroll = doc.createElement('div');
         chartsScroll.className = 'vela-lp-chartscroll';
         this.matrix = new SyncMatrix({
@@ -938,7 +948,7 @@ export class LayoutPicker {
             onChange: () => this.renderSyncs(),
         });
         chartsScroll.append(this.matrix.el);
-        chartsCol.append(chartsHeading, chartsHint, chartsScroll);
+        chartsCol.append(chartsHeading, chartsScroll);
         chartsPane.appendChild(chartsCol);
         cols.appendChild(chartsPane);
         this.matrixSec = chartsCol;
@@ -1011,6 +1021,7 @@ export class LayoutPicker {
 
     open(): void {
         if (this.isOpen) return;
+        this.drag.reset();
         this.isOpen = true;
         // Built in the constructor, mounted on the first open: the layout matrix, the sync
         // switches and the footer are a closed picker's nodes until someone looks at them.
@@ -1143,7 +1154,7 @@ export class LayoutPicker {
         this.opts.trigger.setAttribute('aria-expanded', 'false');
         // Focus was inside the panel (a keyboard user) → hand it back to the trigger
         // rather than dropping it on <body>, which loses the user's place.
-        if (this.panel.contains(this.doc.activeElement)) this.opts.trigger.focus({ preventScroll: true });
+        if (this.layer.contains(this.doc.activeElement)) this.opts.trigger.focus({ preventScroll: true });
         this.doc.removeEventListener('pointerdown', this.onDocPointerDown, true);
         this.doc.removeEventListener('keydown', this.onDocKeydown, true);
         this.opts.onOpenChange?.(false);
@@ -1161,6 +1172,7 @@ export class LayoutPicker {
     destroy(): void {
         this.close();
         this.exit?.finish();
+        this.drag.destroy();
         this.infoTip.destroy();
         this.layer.remove();
     }
@@ -1600,9 +1612,6 @@ export class LayoutPicker {
             door.dataset.action = 'manage-layouts';
             door.setAttribute('aria-label', 'Manage layouts — save, autosave, share and export');
             door.append(iconEl('layout', doc), doc.createTextNode('Manage layouts…'));
-            const hint = doc.createElement('small');
-            hint.textContent = 'Autosave · files · links';
-            door.appendChild(hint);
             door.addEventListener('click', () => this.opts.onOpenManager?.(door));
             this.footEl.appendChild(door);
         }

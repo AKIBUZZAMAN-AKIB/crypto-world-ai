@@ -74,6 +74,9 @@ function isolate(doc: Document, surface: HTMLElement | null): void {
 /** Note that `surface` opened (or closed) and re-isolate the page around the topmost one. */
 export function surfaceInert(surface: HTMLElement, open: boolean, kind: SurfaceKind): void {
     if (!MODAL.has(kind)) return;
+    // A Zag dialog can be explicitly non-modal (e.g. live chart settings). Such a
+    // floating card/pane must not inert the chart just because it has role="dialog".
+    if (open && kind === 'dialog' && surface.getAttribute('aria-modal') === 'false') return;
     const doc = surface.ownerDocument;
     const stack = stacks.get(doc) ?? [];
     const at = stack.indexOf(surface);

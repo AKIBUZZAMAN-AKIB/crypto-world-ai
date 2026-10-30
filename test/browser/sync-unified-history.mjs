@@ -31,6 +31,8 @@ const pricePoint = await page.evaluate(() => {
 });
 await page.mouse.click(pricePoint.x, pricePoint.y, { button: 'right' });
 await page.waitForTimeout(220);
+await page.locator('.vela-menu-item:visible', { hasText: /^Visual order$/ }).first().hover();
+await page.waitForTimeout(250);
 await page.locator('.vela-menu-item:visible', { hasText: /^Send to back$/ }).first().click();
 await settle();
 const candleAfter = await state(() => window.__ws.active.chart.renderer.getConfig().stacking.candles);

@@ -23,8 +23,10 @@ import {
     hasStats,
     statsEnabled,
 } from '../../../core/drawings';
+import { icon } from '../../../core/icons';
 import { applyChromeTokens } from '../../shared/theme-tokens';
 import { Dialog } from '../../../ui/components/dialog';
+import { makePanelDraggable, panelResizeGrip, type PanelDrag } from '../../../ui/panel-drag';
 import { Popover, closeOpenPopovers } from '../../../ui/components/popover';
 import { buildFieldControl, fieldGrid } from '../../../ui/components/field';
 import { TextArea } from '../../../ui/components/text-area';
@@ -61,7 +63,7 @@ type ShowMode = 'all' | 'intraday' | 'higher' | 'custom';
 const openFolds = new Map<string, Set<string>>();
 
 const STYLE_ID = 'vela-dsp-styles';
-const STYLE_REV = '1';
+const STYLE_REV = '3';
 
 const CHEVRON = '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 2.5 3.5 3.5-3.5 3.5"/></svg>';
 const CHEVRON_DOWN = '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m2.5 4.5 3.5 3.5 3.5-3.5"/></svg>';
@@ -85,12 +87,33 @@ function ensureStyles(): void {
     s.dataset.rev = STYLE_REV;
     s.textContent = `
 .vela-dsp-pass { pointer-events: none !important; }
-.vela-dialog.vela-dsp { pointer-events: auto; width: 360px; min-width: 0; max-width: calc(100% - 24px); max-height: calc(100% - 24px); font-size: 13px; }
+/* The phone version follows the standard bottom-pane anatomy: separate resize grip,
+   compact title row, maximize/restore, Close, then independently scrollable content. */
+.vela-dialog-positioner.vela-dsp-mobile { position:absolute;display:flex;align-items:flex-end;justify-content:center;inset:0;padding:0;pointer-events:none; }
+.vela-dialog-backdrop.vela-dsp-mobile { position:absolute;inset:0;pointer-events:none; }
+.vela-dialog.vela-dsp-mobile { box-sizing:border-box;width:100%;min-width:0;max-width:100%;max-height:100%;border-radius:0;pointer-events:auto; }
+.vela-dsp-mobile .vela-dsp-pane-grip { width:100%;height:24px;flex:0 0 24px;align-self:stretch;border-radius:0; }
+.vela-dsp-mobile .vela-dsp-pane-grip::before { width:32px; }
+.vela-dsp-mobile .vela-dialog-header { min-height:45px;padding:0 6px;gap:2px;cursor:default;touch-action:auto; }
+.vela-dsp-mobile .vela-dialog-titlewrap { flex:1 1 0;min-width:0; }
+.vela-dsp-mobile .vela-dialog-title { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.vela-dsp-mobile .vela-dialog-close,.vela-dsp-mobile .vela-dialog-max { box-sizing:border-box;flex:none;width:44px;height:44px;border-radius:0; }
+.vela-dsp-mobile .vela-dialog-max { display:inline-flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--vela-fg-muted);cursor:pointer; }
+.vela-dsp-mobile .vela-dialog-max:hover,.vela-dsp-mobile .vela-dialog-max:focus-visible { background:var(--vela-hover);color:var(--vela-fg-bright); }
+.vela-dsp-mobile .vela-dialog-max:focus-visible { outline:2px solid var(--vela-fg-bright);outline-offset:-2px; }
+.vela-dialog.vela-dsp-mobile[data-maximized] { height:100% !important;max-height:100% !important; }
+.vela-dialog.vela-dsp-mobile[data-maximized] .vela-dsp-pane-grip { display:none; }
+.vela-dsp-mobile .vela-dialog-body { min-width:0;min-height:0;padding:0; }
+.vela-dsp-mobile .vela-dialog-footer { padding-bottom:calc(8px + env(safe-area-inset-bottom, 0px)); }
+/* Desktop retains the floating chart-settings card and its direct two-axis resize button. */
+html.vela-premium .vela-dialog.vela-dsp, .vela-dialog.vela-dsp { pointer-events: auto; border-radius: 0; width: 360px; min-width: 0; max-width: calc(100% - 24px); max-height: calc(100% - 24px); font-size: 13px; }
 .vela-dsp .vela-dialog-header { padding: 8px 8px 8px 16px; gap: 6px; }
 .vela-dsp .vela-dialog-title { font-size: 15px; line-height: 22px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vela-dsp .vela-dialog-footer { padding: 10px 12px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--vela-border); }
 .vela-dsp .vela-dialog-btn { height: 30px; font-size: 13px; }
-.vela-dsp-scroll { overflow-y: auto; overflow-x: hidden; flex: 1 1 auto; min-height: 0; }
+.vela-dsp-toolbar { display:flex;align-items:center;min-height:40px;padding:6px 12px;border-bottom:1px solid var(--vela-border);box-sizing:border-box; }
+.vela-dsp-toolbar .vela-dsp-style { max-width:min(240px,100%); }
+.vela-dsp-scroll { overflow: auto; overflow-x: auto; flex: 1 1 auto; min-width:0; min-height:0; max-width:100%; overscroll-behavior:contain; touch-action:pan-x pan-y; }
 .vela-dsp-block { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
 .vela-dsp-block + .vela-dsp-block, .vela-dsp-fold { border-top: 1px solid var(--vela-border); }
 .vela-dsp-h { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--vela-fg-muted); }
@@ -184,6 +207,9 @@ interface Build {
 export class DrawingSettingsPanel {
     private ui: Dialog | null = null;
     private menu: Popover | null = null;
+    private viewportOff: (() => void) | null = null;
+    private panelDrag: PanelDrag | null = null;
+    private mobilePaneHeight = 0.68;
     private refresh: (() => void) | null = null;
     private theme: VelaTheme;
 
@@ -222,6 +248,9 @@ export class DrawingSettingsPanel {
 
         const scroll = document.createElement('div');
         scroll.className = 'vela-dsp-scroll';
+        scroll.tabIndex = 0;
+        scroll.setAttribute('role', 'region');
+        scroll.setAttribute('aria-label', 'Drawing settings content');
         let watchers: Array<() => void> = [];
         const runWatchers = (): void => {
             for (const fn of watchers) fn();
@@ -251,15 +280,26 @@ export class DrawingSettingsPanel {
             actions.restore?.(snapshot);
             this.close();
         };
+        // A selected drawing opens a resizeable floating properties card on desktop.
+        // Portrait phones use the same bottom-pane anatomy as Data Window instead: fixed
+        // to the visible screen, with a separate grip and maximize/restore, never dragged
+        // offscreen by its header.
+        const mobileRoot = this.host.closest<HTMLElement>('[data-layout="mobile"]');
+        const mobile = !!mobileRoot;
+        const floatHost = mobile ? mobileRoot! : this.floatHost();
         const ui = new Dialog({
-            host: this.host,
+            host: floatHost,
             title: meta?.label ?? 'Settings',
             modal: false,
-            contained: true,
+            contained: mobile,
             align: 'center',
-            draggable: true,
+            draggable: !mobile,
+            resizable: false,
+            cornerResizable: !mobile,
+            keepWithinBounds: !mobile,
+            revealFocus: true,
             flush: true,
-            className: 'vela-dsp',
+            className: mobile ? 'vela-dsp vela-dsp-mobile' : 'vela-dsp',
             closeOnEscape: false,
             footer: (foot) => foot.append(button('Cancel', false, cancel), button('Ok', true, () => this.close())),
             onOpenChange: (open) => {
@@ -267,17 +307,41 @@ export class DrawingSettingsPanel {
             },
         });
         applyChromeTokens(ui.panel, this.theme);
-        ui.backdrop.classList.add('vela-dsp-pass');
-        ui.positioner.classList.add('vela-dsp-pass');
-        // Open on the side of the chart away from the drawing, so the drawing stays in view.
-        const hostW = this.host.clientWidth;
-        const leftHalf = anchor != null && hostW > 0 && anchor.x + anchor.w / 2 < hostW / 2;
-        ui.positioner.style.justifyContent = leftHalf ? 'flex-end' : 'flex-start';
-        ui.positioner.style.padding = '0 12px';
+        ui.backdrop.classList.add('vela-dsp-pass', 'vela-dsp-viewport');
+        ui.positioner.classList.add('vela-dsp-pass', 'vela-dsp-viewport');
+        if (mobile) {
+            ui.positioner.classList.add('vela-dsp-mobile');
+            ui.backdrop.classList.add('vela-dsp-mobile');
+            const grip = panelResizeGrip(ui.panel.ownerDocument, 'drawing settings');
+            grip.classList.add('vela-dsp-pane-grip');
+            const header = ui.panel.querySelector<HTMLElement>('.vela-dialog-header');
+            header?.before(grip);
+            const max = ui.panel.ownerDocument.createElement('button');
+            max.type = 'button';
+            max.className = 'vela-dialog-max';
+            max.setAttribute('aria-label', 'Maximize');
+            max.setAttribute('aria-pressed', 'false');
+            max.title = 'Maximize';
+            max.innerHTML = icon('maximize');
+            ui.panel.querySelector('.vela-dialog-close')?.before(max);
+            ui.panel.style.height = `${Math.round(this.mobilePaneHeight * 100)}%`;
+            max.addEventListener('click', () => {
+                const expanded = !ui.panel.hasAttribute('data-maximized');
+                ui.panel.toggleAttribute('data-maximized', expanded);
+                max.setAttribute('aria-pressed', String(expanded));
+                max.setAttribute('aria-label', expanded ? 'Restore' : 'Maximize');
+                max.title = expanded ? 'Restore' : 'Maximize';
+                max.innerHTML = icon(expanded ? 'restore' : 'maximize');
+                ui.panel.style.height = expanded ? '100%' : `${Math.round(this.mobilePaneHeight * 100)}%`;
+                this.panelDrag?.reflow();
+            });
+        }
 
         const styleBtn = this.styleMenuButton(build);
-        ui.titleEl.after(styleBtn.el);
-        ui.body.appendChild(scroll);
+        const toolbar = ui.panel.ownerDocument.createElement('div');
+        toolbar.className = 'vela-dsp-toolbar';
+        toolbar.appendChild(styleBtn.el);
+        ui.body.append(toolbar, scroll);
         ui.panel.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -296,9 +360,61 @@ export class DrawingSettingsPanel {
         };
         build.rebuild();
         ui.show();
+        // Keep the entire card inside the usable viewport. Phone panes follow VisualViewport
+        // changes (keyboard, pinch zoom, rotation) and retain their chosen relative height.
+        const win = this.host.ownerDocument.defaultView;
+        const viewport = win?.visualViewport;
+        const fitViewport = (): void => {
+            if (this.ui !== ui || !win) return;
+            const left = viewport?.offsetLeft ?? 0, top = viewport?.offsetTop ?? 0;
+            const width = viewport?.width || win.innerWidth, height = viewport?.height || win.innerHeight;
+            if (mobile) {
+                const root = floatHost.getBoundingClientRect();
+                const visibleLeft = Math.max(root.left, left), visibleTop = Math.max(root.top, top);
+                const visibleRight = Math.min(root.right, left + width), visibleBottom = Math.min(root.bottom, top + height);
+                const paneWidth = Math.max(1, visibleRight - visibleLeft), paneHeight = Math.max(1, visibleBottom - visibleTop);
+                ui.positioner.style.left = `${Math.round(visibleLeft - root.left)}px`;
+                ui.positioner.style.right = `${Math.max(0, Math.round(root.right - visibleRight))}px`;
+                ui.positioner.style.top = `${Math.round(visibleTop - root.top)}px`;
+                ui.positioner.style.bottom = `${Math.max(0, Math.round(root.bottom - visibleBottom))}px`;
+                ui.panel.style.maxWidth = `${Math.floor(paneWidth)}px`;
+                ui.panel.style.maxHeight = `${Math.floor(paneHeight)}px`;
+                if (ui.panel.hasAttribute('data-maximized')) ui.panel.style.height = '100%';
+                else ui.panel.style.height = `${Math.max(1, Math.round(paneHeight * this.mobilePaneHeight))}px`;
+                this.panelDrag?.reflow();
+            } else {
+                ui.panel.style.maxWidth = `${Math.max(1, Math.floor(width - 8))}px`;
+                ui.panel.style.maxHeight = `${Math.max(1, Math.floor(height - 8))}px`;
+                ui.reflow();
+            }
+        };
+        if (mobile) {
+            this.panelDrag = makePanelDraggable(ui.panel, {
+                handle: '.vela-dialog-header', allowMove: false,
+                resizeHandle: '.vela-dsp-pane-grip', anchoredBottom: true, minHeight: 180,
+                boundary: () => ui.positioner.getBoundingClientRect(),
+                onResize: (height) => {
+                    const available = ui.positioner.getBoundingClientRect().height;
+                    if (available > 0 && !ui.panel.hasAttribute('data-maximized')) this.mobilePaneHeight = Math.max(0.25, Math.min(1, height / available));
+                },
+            });
+        }
+        win?.addEventListener('resize', fitViewport);
+        viewport?.addEventListener('resize', fitViewport);
+        viewport?.addEventListener('scroll', fitViewport);
+        this.viewportOff = () => {
+            win?.removeEventListener('resize', fitViewport);
+            viewport?.removeEventListener('resize', fitViewport);
+            viewport?.removeEventListener('scroll', fitViewport);
+        };
+        fitViewport();
     }
 
     close(): void {
+        this.viewportOff?.();
+        this.viewportOff = null;
+        this.panelDrag?.destroy();
+        this.panelDrag = null;
         this.menu?.hide();
         this.menu = null;
         this.refresh = null;
@@ -824,7 +940,7 @@ export class DrawingSettingsPanel {
 
     // ── the style menu ──
 
-    /** The header's style menu: the tool's ready-made and saved looks (hover to preview, click
+    /** The settings toolbar's template menu: ready-made and saved looks (hover to preview, click
      *  to apply), saving the current look, and going back to the tool's defaults. */
     private styleMenuButton(b: Build): { el: HTMLElement; refresh(): void } {
         const btn = document.createElement('button');
@@ -859,17 +975,23 @@ export class DrawingSettingsPanel {
         return { el: btn, refresh };
     }
 
+    private floatHost(): HTMLElement {
+        return this.host.closest<HTMLElement>('.vela-workspace') ?? this.host.closest<HTMLElement>('.vela-ui') ?? this.host.ownerDocument.body;
+    }
+
     private openStyleMenu(anchor: HTMLElement, b: Build, all: () => DrawingToolTemplate[], refresh: () => void): void {
         closeOpenPopovers();
         const t = this.theme;
         const pop = new Popover({
             trigger: anchor,
-            host: this.host,
+            host: this.floatHost(),
             theme: t,
-            position: 'absolute',
-            boundary: this.host,
+            position: 'fixed',
+            boundary: 'viewport',
             boundaryInset: 4,
-            viewportInset: 0,
+            viewportInset: 6,
+            fitWithinBoundary: true,
+            restoreFocusOnEscape: true,
             gap: 6,
             align: 'end',
             zIndex: 6000,

@@ -111,6 +111,9 @@ export type {
     DataWindowGroup,
     DataWindowRow,
     DataWindowOHLC,
+    DataWindowTableColumn,
+    DataWindowTableRow,
+    DataWindowTableSlice,
 } from './core/ports/IChartRenderer';
 export type {
     ScriptingEngine,

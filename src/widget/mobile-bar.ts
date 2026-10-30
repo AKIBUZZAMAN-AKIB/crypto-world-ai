@@ -172,7 +172,7 @@ const CSS = `
 }
 @media (prefers-reduced-motion: reduce) { .vela-mb-item { transition: none; } }
 .vela-mb-item[hidden] { display: none !important; }
-.vela-mb-item:active { background: var(--vela-hover); }
+.vela-mb-item:active, .vela-mb-alerts[aria-pressed='true'] { background: var(--vela-hover); }
 .vela-mb-item:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: -2px; }
 /* A history stop with nothing to undo/redo: dimmed and inert, never hidden — the pair
  * must keep its place so the scrolling band never reflows under a thumb. */
@@ -195,12 +195,12 @@ const CSS = `
 /* Every stop that opens a surface washes the same way while it is open — one open-state
    language across the bar, not a special case for the chart-type stop. */
 .vela-mb-item[aria-expanded='true'] { background: var(--vela-hover); color: var(--vela-fg-bright); }
-.vela-mb-item[aria-pressed='true'] { background: var(--vela-hover); color: var(--vela-accent); }
+.vela-mb-item[aria-pressed='true'] { background: var(--vela-hover); color: var(--vela-accent-ink, var(--vela-accent)); }
 /* The drawings stop mirrors the armed tool: accent ink + a lit chip while a tool (or the
    eraser) is armed, the plain pencil when nothing is. */
 .vela-mb-drawings .vela-mb-glyph { display: inline-flex; width: 18px; height: 18px; }
 .vela-mb-drawings .vela-mb-glyph svg { width: 18px; height: 18px; }
-.vela-mb-drawings.vela-mb-armed { color: var(--vela-accent); background: var(--vela-hover); }
+.vela-mb-drawings.vela-mb-armed { color: var(--vela-accent-ink, var(--vela-accent)); background: var(--vela-hover); }
 
 /* The More stop's badge: how many charts a smaller layout set aside. A count the trader
    cannot get to otherwise, on the door that opens them (More → Hidden charts). */
@@ -214,7 +214,7 @@ const CSS = `
     box-sizing: border-box;
     border-radius: 7px;
     background: var(--vela-accent);
-    color: #fff;
+    color: var(--vela-fg-on-fill);
     font-size: 9.5px;
     font-weight: 700;
     line-height: 14px;
@@ -239,6 +239,8 @@ export interface MobileBarOptions {
     /** Watchlist-style wheel/drag: +1 = next symbol, -1 = previous. No picker panel opens. */
     onSymbolStep?: (delta: number) => void;
     onTimeframeClick: () => void;
+    /** Direct Alerts pane stop, omitted when composition hides the slot. */
+    onAlertsClick?: () => void;
     /** Omitted ⇒ no indicators stop (the composition hides the 'indicators' slot, or
      *  the deprecated `indicatorPicker: false`). A slot OVERRIDE keeps the stop — the
      *  shell passes a callback routed to the override. */
@@ -301,6 +303,8 @@ export class MobileBar {
     /** The More stop's hidden-chart count (null when the shell has no count to give). */
     private readonly badgeEl: HTMLElement;
     private readonly tfEl: HTMLElement;
+    private readonly alertsEl: HTMLButtonElement | null;
+    private readonly alertsBadge: HTMLElement | null;
     /** The chart-type stop (null when the shell passes no style options). */
     private readonly styleEl: HTMLButtonElement | null;
     private readonly styleGlyph: HTMLElement | null;
@@ -352,6 +356,16 @@ export class MobileBar {
         this.tfEl.textContent = timeframeLabel(opts.timeframe);
         this.tfEl.setAttribute('aria-haspopup', 'dialog');
         this.tfEl.setAttribute('aria-expanded', 'false');
+
+        this.alertsEl = opts.onAlertsClick ? item('vela-mb-alerts', 'Alerts', opts.onAlertsClick, 'bell') : null;
+        this.alertsBadge = this.alertsEl ? doc.createElement('span') : null;
+        if (this.alertsEl && this.alertsBadge) {
+            this.alertsEl.setAttribute('aria-pressed', 'false');
+            this.alertsBadge.className = 'vela-mb-badge';
+            this.alertsBadge.hidden = true;
+            this.alertsBadge.setAttribute('aria-hidden', 'true');
+            this.alertsEl.appendChild(this.alertsBadge);
+        }
 
         // ── chart type (the slot the layout count used to hold) ──
         if (opts.styleOptions) {
@@ -440,6 +454,7 @@ export class MobileBar {
         this.scroller = doc.createElement('div');
         this.scroller.className = 'vela-mb-scroll';
         this.scroller.append(
+            ...(this.alertsEl ? [this.alertsEl] : []),
             this.tfEl,
             ...(this.styleEl ? [this.styleEl] : []),
             // Undo / redo sit in the HEAD of the band, one stop off the chart type: the
@@ -488,8 +503,14 @@ export class MobileBar {
     private readonly onFocusIn = (ev: FocusEvent): void => {
         const el = ev.target as HTMLElement | null;
         if (!el || el === this.scroller || !this.scroller.contains(el)) return;
-        el.scrollIntoView?.({ inline: 'center', block: 'nearest' });
-        this.syncEdges();
+        // Touch focus is dispatched between pointer-up and click. Moving the strip
+        // synchronously then shifts the button out from under the finger, so the first
+        // tap is lost on narrow phones. Reveal it only after that click has dispatched.
+        setTimeout(() => {
+            if (!el.isConnected || el.ownerDocument.activeElement !== el) return;
+            el.scrollIntoView?.({ inline: 'center', block: 'nearest' });
+            this.syncEdges();
+        }, 0);
     };
 
     /**
@@ -582,6 +603,14 @@ export class MobileBar {
         more.title = label;
     }
 
+    /** Mirror the single Alerts pane and the number of retained log entries. */
+    setAlertsActive(open: boolean): void { this.alertsEl?.setAttribute('aria-pressed', String(open)); }
+    setAlertCount(count: number): void {
+        if (!this.alertsBadge) return;
+        this.alertsBadge.hidden = count <= 0;
+        this.alertsBadge.textContent = count > 9 ? '9+' : String(count);
+    }
+
     setTimeframe(tf: string): void {
         this.tfEl.textContent = timeframeLabel(tf);
     }
@@ -622,6 +651,15 @@ export class MobileBar {
         else el.setAttribute('aria-expanded', open ? 'true' : 'false');
         if (open) el.dataset.open = '1';
         else delete el.dataset.open;
+    }
+
+    /** A workspace pane is not a modal dialog; connect its existing phone-bar door. */
+    setPaneControl(stop: 'symbol' | 'indicators' | 'more', panelId: string, open: boolean): void {
+        const el = this.el.querySelector<HTMLElement>(`.vela-mb-${stop}`);
+        if (!el) return;
+        el.removeAttribute('aria-haspopup');
+        el.setAttribute('aria-controls', panelId);
+        this.setExpanded(stop, open);
     }
 
     openSheet(): void {

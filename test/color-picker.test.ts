@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { VelaTheme } from '../src/core/options';
-import { splitColor, combineColor, buildColorPicker } from '../src/ui/components/color-picker';
+import { splitColor, combineColor, buildColorPicker, rememberRecentColor } from '../src/ui/components/color-picker';
 
 // A minimal element stub (this suite runs in the node env — no jsdom). It models just
 // enough of the tree for `buildColorPicker`: parent links so `isConnected` can be
@@ -12,12 +12,16 @@ interface FakeEl {
     textContent: string;
     style: { cssText: string } & Record<string, string>;
     dataset: Record<string, string>;
+    attributes: Record<string, string>;
+    setAttribute: (name: string, value: string) => void;
+    getAttribute: (name: string) => string | null;
     children: FakeEl[];
     parentNode: FakeEl | null;
     attached: boolean;
     readonly isConnected: boolean;
     addEventListener: (t: string, fn: (e: unknown) => void) => void;
     dispatchEvent: (e: { type: string; stopPropagation?: () => void }) => boolean;
+    focus: (options?: { preventScroll?: boolean }) => void;
     appendChild: (c: FakeEl) => FakeEl;
     append: (...cs: FakeEl[]) => void;
     replaceChildren: (...cs: FakeEl[]) => void;
@@ -32,6 +36,9 @@ function fakeEl(tag: string): FakeEl {
         textContent: '',
         style: { cssText: '' },
         dataset: {},
+        attributes: {},
+        setAttribute: (name, value) => { el.attributes[name] = value; },
+        getAttribute: (name) => el.attributes[name] ?? null,
         children: [],
         parentNode: null,
         attached: false,
@@ -42,6 +49,7 @@ function fakeEl(tag: string): FakeEl {
         },
         addEventListener: (t, fn) => { const a = listeners.get(t) ?? []; a.push(fn); listeners.set(t, a); },
         dispatchEvent: (e) => { for (const fn of listeners.get(e.type) ?? []) fn(e); return true; },
+        focus: () => { (document as unknown as { activeElement: FakeEl }).activeElement = el; },
         appendChild: (c) => { c.parentNode?.children.splice(c.parentNode.children.indexOf(c), 1); c.parentNode = el; el.children.push(c); return c; },
         append: (...cs) => { for (const c of cs) el.appendChild(c); },
         replaceChildren: (...cs) => { for (const c of el.children) c.parentNode = null; el.children = []; el.append(...cs); },
@@ -49,7 +57,7 @@ function fakeEl(tag: string): FakeEl {
     return el;
 }
 
-describe('color picker custom "+" input', () => {
+describe('color picker current-color custom input', () => {
     const theme = { textColor: '#fff', fontFamily: 'sans-serif' } as unknown as VelaTheme;
     let savedDocument: unknown;
 
@@ -67,11 +75,13 @@ describe('color picker custom "+" input', () => {
         body.attached = true;
         const root = buildColorPicker('#089981', theme, (v) => picked.push(v)) as unknown as FakeEl;
         body.appendChild(root);
-        // root → [grid, recentRow, …]; recentRow → [swatches wrapper, "+" label → [input]].
+        // root → [grid, recentRow, …]; recentRow → [swatches, current-color well].
         const recentRow = root.children[1]!;
         const recentSwatches = recentRow.children[0]!;
-        const input = recentRow.children[1]!.children[0]!;
-        expect(input.type).toBe('color');
+        const well = recentRow.children[1]!;
+        const input = well.children.find((child) => child.type === 'color')!;
+        expect(well.textContent).not.toContain('+');
+        expect(input.getAttribute('aria-label')).toBe('Custom color');
         return { input, recentSwatches, picked };
     }
 
@@ -97,6 +107,42 @@ describe('color picker custom "+" input', () => {
         expect(input.isConnected).toBe(true);
         expect(recentSwatches.children.length).toBe(recentsBefore + 1);
         expect(recentSwatches.children[0]!.style.cssText).toContain('background:#cc2222');
+    });
+
+    it('shows each palette choice in recents immediately without reopening', () => {
+        const picked: string[] = [];
+        const root = buildColorPicker('#089981', theme, (v) => picked.push(v)) as unknown as FakeEl;
+        const grid = root.children[0]!;
+        const recentSwatches = root.children[1]!.children[0]!;
+        const target = grid.children.find((sw) => sw.dataset.c === '#33adeb')!;
+        target.dispatchEvent({ type: 'click', stopPropagation: () => {} });
+        expect(picked[picked.length - 1]).toBe('#33adeb');
+        expect(recentSwatches.children[0]!.getAttribute('aria-label')).toBe('Recent color #33adeb');
+    });
+
+    it('keeps ten most recent unique choices, shared with new picker instances', () => {
+        const root = buildColorPicker('#089981', theme, () => {}) as unknown as FakeEl;
+        const palette = root.children[0]!.children.slice(0, 12);
+        for (const sw of palette) sw.dispatchEvent({ type: 'click', stopPropagation: () => {} });
+        const recentSwatches = root.children[1]!.children[0]!;
+        const expected = palette.slice(-10).reverse().map((sw) => sw.dataset.c);
+        expect(recentSwatches.children.map((sw) => sw.dataset.recentColor)).toEqual(expected);
+        // Choosing an existing recent moves it to the front rather than duplicating it.
+        const old = recentSwatches.children[4]!;
+        const chosen = old.dataset.recentColor;
+        old.focus();
+        old.dispatchEvent({ type: 'click', stopPropagation: () => {} });
+        expect(recentSwatches.children).toHaveLength(10);
+        expect(recentSwatches.children[0]!.dataset.recentColor).toBe(chosen);
+        expect((document as unknown as { activeElement: FakeEl }).activeElement).toBe(recentSwatches.children[0]);
+        const another = buildColorPicker('#ffffff', theme, () => {}) as unknown as FakeEl;
+        expect(another.children[1]!.children[0]!.children[0]!.dataset.recentColor).toBe(chosen);
+    });
+
+    it('remembers a mixed drawing color by hue even when it has alpha', () => {
+        rememberRecentColor('#34567880');
+        const root = buildColorPicker('#ffffff', theme, () => {}) as unknown as FakeEl;
+        expect(root.children[1]!.children[0]!.children[0]!.dataset.recentColor).toBe('#345678');
     });
 
     it('syncs the native input to a swatch pick so the chooser opens on the current color', () => {
@@ -127,19 +173,53 @@ describe('color picker opacity slider', () => {
     function mount(commit?: 'live' | 'release'): { track: Track; pct: FakeEl; emitted: string[] } {
         const emitted: string[] = [];
         const root = buildColorPicker('#089981', theme, (v) => emitted.push(v), commit ? { commit } : {}) as unknown as FakeEl;
-        // root → [grid, recentRow, opacity label, opacity row]; opacity row → [track, "%" box].
-        const opRow = root.children[3]!;
-        const track = opRow.children[0]! as Track;
+        // root → [grid, recentRow, opacity row]; opacity row → [label, track, "%" box].
+        const opRow = root.children[2]!;
+        const track = opRow.children[1]! as Track;
         track.captured = [];
         track.getBoundingClientRect = () => ({ left: 100, width: 200 });
         track.setPointerCapture = (id) => track.captured.push(id);
-        return { track, pct: opRow.children[1]!, emitted };
+        return { track, pct: opRow.children[2]!, emitted };
     }
     const pointer = (type: string, clientX: number): { type: string; clientX: number; pointerId: number; stopPropagation(): void } => ({
         type,
         clientX,
         pointerId: 1,
         stopPropagation: () => {},
+    });
+
+    it('can hide the opacity editor while retaining alpha on hue picks', () => {
+        const emitted: string[] = [];
+        const root = buildColorPicker('#ff000080', theme, (v) => emitted.push(v), { showOpacity: false }) as unknown as FakeEl;
+        expect(root.children).toHaveLength(2);
+        const swatch = root.children[0]!.children.find((el) => el.dataset.c === '#33adeb');
+        expect(swatch).toBeDefined();
+        swatch!.dispatchEvent({ type: 'click', stopPropagation: () => {} });
+        expect(emitted).toEqual(['#33adeb80']);
+    });
+
+    it('exposes an accessible keyboard-adjustable opacity slider', () => {
+        const { track, pct, emitted } = mount();
+        expect(track.getAttribute('role')).toBe('slider');
+        expect(track.getAttribute('aria-valuenow')).toBe('100');
+        const key = (value: string, shiftKey = false): void => {
+            track.dispatchEvent({ type: 'keydown', key: value, shiftKey, preventDefault: () => {}, stopPropagation: () => {} } as never);
+        };
+        key('Home');
+        key('ArrowRight');
+        key('ArrowUp', true);
+        expect(pct.value).toBe('11%');
+        expect(track.getAttribute('aria-valuenow')).toBe('11');
+        expect(emitted[emitted.length - 1]).toBe(combineColor('#089981', 0.11));
+        key('End');
+        expect(pct.value).toBe('100%');
+    });
+
+    it('keeps the opacity handle independent of the selected accent', () => {
+        const { track } = mount();
+        expect(track.children[1]!.style.cssText).toContain('background:var(--vela-fg-bright)');
+        expect(track.children[1]!.style.cssText).toContain('0 0 0 1px var(--vela-bg)');
+        expect(track.children[1]!.style.cssText).not.toContain('--vela-selected-bg');
     });
 
     it("defaults to 'live': every move commits, so a cheap consumer previews the drag on the chart", () => {
@@ -240,6 +320,8 @@ describe('color picker color math', () => {
         expect(a.hex6).toBe('#38c0fd');
         expect(a.alpha).toBeCloseTo(128 / 255, 3);
         expect(splitColor('#0af')).toEqual({ hex6: '#00aaff', alpha: 1 });
+        expect(splitColor('#0af8')).toEqual({ hex6: '#00aaff', alpha: 136 / 255 });
+        expect(splitColor('rgb(100% 0% 50% / 25%)')).toEqual({ hex6: '#ff0080', alpha: 0.25 });
         const r = splitColor('rgba(56, 192, 253, 0.5)');
         expect(r.hex6).toBe('#38c0fd');
         expect(r.alpha).toBeCloseTo(0.5, 3);

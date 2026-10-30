@@ -8,6 +8,7 @@ import { Drawer } from '../ui/components/drawer';
 import { injectStyles } from '../ui/styles';
 import { iconEl } from '../ui/icons';
 import { COMPARE_DISPLAY_LABELS, type CompareDisplay } from '../core/native-indicators/compare';
+import type { WorkspaceToolPanel } from './workspace-tool-panel';
 
 const STYLE_ID = 'vela-widget-compare-sheet';
 const CSS = `
@@ -28,6 +29,7 @@ const CSS = `
     -webkit-tap-highlight-color: transparent;
 }
 .vela-cmp-sym:active { background: var(--vela-hover); }
+.vela-cmp-sym:focus-visible, .vela-cmp-mode:focus-visible, .vela-cmp-remove:focus-visible { outline: 2px solid var(--vela-accent); outline-offset: 2px; }
 .vela-cmp-sym-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 700; letter-spacing: 0.01em; }
 .vela-cmp-sym-hint { font-size: 12px; color: var(--vela-fg-muted); }
 .vela-cmp-label {
@@ -56,11 +58,11 @@ const CSS = `
 .vela-cmp-mode:active { background: var(--vela-hover); }
 .vela-cmp-mode[data-on='1'] { border-color: var(--vela-accent); background: var(--vela-hover); }
 .vela-cmp-mode-glyph { color: var(--vela-fg-muted); }
-.vela-cmp-mode[data-on='1'] .vela-cmp-mode-glyph { color: var(--vela-accent); }
+.vela-cmp-mode[data-on='1'] .vela-cmp-mode-glyph { color: var(--vela-accent-ink, var(--vela-accent)); }
 .vela-cmp-mode-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .vela-cmp-mode-name { font-size: 14px; font-weight: 600; color: var(--vela-fg-bright); }
 .vela-cmp-mode-desc { font-size: 12px; line-height: 1.35; color: var(--vela-fg-muted); }
-.vela-cmp-tick { color: var(--vela-accent); opacity: 0; }
+.vela-cmp-tick { color: var(--vela-accent-ink, var(--vela-accent)); opacity: 0; }
 .vela-cmp-mode[data-on='1'] .vela-cmp-tick { opacity: 1; }
 .vela-cmp-remove {
     all: unset;
@@ -81,6 +83,7 @@ const CSS = `
     -webkit-tap-highlight-color: transparent;
 }
 .vela-cmp-remove:active { background: var(--vela-hover); }
+.vela-cmp-remove[hidden] { display: none !important; }
 .vela-cmp-note { padding: 12px 2px 2px; font-size: 12px; line-height: 1.5; color: var(--vela-fg-muted); }
 `;
 
@@ -104,6 +107,7 @@ export interface CompareSheetOptions {
 
 export class CompareSheet {
     private readonly drawer: Drawer;
+    private pane: WorkspaceToolPanel | null = null;
     private readonly symbolBtn: HTMLButtonElement;
     private readonly symbolName: HTMLElement;
     private readonly symbolHint: HTMLElement;
@@ -138,6 +142,8 @@ export class CompareSheet {
 
         const modes = doc.createElement('div');
         modes.className = 'vela-cmp-modes';
+        modes.setAttribute('role', 'group');
+        modes.setAttribute('aria-label', 'Compare display');
         for (const mode of MODES) {
             const b = doc.createElement('button');
             b.type = 'button';
@@ -172,7 +178,7 @@ export class CompareSheet {
         this.removeBtn.append(iconEl('trash', doc), doc.createTextNode('Remove compare'));
         this.removeBtn.addEventListener('click', () => {
             opts.onRemove();
-            this.drawer.hide();
+            this.close();
         });
 
         const note = doc.createElement('div');
@@ -202,20 +208,39 @@ export class CompareSheet {
         this.removeBtn.hidden = symbol == null;
     }
 
+    /** Keep this view's standalone drawer, or host the same controls in a workspace pane. */
+    attachPanel(pane: WorkspaceToolPanel): void {
+        this.pane = pane;
+        pane.content.append(...Array.from(this.drawer.body.childNodes));
+        pane.onVisibilityChange = (open, userOpening) => {
+            if (open) {
+                this.paint();
+                if (userOpening && !pane.el.closest('[data-layout="mobile"]')) {
+                    setTimeout(() => { if (pane.open && this.symbolBtn.isConnected) this.symbolBtn.focus({ preventScroll: true }); }, 0);
+                }
+            }
+            this.opts.onOpenChange?.(open);
+        };
+    }
+
     open(): void {
         this.paint();
-        this.drawer.show();
+        if (this.pane) this.pane.showFrom();
+        else this.drawer.show();
     }
 
     close(): void {
-        this.drawer.hide();
+        if (this.pane) this.pane.toggle(false);
+        else this.drawer.hide();
     }
 
     get isOpen(): boolean {
-        return this.drawer.open;
+        return this.pane?.open === true || this.drawer.open;
     }
 
     destroy(): void {
         this.drawer.destroy();
+        this.pane?.destroy();
+        this.pane = null;
     }
 }

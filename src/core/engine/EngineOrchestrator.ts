@@ -199,6 +199,8 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
     private priceStyle: PriceStyle = 'candles';
     private priceStyleWillChangeUnsub: Unsubscribe | null = null;
     private readonly readyPromise: Promise<void>;
+    /** A terminal chart teardown; async starts must not revive a disposed renderer. */
+    private destroyed = false;
     private unresolvedUnsub: Unsubscribe | null = null;
     /** Latest chart visible range (left/right bar times), fed to viewport-dependent scripts. */
     private visibleRange: VisibleBarRange | null = null;
@@ -275,6 +277,9 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
      *  affordance and the `load:start`/`load:end` event pair (transition-guarded). */
     private loadingUp = false;
 
+    /** Whether the renderer is awaiting its first bars for the current market. */
+    get isLoading(): boolean { return this.loadingUp; }
+
     /** The latest loaded bar (a view of the model, never a mutable reference). */
     get lastBar(): OHLCV | null {
         return this.bars.length > 0 ? { ...this.bars[this.bars.length - 1]! } : null;
@@ -292,10 +297,16 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
         for (const engine of engines) this.registerEngine(engine.language, engine);
         this.defaultLanguage = config.defaultLanguage;
         this.renderer.mount(container, config.theme);
+        this.renderer.setTimeframe?.(config.market.timeframe ?? '60');
         // The renderer's in-chart settings dialog reports edits here → re-run that indicator.
-        this.renderer.onInputChange((e) =>
-            e.kind === 'prop' ? this.applyProps(e.indicatorId, { [e.key]: e.value }) : this.applyInputs(e.indicatorId, { [e.key]: e.value }),
-        );
+        this.renderer.onInputChange((e) => {
+            if (e.kind === 'style' || e.kind === 'visibility') {
+                this.renderer.setIndicatorVisualSetting?.(e.indicatorId, e.kind, e.key, e.value);
+                return;
+            }
+            if (e.kind === 'prop') this.applyProps(e.indicatorId, { [e.key]: e.value });
+            else this.applyInputs(e.indicatorId, { [e.key]: e.value });
+        });
         // The renderer's in-chart legend ✕ reports a removal here → tear the indicator down.
         this.renderer.onRemoveIndicator((id) => this.removeIndicator(id));
         // The renderer's in-chart legend eye reports a hide/show here → suspend/resume the indicator.
@@ -843,6 +854,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
             if (next.timeframe !== undefined) m.timeframe = next.timeframe;
             if (next.bars !== undefined) m.bars = next.bars;
             if (next.session !== undefined) m.session = next.session;
+            this.renderer.setTimeframe?.(m.timeframe ?? '60');
             // Carrying the window is not enough — the incoming series must REACH it, or
             // the viewport clamp throws the user somewhere else (sessions cover very
             // different wall-clock spans for the same bar count: an RTH tape reaches
@@ -867,6 +879,10 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
             // depth-only reload keeps the bars (same market, more history).
             if (identityChanged) {
                 this.beginLoad(false);
+                // `load:start` is transition-guarded, but an in-flight request can be
+                // superseded without ending the load. Consumers still need the NEW
+                // identity before the old values are cleared, including on every retry.
+                this.events.emit('market:requested', { symbol: m.symbol ?? 'TEST', timeframe: m.timeframe ?? '60' });
                 this.setBarSeries([], { clearing: true });
                 // Mounted indicator models are stale the moment the identity changes, but
                 // their re-runs land only AFTER the new bars paint. Index-aligned series
@@ -1381,7 +1397,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
         const f = this.replayForming;
         if (!f) return;
         this.replayForming = null;
-        this.applyBar(f.bar);
+        this.applyBar(f.bar, true, false);
     }
 
     /**
@@ -1586,7 +1602,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
     private async startChartTypeEngine(id: string): Promise<void> {
         if (!this.renderer.setNativeData) return; // a renderer without native layers — the style draws plain
         await this.readyPromise;
-        if (this.activeEngineStyle !== id) return; // the style left again while loading
+        if (this.destroyed || this.activeEngineStyle !== id) return; // disposed or left while loading
         const existing = this.typeEngines.get(id);
         if (existing) {
             existing.resume();
@@ -1807,7 +1823,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
      * batch instead (a session re-run is a full re-execution over the canonical array, so per-bar
      * notifications during a backfill are pure waste).
      */
-    private applyBar(bar: OHLCV, notify = true): void {
+    private applyBar(bar: OHLCV, notify = true, emit = true): void {
         const last = this.rawBars[this.rawBars.length - 1];
         // A REBUCKETED view cannot be advanced index-by-index (one tick can print a run of
         // bricks, or none). Rebuild instead: bricks are few by construction, so this is
@@ -1824,7 +1840,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
             // a busy Renko chart drop frames. It is now bounded to one per frame, with the
             // leading edge kept synchronous.
             this.scheduleRebucketRebuild(notify);
-            this.events.emit('bar', bar);
+            if (emit) this.events.emit('bar', bar);
             return;
         }
         let viewBar = bar;
@@ -1849,7 +1865,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
         } else return;
 
         this.renderer.updateBar(viewBar);
-        this.events.emit('bar', bar);
+        if (emit) this.events.emit('bar', bar);
         // During a backfill a tick is tagged 'backfill' too — policy-A sessions hold their
         // run either way, and the eventual 'complete' run reads the tick from the array.
         if (notify) this.notifySessionsBars(this.historyState === 'backfill' ? 'backfill' : undefined);
@@ -1952,7 +1968,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
     addIndicator(source: string, options: AddIndicatorOptions = {}): IndicatorHandle {
         const id = this.claimIndicatorId(options.id);
         const title = options.title ?? 'Indicator';
-        const handle = new IndicatorHandleImpl(id, title, this, source);
+        const handle = new IndicatorHandleImpl(id, title, this, source, undefined, options.language ?? this.defaultLanguage);
         this.handles.set(id, handle);
         this.registry.add({ id, title, source, options, inputValues: { ...(options.inputs ?? {}) }, propValues: { ...(options.props ?? {}) } });
         void this.startIndicator(id, source, options, handle);
@@ -2079,7 +2095,10 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
         // No compute path is online yet — there is nothing to re-run or repaint. The merged
         // values are picked up when the session/native comes online; avoid faking a
         // structural change or a spinner before the first model even exists.
-        if (!record.session && !record.native) return;
+        if (!record.session && !record.native) {
+            this.events.emit('indicator:inputs', { id });
+            return;
+        }
         // Reflect the new value in the open dialog immediately (the model arrives async).
         if (record.renderHandle) this.renderer.setIndicatorInputs(record.renderHandle, record.inputValues);
         // The next emitted model structurally remounts (input changes can restructure).
@@ -2107,8 +2126,12 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
      *  Script indicators only: natives have no declaration props. */
     applyProps(id: string, values: Record<string, InputValue>): void {
         const record = this.registry.get(id);
-        if (!record?.session) return;
+        if (!record) return;
         record.propValues = { ...record.propValues, ...values };
+        if (!record.session) {
+            this.events.emit('indicator:inputs', { id });
+            return;
+        }
         // Reflect the new value in the open dialog immediately (the model arrives async).
         if (record.renderHandle) this.renderer.setIndicatorInputs(record.renderHandle, record.inputValues, record.propValues);
         record.pendingStructural = true;
@@ -2152,16 +2175,16 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
             prepared = await engine.prepare(source, id);
         } catch (err) {
             const record = this.registry.get(id);
-            // Only the LATEST pending edit reports; a superseded one failing is noise.
-            if (record?.pendingSource === source) {
+            // Only the LATEST live edit reports; disposed/superseded work is noise.
+            if (!this.destroyed && this.handles.get(id) === handle && record?.pendingSource === source) {
                 record.pendingSource = undefined;
                 this.rejectCode(id, record, handle, err);
             }
             return;
         }
         const record = this.registry.get(id);
-        // Removed, or superseded by a later updateCode, while preparing.
-        if (!record || record.pendingSource !== source) return;
+        // Removed, disposed, or superseded by a later updateCode while preparing.
+        if (this.destroyed || this.handles.get(id) !== handle || !record || record.pendingSource !== source) return;
         record.pendingSource = undefined;
         // The restore point is the last code KNOWN to run: an edit landing while another
         // is still on trial keeps that trial's restore point, not the unproven trial.
@@ -2407,6 +2430,8 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
     }
 
     destroy(): void {
+        if (this.destroyed) return;
+        this.destroyed = true;
         this.bumpGeneration(); // abandon backfill loops/loads mid-flight + release superseded setMarket awaiters
         if (this.rebucketFrame != null) clearFrame(this.rebucketFrame);
         this.rebucketFrame = null;
@@ -2467,7 +2492,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
     private async startIndicator(id: string, source: string, options: AddIndicatorOptions, handle: IndicatorHandleImpl): Promise<void> {
         try {
             await this.readyPromise;
-            if (!this.registry.get(id)) return;
+            if (this.destroyed || !this.registry.get(id) || this.handles.get(id) !== handle) return;
 
             // Let the renderer paint the post-fetch frame (e.g. the "Running…" status)
             // before the engine's synchronous transpile + execution monopolizes the
@@ -2475,7 +2500,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
             // for the whole run.
             await yieldToPaint();
             const record = this.registry.get(id);
-            if (!record) return; // removed during the yield
+            if (this.destroyed || !record || this.handles.get(id) !== handle) return; // removed/disposed during the yield
 
             const engine = this.engineFor(options.language);
             record.engine = engine;
@@ -2483,7 +2508,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
             const prepared = await engine.prepare(source, id);
             // An updateCode that landed during this prepare owns the record now — the
             // original source must not overwrite the replacement's schema and session.
-            if (record.source !== source) return;
+            if (this.destroyed || this.registry.get(id) !== record || this.handles.get(id) !== handle || record.source !== source) return;
             record.prepared = prepared;
             const defaults: Record<string, InputValue> = {};
             for (const input of prepared.inputs) defaults[input.key] = input.defval;
@@ -2500,7 +2525,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
             this.mountLoadingPlaceholder(id, record);
             this.executeIndicator(id, handle);
         } catch (err) {
-            this.fail(id, handle, err);
+            if (!this.destroyed && this.handles.get(id) === handle) this.fail(id, handle, err);
         }
     }
 
@@ -2596,8 +2621,13 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
         try {
             await this.readyPromise;
             const record = this.registry.get(id);
-            if (!record?.native || record.hidden) return; // removed/hidden during the await
+            if (this.destroyed || this.handles.get(id) !== handle || !record?.native || record.hidden || record.native.started) return;
             const channel = this.nativeChannel(record);
+            const instance = record.native.instance;
+            // A provider or extension can resolve after removal, a market restart or
+            // teardown. Its old context must never paint onto a newer/destroyed chart.
+            const current = (): boolean => !this.destroyed && this.registry.get(id) === record &&
+                record.native?.instance === instance && !record.hidden;
             const ctx: NativeIndicatorContext = {
                 id,
                 symbol: this.config.market.symbol ?? 'TEST',
@@ -2642,16 +2672,19 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
                 // engines use — a static-data chart has no feed to serve one, so it is
                 // simply absent there and the native reports that it cannot load.
                 fetchSeries: (sym: string, tf: string, range: { from?: number; to?: number; limit?: number }) => this.fetchSeries(sym, tf, range),
-                emit: (out) => this.applyModel(id, this.buildNativeModel(record, out)),
-                pushData: (data) => this.renderer.setNativeData?.(channel, data),
+                emit: (out) => { if (current()) this.applyModel(id, this.buildNativeModel(record, out)); },
+                pushData: (data) => { if (current()) this.renderer.setNativeData?.(channel, data); },
                 setStatus: (status) => {
-                    if (record.renderHandle && !record.hidden) this.renderer.setIndicatorStatus?.(record.renderHandle, status);
+                    if (current() && record.renderHandle) this.renderer.setIndicatorStatus?.(record.renderHandle, status);
                 },
             };
-            record.native.instance.start(ctx, record.inputValues);
+            // start() can emit synchronously; a host may remove the indicator or destroy
+            // the chart from that very first event. Mark it running before calling out so
+            // teardown invokes stop() even in that re-entrant case.
             record.native.started = true;
+            instance.start(ctx, record.inputValues);
         } catch (err) {
-            this.fail(id, handle, err);
+            if (!this.destroyed && this.handles.get(id) === handle) this.fail(id, handle, err);
         }
     }
 
@@ -3045,6 +3078,7 @@ export class EngineOrchestrator implements IndicatorController, PaneController, 
      * stay unchanged.
      */
     private applyModel(id: string, model: IndicatorModel): boolean {
+        if (this.destroyed) return false;
         const record = this.registry.get(id);
         if (!record || record.hidden) return true; // a model arriving for a just-hidden indicator is dropped
 

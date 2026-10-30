@@ -16,6 +16,7 @@ import type {
     DataWindowOHLC,
     DataWindowGroup,
     DataWindowReadout,
+    DataWindowTableSlice,
     SettingsTemplateHost,
     IndicatorDefaultsHost,
 } from '../../core/ports/IChartRenderer';
@@ -63,6 +64,7 @@ import { PriceAxisTickSource } from './chrome/priceAxisTicks';
 import { LabelTooltip } from './chrome/LabelTooltip';
 import { AXIS_MASTER_W, AXIS_MERGED_W, axisCompact, axisMasterWidth } from './chrome/axisLayout';
 import { CrosshairRenderer } from './chrome/CrosshairRenderer';
+import { CandleLocator, displayedCandleIndex } from './chrome/CandleLocator';
 import { SettingsDialog, type SettingsTemplatesHost } from './chrome/SettingsDialog';
 import { UserDrawingController } from './drawings/UserDrawingController';
 import { IndicatorDrawingSlices, mergeSlices } from './drawings/IndicatorDrawingSlices';
@@ -186,6 +188,8 @@ export class NativeRenderer implements IChartRenderer {
     private drawingsCanvas!: HTMLCanvasElement;
     private cursorCanvas!: HTMLCanvasElement;
     private overlayRoot!: HTMLDivElement;
+    /** Temporary table-to-chart candle marker, independent of host highlight bands. */
+    private candleLocator: CandleLocator | null = null;
     /** The host-styleable twin of the `shadeRight` veil (`.vela-shade-right`), directly under
      *  the cursor canvas; hidden whenever the crosshair layer paints no veil. */
     private shadeRightEl: HTMLDivElement | null = null;
@@ -224,6 +228,7 @@ export class NativeRenderer implements IChartRenderer {
     private plotDeviceSize: { width: number; height: number } | null = null;
 
     private readonly coords = new CoordinateSystem();
+    private timeframe = '60';
     private readonly scene = new SceneGraph();
     private backend!: IRenderBackend; // chosen at mount (WebGL2 if available, else canvas2d)
     // Reduced motion is read once the fields exist (see the constructor's tail).
@@ -321,6 +326,8 @@ export class NativeRenderer implements IChartRenderer {
     private candleBodyAlpha = 1; // candle body-fill opacity (constant; style layers may modulate later)
     private candleStructureAlpha = 1; // candle wick+border opacity (fades only partway, keeping a skeleton)
     private lastPointer: { x: number; y: number } | null = null; // last plot-relative pointer (re-tests the hovered row after a pan/zoom)
+    /** Snapshot for suppressing unchanged stationary-tracking events on animation frames. */
+    private lastCrosshairEvent: CrosshairEvent | null = null;
     // ── pointer ink (the Demonstration / Magic cursor types) ──
     /** The next ink sample is due (the pointer moved far enough since the last one). */
     private inkLast: { x: number; y: number } | null = null;
@@ -332,6 +339,12 @@ export class NativeRenderer implements IChartRenderer {
     // ── volume layers (bottom-anchored columns + visible-range profile; driven by their native indicators) ──
     private volumeActive = false; // a volume native indicator is mounted
     private volumeHidden = false; // …but hidden via its legend eye (config kept)
+    /** User edits from an indicator's generated Style tab, reapplied after every script patch. */
+    private readonly indicatorStyleSettings = new Map<string, Record<string, InputValue>>();
+    /** Per-instance interval-family visibility selections from the indicator settings tab. */
+    private readonly indicatorIntervalSettings = new Map<string, Record<string, InputValue>>();
+    /** Models temporarily omitted because their interval visibility excludes the active timeframe. */
+    private readonly intervalHiddenModels = new Map<string, IndicatorModel>();
     private vpvrActive = false; // a VPVR native indicator is mounted
     private vpvrHidden = false; // …but hidden via its legend eye (config kept)
 
@@ -395,6 +408,10 @@ export class NativeRenderer implements IChartRenderer {
 
     private readonly viewportCbs = new Set<(r: VisibleRange) => void>();
     private readonly crosshairCbs = new Set<(e: CrosshairEvent) => void>();
+    /** Readout-only invalidations must not re-emit a crosshair or create a sync loop. */
+    private readonly dataWindowCbs = new Set<() => void>();
+    /** Last formatted frame, compared only while a consumer observes the readout. */
+    private dataWindowFrameSignature: string | null = null;
     private readonly chartTypeSettingsCbs = new Set<(typeId: string, values: Record<string, unknown>) => void>();
     private readonly configChangedCbs = new Set<() => void>();
     /** The settings dialog's Canvas → Theme row raises the pick here; the host applies it. */
@@ -588,9 +605,14 @@ export class NativeRenderer implements IChartRenderer {
                 }
                 if (value) for (const sl of this.scene.indicatorScales.values()) sl.manualScale = null;
                 break;
-            case 'timezone':
-                this.scene.timezone = typeof value === 'string' && value ? value : 'UTC';
+            case 'timezone': {
+                const zone = typeof value === 'string' && value ? value : 'UTC';
+                if (zone !== this.scene.timezone) {
+                    this.scene.timezone = zone;
+                    this.notifyDataWindowChange();
+                }
                 break;
+            }
             case 'priceStyle':
                 this.setPriceStyle(isPriceStyle(value) ? value : 'candles');
                 break;
@@ -819,6 +841,7 @@ export class NativeRenderer implements IChartRenderer {
         if (m === this.scene.priceMintick) return;
         this.scene.priceMintick = m;
         this.scheduler?.invalidate(InvalidateLevel.Full);
+        this.notifyDataWindowChange();
     }
 
     // ── rich serializable config (templates / persisted user settings — item 15) ──
@@ -1096,8 +1119,9 @@ export class NativeRenderer implements IChartRenderer {
         // Re-theme the docked drawing toolbar on the STABLE chrome surface, so editing the
         // plot background (layout.background) never bleeds into the toolbar.
         this.userDrawings?.setTheme(this.chromeTheme());
-        // The open settings dialog is NOT rebuilt here — re-seeding mid-edit would
-        // steal focus from the control being dragged/typed. It re-themes on next open.
+        // Keep the dialog's snapshot current without rebuilding it mid-drag or while
+        // typing; the combined crosshair color/opacity control also synchronizes in place.
+        this.settingsDialog?.refreshConfig(this.getConfig());
         this.refreshScrollButtonTheme();
         this.refreshAttributionColor();
         this.scheduler?.invalidate(InvalidateLevel.Full);
@@ -1236,10 +1260,10 @@ export class NativeRenderer implements IChartRenderer {
         return { ...doc, marks: { ...doc.marks, groups } };
     }
 
-    /** Close the in-chart dialogs (indicator settings + chart-settings gear). No-op when none are open. */
-    closeDialogs(): void {
+    /** Close in-chart dialogs; a layout transition can preserve the resizable settings pane. */
+    closeDialogs(options?: { preserveSettings?: boolean }): void {
         this.inputsUI?.closeOpenDialog();
-        this.settingsDialog?.close();
+        if (!options?.preserveSettings) this.settingsDialog?.close();
     }
 
     /** Jump-back-to-latest button — same size/border chrome as the drawing-toolbar collapse toggle. */
@@ -1342,6 +1366,7 @@ export class NativeRenderer implements IChartRenderer {
     /** Glide the view back to the most recent bars, keeping the current zoom (barSpacing). */
     private scrollToRealtime(): void {
         if (this.coords.barCount === 0) return;
+        this.candleLocator?.cancelNavigation(true);
         this.glideRightOffset(this.scene.style.margins.right);
     }
 
@@ -1436,6 +1461,10 @@ export class NativeRenderer implements IChartRenderer {
             const p = Math.min(1, (now - start) / duration);
             this.scene.bars = p >= 1 ? real : real.map((b, i) => this.revealCandle(b, i, p, n, style));
             this.paintData();
+            // First data may arrive while a touch is already resting on an empty chart.
+            // This reveal has its own rAF loop (not renderFrame/animTick), so it must
+            // also publish the real bar/scale and repaint its now-valid axis chips.
+            this.paintIntroTracking();
             if (p < 1) {
                 this.introRaf = requestAnimationFrame(step);
             } else {
@@ -1453,6 +1482,7 @@ export class NativeRenderer implements IChartRenderer {
         const step = (now: number): void => {
             this.modelAlpha = Math.min(1, (now - start) / fade);
             this.paintData();
+            this.paintIntroTracking();
             if (this.modelAlpha < 1) {
                 this.introRaf = requestAnimationFrame(step);
             } else {
@@ -1461,6 +1491,14 @@ export class NativeRenderer implements IChartRenderer {
             }
         };
         this.introRaf = requestAnimationFrame(step);
+    }
+
+    /** The intro paints outside the regular scheduler; update a resting touch there too. */
+    private paintIntroTracking(): void {
+        if (!this.input?.isTracking) return;
+        this.refreshTrackingCrosshair();
+        this.renderCrosshairLayer();
+        this.updateLegendValues();
     }
 
     /**
@@ -1585,6 +1623,7 @@ export class NativeRenderer implements IChartRenderer {
         const below = this.extLayers.filter((l) => l.def.placement === 'below-data').map((l) => l.canvas);
         const above = this.extLayers.filter((l) => l.def.placement !== 'below-data').map((l) => l.canvas);
         this.plot.append(this.backdropCanvas, ...below, this.dataCanvas, this.volumeCanvas, this.vpvrCanvas, ...above, this.chromeCanvas, this.drawingsCanvas, this.cursorCanvas, this.overlayRoot);
+        this.candleLocator = new CandleLocator(this.plot, this.backdropCanvas, this.coords, () => this.bars, () => this.theme);
         this.layerOrderSig = ''; // recomputed on the first data frame (owned layers follow their indicator's z)
         this.wrapper.appendChild(this.plot);
         this.factoryConfig = this.getConfig();
@@ -1614,6 +1653,7 @@ export class NativeRenderer implements IChartRenderer {
         this.targetBarSpacing = this.coords.getViewport().barSpacing;
         this.input = new InputController({
             getCoords: () => this.coords,
+            getAppliedCrosshair: () => this.scene.crosshair,
             apply: (vp) => this.applyViewport(vp),
             zoomTo: (target, anchorLogical, anchorX) => this.zoomTo(target, anchorLogical, anchorX),
             fling: (v) => this.fling(v),
@@ -1765,7 +1805,10 @@ export class NativeRenderer implements IChartRenderer {
             jumpToEdge: (edge) => this.focusBar(edge === 'first' ? 0 : this.coords.barCount - 1),
             resetView: () => this.resetView(),
             scrollToRealtime: () => this.scrollToRealtime(),
-            clearCrosshair: () => this.handlePointerMove(null, null),
+            clearCrosshair: () => {
+                if (this.input?.isTracking) this.input.endTracking();
+                else this.handlePointerMove(null, null);
+            },
             preempt: (e) => this.userDrawings?.handleKey(e) ?? false,
         });
         this.setKeyboardEnabled(this.keyboardEnabled); // accessible by default; wires focus + ARIA
@@ -1991,6 +2034,8 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     destroy(): void {
+        this.candleLocator?.clear();
+        this.candleLocator = null;
         if (this.inkRaf !== 0) cancelAnimationFrame(this.inkRaf);
         this.inkRaf = 0;
         this.stopMotionWatch?.();
@@ -2061,6 +2106,8 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     setBars(bars: OHLCV[], opts?: { preserveView?: boolean; resetView?: boolean }): void {
+        // A new market/replay series must not inherit a transient marker from the old one.
+        if (opts?.preserveView !== true) this.candleLocator?.clear();
         if (this.introRaf != null) { cancelAnimationFrame(this.introRaf); this.introRaf = null; this.modelAlpha = 1; } // a re-set interrupts a running reveal
         // A series replacement invalidates the forming-bar glide: after an in-place market
         // switch the NEW market's forming bar shares the same bucket open-time, so a stale
@@ -2073,9 +2120,11 @@ export class NativeRenderer implements IChartRenderer {
         this.bars = normalizeBars(bars);
         this.scene.bars = this.bars;
         this.coords.setBars(this.bars.map((b) => b.time));
+        this.syncIndicatorIntervalVisibility();
         // The bar array's head may have moved (a history-backfill prepend) — re-derive
         // every mounted model's anchor offset against the new indices.
         for (const model of this.scene.indicators.values()) this.refreshAnchorOffset(model);
+        for (const model of this.intervalHiddenModels.values()) this.refreshAnchorOffset(model);
         // Logical-space INTERACTION anchors need the same prepend shift: a wheel-zoom glide
         // recomputes rightOffset from `zoomAnchorLogical` EVERY frame — a backfill landing
         // mid-zoom would otherwise re-anchor thousands of bars into the past and teleport the
@@ -2342,7 +2391,14 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     mountIndicator(model: IndicatorModel): IndicatorRenderHandle {
-        this.scene.indicators.set(model.id, model);
+        this.applyIndicatorStyleSettings(model);
+        if (this.intervalAllowsIndicator(model.id)) {
+            this.intervalHiddenModels.delete(model.id);
+            this.scene.indicators.set(model.id, model);
+        } else {
+            this.scene.indicators.delete(model.id);
+            this.intervalHiddenModels.set(model.id, model);
+        }
         this.refreshAnchorOffset(model);
         // Default z = mount order (later ⇒ in front) — except a native that paints through
         // an SDK layer: its canvas stacks ABOVE the data canvas by default, so its key must
@@ -2358,6 +2414,7 @@ export class NativeRenderer implements IChartRenderer {
                 native: !!model.native,
                 ...(model.props ? { props: model.props, propValues: model.propValues ?? {} } : {}),
                 ...(model.native?.type ? { type: model.native.type } : {}),
+                series: model.series,
             });
         }
         if (model.native?.type === 'volume') {
@@ -2374,7 +2431,7 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     updateIndicator(handle: IndicatorRenderHandle, patch: ScenePatch): void {
-        const model = this.scene.indicators.get(handle.id);
+        const model = this.scene.indicators.get(handle.id) ?? this.intervalHiddenModels.get(handle.id);
         if (!model) return;
         // A value patch from a re-run over a DIFFERENT bar window carries its anchor; `null`
         // says the run spanned the whole chart and CLEARS the previous one.
@@ -2386,7 +2443,18 @@ export class NativeRenderer implements IChartRenderer {
             }
         }
         applyPatch(model, patch);
+        this.applyIndicatorStyleSettings(model);
+        if (this.intervalAllowsIndicator(handle.id)) {
+            this.intervalHiddenModels.delete(handle.id);
+            this.scene.indicators.set(handle.id, model);
+        } else {
+            this.scene.indicators.delete(handle.id);
+            this.intervalHiddenModels.set(handle.id, model);
+        }
         this.scheduler.invalidate(InvalidateLevel.Light);
+        // The chart's `bar` event fires before studies finish recomputing. A panel that
+        // reads only that event otherwise keeps the PREVIOUS plot value indefinitely.
+        this.notifyDataWindowChange();
     }
 
     removeIndicator(handle: IndicatorRenderHandle): void {
@@ -2401,6 +2469,9 @@ export class NativeRenderer implements IChartRenderer {
             this.scene.vpvrLayer = null;
         }
         this.scene.indicators.delete(handle.id);
+        this.intervalHiddenModels.delete(handle.id);
+        this.indicatorStyleSettings.delete(handle.id);
+        this.indicatorIntervalSettings.delete(handle.id);
         this.dropInstanceLayer(handle.id);
         this.scene.forgetIndicatorZ(handle.id);
         this.scene.forgetAnchorOffset(handle.id);
@@ -2413,6 +2484,130 @@ export class NativeRenderer implements IChartRenderer {
 
     setIndicatorInputs(handle: IndicatorRenderHandle, values: Record<string, InputValue>, props?: Record<string, InputValue>): void {
         this.inputsUI.setValues(handle.id, values, props);
+    }
+
+    setIndicatorVisualSetting(indicatorId: string, kind: 'style' | 'visibility', key: string, value: InputValue): void {
+        if (kind === 'style') {
+            const values = this.indicatorStyleSettings.get(indicatorId) ?? {};
+            values[key] = value;
+            this.indicatorStyleSettings.set(indicatorId, values);
+            const model = this.scene.indicators.get(indicatorId) ?? this.intervalHiddenModels.get(indicatorId);
+            if (model) this.applyIndicatorStyleSettings(model);
+            this.scheduler.invalidate(InvalidateLevel.Full);
+            return;
+        }
+        const values = this.indicatorIntervalSettings.get(indicatorId) ?? Object.fromEntries(
+            ['ticks', 'seconds', 'minutes', 'hours', 'days', 'weeks', 'months'].map((family) => [`interval:${family}`, true]),
+        );
+        values[key] = value;
+        this.indicatorIntervalSettings.set(indicatorId, values);
+        this.syncIndicatorIntervalVisibility();
+    }
+
+    private applyIndicatorStyleSettings(model: IndicatorModel): void {
+        const values = this.indicatorStyleSettings.get(model.id);
+        if (!values) return;
+        const labelsOnScale = values['visual:labelsOnScale'];
+        const valuesInStatus = values['visual:valuesInStatusLine'];
+        for (const series of model.series) {
+            const prefix = `plot:${encodeURIComponent(series.id)}:`;
+            const display = series.display;
+            const hasPlotOverride = Object.keys(values).some((key) => key.startsWith(prefix));
+            if (display && display.pane === false && display.legend === false && display.priceScale !== true && display.dataWindow !== true && series.editable !== true && !hasPlotOverride) continue;
+            const visible = values[`${prefix}visible`];
+            if (typeof visible === 'boolean') {
+                series.visible = visible;
+                series.display = visible
+                    ? { pane: true, priceScale: true, legend: true, dataWindow: true }
+                    : { pane: false, priceScale: false, legend: false, dataWindow: false };
+            }
+            if (labelsOnScale !== undefined || valuesInStatus !== undefined) {
+                series.display = {
+                    ...series.display,
+                    ...(typeof labelsOnScale === 'boolean' ? { priceScale: labelsOnScale && visible !== false } : {}),
+                    ...(typeof valuesInStatus === 'boolean' ? { legend: valuesInStatus && visible !== false } : {}),
+                };
+            }
+            if (isLineLikeSeries(series)) {
+                const plotStyle = values[`${prefix}plotStyle`];
+                if (plotStyle === 'line' || plotStyle === 'step' || plotStyle === 'area' || plotStyle === 'histogram' || plotStyle === 'columns' || plotStyle === 'circles' || plotStyle === 'cross') series.kind = plotStyle;
+                const color = values[`${prefix}color`];
+                const width = values[`${prefix}width`];
+                const lineStyle = values[`${prefix}lineStyle`];
+                if (typeof color === 'string') {
+                    series.style.color = color;
+                    const pointColors = new Set(series.points.map((point) => point.color).filter((item): item is string => Boolean(item)));
+                    if (pointColors.size <= 1 && pointColors.size > 0) {
+                        series.points = series.points.map((point) => point.color ? { ...point, color } : point);
+                    }
+                }
+                if (typeof width === 'number') series.style.width = Math.max(1, Math.min(10, width));
+                if (lineStyle === 'solid' || lineStyle === 'dashed' || lineStyle === 'dotted') series.style.lineStyle = lineStyle;
+            } else if (series.kind === 'candle' || series.kind === 'bar') {
+                const up = values[`${prefix}up`];
+                const down = values[`${prefix}down`];
+                if (typeof up === 'string' || typeof down === 'string') series.style = { ...series.style, ...(typeof up === 'string' ? { up } : {}), ...(typeof down === 'string' ? { down } : {}) };
+            } else if (series.kind === 'markers') {
+                const color = values[`${prefix}color`];
+                const size = values[`${prefix}size`];
+                if (typeof color === 'string' || typeof size === 'string') {
+                    series.markers = series.markers.map((marker) => ({
+                        ...marker,
+                        ...(typeof color === 'string' ? { color } : {}),
+                        ...(size === 'tiny' || size === 'small' || size === 'normal' || size === 'large' || size === 'huge' ? { size } : {}),
+                    }));
+                }
+            }
+        }
+    }
+
+    setTimeframe(timeframe: string): void {
+        const next = timeframe.trim().toUpperCase();
+        if (!next || next === this.timeframe) return;
+        this.timeframe = next;
+        this.syncIndicatorIntervalVisibility();
+    }
+
+    private currentIntervalFamily(): string {
+        const tf = this.timeframe;
+        if (/^\d*T$/.test(tf) || tf === 'T' || tf === 'TICK' || tf === 'TICKS') return 'ticks';
+        if (/^\d*S$/.test(tf) || tf === 'S') return 'seconds';
+        if (/^\d*D$/.test(tf) || tf === 'D') return 'days';
+        if (/^\d*W$/.test(tf) || tf === 'W') return 'weeks';
+        if (/^\d*M$/.test(tf) || tf === 'M') return 'months';
+        if (/^\d+H$/.test(tf) || tf === 'H') return 'hours';
+        if (/^\d+$/.test(tf)) return Number(tf) < 60 ? 'minutes' : 'hours';
+        const ms = this.coords.barInterval;
+        if (!(ms > 0)) return 'ticks';
+        if (ms < 60_000) return 'seconds';
+        if (ms < 3_600_000) return 'minutes';
+        if (ms < 86_400_000) return 'hours';
+        if (ms < 6 * 86_400_000) return 'days';
+        if (ms < 26 * 86_400_000) return 'weeks';
+        return 'months';
+    }
+
+    private intervalAllowsIndicator(indicatorId: string): boolean {
+        const settings = this.indicatorIntervalSettings.get(indicatorId);
+        if (!settings) return true;
+        return settings[`interval:${this.currentIntervalFamily()}`] !== false;
+    }
+
+    private syncIndicatorIntervalVisibility(): void {
+        let changed = false;
+        for (const [id, model] of [...this.intervalHiddenModels]) {
+            if (!this.intervalAllowsIndicator(id)) continue;
+            this.intervalHiddenModels.delete(id);
+            this.scene.indicators.set(id, model);
+            changed = true;
+        }
+        for (const [id, model] of [...this.scene.indicators]) {
+            if (this.intervalAllowsIndicator(id)) continue;
+            this.scene.indicators.delete(id);
+            this.intervalHiddenModels.set(id, model);
+            changed = true;
+        }
+        if (changed) this.scheduler.invalidate(InvalidateLevel.Full);
     }
 
     setSymbolPicker(picker: SymbolPickerFn | null): void {
@@ -2458,6 +2653,7 @@ export class NativeRenderer implements IChartRenderer {
         }
         if (!visible) {
             this.scene.indicators.delete(handle.id); // keep the z key (forgetIndicatorZ NOT called) so show preserves order
+            this.intervalHiddenModels.delete(handle.id);
         }
         this.inputsUI.setVisible(handle.id, visible);
         this.scheduler.invalidate(InvalidateLevel.Full);
@@ -2604,6 +2800,36 @@ export class NativeRenderer implements IChartRenderer {
         return () => this.crosshairCbs.delete(cb);
     }
 
+    onDataWindowChange(cb: () => void): Unsubscribe {
+        if (this.dataWindowCbs.size === 0) this.dataWindowFrameSignature = null;
+        this.dataWindowCbs.add(cb);
+        return () => {
+            this.dataWindowCbs.delete(cb);
+            if (this.dataWindowCbs.size === 0) this.dataWindowFrameSignature = null;
+        };
+    }
+
+    private notifyDataWindowChange(): void {
+        for (const cb of this.dataWindowCbs) cb();
+    }
+
+    /** Autoscale, viewport and pane geometry can alter display precision AFTER the bar or
+     *  resize event. Diff the final formatted frame so a stationary Data Window agrees
+     *  with the axes, without emitting a notification on every animation frame. No work
+     *  is done when nobody is observing the optional readout. */
+    private notifyDataWindowFrameChange(): void {
+        if (this.dataWindowCbs.size === 0) return;
+        const next = JSON.stringify(this.getDataWindowReadout());
+        if (next === this.dataWindowFrameSignature) return;
+        this.dataWindowFrameSignature = next;
+        this.notifyDataWindowChange();
+    }
+
+    /** End only a local touch inspection; synced ghosts and mouse hover remain separate. */
+    endTouchTracking(): void {
+        this.input?.endTracking();
+    }
+
     onClick(cb: (e: ClickEvent) => void): Unsubscribe {
         this.clickCbs.add(cb);
         return () => this.clickCbs.delete(cb);
@@ -2614,7 +2840,14 @@ export class NativeRenderer implements IChartRenderer {
     barAt(time: number): OHLCV | null {
         const bars = this.bars;
         if (bars.length === 0 || !Number.isFinite(time)) return null;
-        if (time < bars[0]!.time || time > bars[bars.length - 1]!.time) return null;
+        const last = bars[bars.length - 1]!;
+        if (time < bars[0]!.time) return null;
+        if (time > last.time) {
+            // The latest bar occupies a whole interval, not just its open instant.
+            // Match the ghost projection; without a known cadence, be conservative.
+            const interval = this.coords.barInterval;
+            return interval > 0 && time < last.time + interval ? last : null;
+        }
         let lo = 0;
         let hi = bars.length - 1;
         while (lo < hi) {
@@ -2694,15 +2927,45 @@ export class NativeRenderer implements IChartRenderer {
      *  running glide, so a held key reads as one continuous scroll. */
     panBy(fraction: number): void {
         if (this.coords.barCount === 0 || this.coords.width === 0) return;
+        this.candleLocator?.cancelNavigation(true);
         const vp = this.coords.getViewport();
         const visBars = this.coords.width / this.coords.pxPerBar();
         const base = this.scrollTargetRO ?? vp.rightOffset; // stack onto an in-flight glide
         this.glideRightOffset(this.clampViewport(vp.barSpacing, base + fraction * visBars).rightOffset);
     }
 
+    /** Reveal the precise displayed/replay-bounded bar, preserving the current zoom. */
+    revealTableCandle(timestamp: number, newestOffset: number): boolean {
+        const index = displayedCandleIndex(this.bars, timestamp, newestOffset);
+        const locator = this.candleLocator;
+        if (index < 0 || !locator || this.coords.width <= 0 || this.coords.pxPerBar() <= 0) return false;
+        const current = this.coords.getViewport();
+        // A freshly loaded/just-resized chart can momentarily carry a zoom outside the
+        // dynamic limits. Normalize first, then calculate the target with the *effective*
+        // spacing; otherwise clamping after the calculation can put the candle offscreen.
+        const vp = this.clampViewport(current.barSpacing, current.rightOffset);
+        if (vp.barSpacing !== current.barSpacing || vp.rightOffset !== current.rightOffset) this.applyViewport(vp);
+        const target = this.clampViewport(vp.barSpacing, this.candleRightOffset(index, vp.barSpacing)).rightOffset;
+        const reduced = prefersReducedMotion();
+        const maxWait = Math.max(5000, this.animScroll.tau * 20 + 3000);
+        if (!locator.show(index, timestamp, !reduced && this.animScroll.on, maxWait)) return false;
+        if (reduced) this.applyViewport({ barSpacing: vp.barSpacing, rightOffset: target });
+        else this.glideRightOffset(target);
+        // Instant/reduced-motion pans have not painted yet; position the wash now.
+        locator.update();
+        return true;
+    }
+
+    /** Right offset that places this logical candle at the center of the data area. */
+    private candleRightOffset(index: number, barSpacing: number): number {
+        const pitch = barSpacing * this.coords.spacingScale;
+        return index + this.coords.width / (2 * pitch) - (this.coords.barCount - 1);
+    }
+
     // ── internals ──
     /** Instant viewport set (drag, freeze-on-touch, setVisibleRange) — stops any animation. */
     private applyViewport(vp: ViewportState): void {
+        this.candleLocator?.cancelNavigation(true);
         this.animator.stop();
         this.panVelocity = 0;
         this.scrollTargetRO = null;
@@ -2715,6 +2978,7 @@ export class NativeRenderer implements IChartRenderer {
 
     /** Eased cursor-anchored zoom: glide barSpacing → target, pinning the anchor logical at its pixel. */
     private zoomTo(target: number, anchorLogical: number, anchorX: number): void {
+        this.candleLocator?.cancelNavigation(true);
         // Clamp the target to the dynamic zoom range so the animator settles inside the limits.
         const barSpacing = this.clampViewport(target, this.coords.getViewport().rightOffset).barSpacing;
         this.zoomAnchorLogical = anchorLogical;
@@ -2735,6 +2999,7 @@ export class NativeRenderer implements IChartRenderer {
 
     /** Inertial pan: continue with a rightOffset velocity (logical units / ms) that decays. */
     private fling(velocity: number): void {
+        this.candleLocator?.cancelNavigation(true);
         if (!this.animPan.on) return; // pan animation off → drag-release stops dead
         this.scrollTargetRO = null; // a fresh flick cancels an in-flight scroll-to-latest glide
         this.panVelocity = velocity;
@@ -2805,13 +3070,21 @@ export class NativeRenderer implements IChartRenderer {
             else active = true;
         }
 
-        // Scroll-to-latest glide: ease rightOffset toward the target margin at constant zoom.
+        // A live append, backfill or resize can change logical indices/viewport width
+        // while the reveal is in flight. Re-anchor to the same displayed candle.
+        if (this.candleLocator?.navigating && this.scrollTargetRO != null) {
+            const index = this.candleLocator.navigationIndex();
+            const effectiveSpacing = this.clampViewport(barSpacing, rightOffset).barSpacing;
+            this.scrollTargetRO = index == null ? null : this.clampViewport(effectiveSpacing, this.candleRightOffset(index, effectiveSpacing)).rightOffset;
+        }
+        // Scroll-to-latest / candle reveal glide: constant zoom and normal pan limits.
         if (this.scrollTargetRO != null) {
             const target = this.scrollTargetRO;
             const next = easeToward(rightOffset, target, dtMs, this.animScroll.tau);
             if (Math.abs(next - target) < 1e-3) {
                 rightOffset = target;
                 this.scrollTargetRO = null;
+                this.candleLocator?.cancelNavigation();
             } else {
                 rightOffset = next;
                 active = true;
@@ -2832,8 +3105,10 @@ export class NativeRenderer implements IChartRenderer {
         if (this.easeLiveBar(dtMs)) active = true; // glide the forming bar toward the latest tick
         this.skeletonClockMs += dtMs; // drives the loading-skeleton pulse (harmless when none show)
         this.paintData();
+        this.refreshTrackingCrosshair(); // scales and live data can move under a resting finger
         this.renderCrosshairLayer();
         this.updateLegendValues(); // the animator owns the frame — renderFrame won't run
+        this.notifyDataWindowFrameChange();
         this.emitViewportChange();
         return active;
     }
@@ -2896,8 +3171,19 @@ export class NativeRenderer implements IChartRenderer {
         if (range) for (const cb of this.viewportCbs) cb(range);
     }
 
-    private handlePointerMove(x: number | null, y: number | null): void {
-        if (x === null || y === null || this.coords.barCount === 0) {
+    /** Re-resolve the resting touch against the current viewport, bars and pane scales.
+     *  Called only while a data/animation frame already owns the paint: it must not arm
+     *  another frame or lay a new ink sample, and identical readouts need no re-emission. */
+    private refreshTrackingCrosshair(): void {
+        const point = this.lastPointer;
+        if (!this.input?.isTracking || !point) return;
+        const x = Math.max(0, Math.min(this.coords.width, point.x));
+        const y = Math.max(0, Math.min(this.coords.height, point.y));
+        this.handlePointerMove(x, y, true);
+    }
+
+    private handlePointerMove(x: number | null, y: number | null, refreshing = false): void {
+        if (x === null || y === null) {
             this.scene.crosshair = null;
             this.hoverSeparatorY = null;
             this.lastPointer = null;
@@ -2907,7 +3193,7 @@ export class NativeRenderer implements IChartRenderer {
             this.scheduler.invalidate(InvalidateLevel.Cursor);
             this.hoverLogical = null; // off the plot ⇒ the readout falls back to the latest bar
             const empty: CrosshairEvent = { time: null, price: null, paneKind: null, values: new Map(), ohlc: null };
-            for (const cb of this.crosshairCbs) cb(empty);
+            this.publishCrosshair(empty);
             return;
         }
         const inData = x >= 0 && y >= 0 && x <= this.coords.width && y <= this.coords.height;
@@ -2917,23 +3203,26 @@ export class NativeRenderer implements IChartRenderer {
         const magnetY = inData ? this.magnetSnapY(x, y) : null;
         this.scene.crosshair = inData ? { x, y: magnetY ?? y } : null;
         this.lastPointer = inData ? { x, y } : null;
-        if (inData) this.layInk(x, y);
-        // The separator spans data + gutter, so its hover highlight tracks the full width (not just
-        // the data area) — the divider stays a visible, grabbable handle over the scale too.
-        this.hoverSeparatorY = x >= 0 && y >= 0 && y <= this.coords.height ? this.separatorHoverY(y) : null;
-        // Cursor tier: repaint only the crosshair overlay, not the data layer.
-        this.scheduler.invalidate(InvalidateLevel.Cursor);
-        // A multi-group mark stack fans out while the pointer is over it (or over the gaps of its fan).
-        this.setMarksExpanded(inData ? this.chrome.markStackAt(x, y) : null);
-        this.setMarkHover(inData ? (this.chrome.markGlyphAt(x, y)?.cluster.key ?? null) : null);
+        if (!refreshing) {
+            if (inData) this.layInk(x, y);
+            // The separator spans data + gutter, so its hover highlight tracks the full width.
+            this.hoverSeparatorY = x >= 0 && y >= 0 && y <= this.coords.height ? this.separatorHoverY(y) : null;
+            // A real pointer move needs its own cursor-tier frame; refresh already has one.
+            this.scheduler.invalidate(InvalidateLevel.Cursor);
+            // A multi-group mark stack fans out while the pointer is over it.
+            this.setMarksExpanded(inData ? this.chrome.markStackAt(x, y) : null);
+            this.setMarkHover(inData ? (this.chrome.markGlyphAt(x, y)?.cluster.key ?? null) : null);
+        }
 
         // Only report a time/value when the cursor is over a real bar (not the
         // right-offset whitespace) — matches LWC emitting null off any data point.
         const logical = Math.round(this.coords.xToLogical(x));
-        const onBar = logical >= 0 && logical < this.coords.barCount;
+        const onBar = inData && logical >= 0 && logical < this.coords.barCount;
         const time = onBar ? this.coords.logicalToTime(logical) : null;
         const pane = this.paneNodeAtY(y); // the full node — the event also names the pane KIND
-        const price = inData && pane ? this.coords.yToPrice(y, pane.scale, pane.bounds) : null;
+        // Publish the exact level the horizontal line/axis chip shows, including an
+        // enabled magnet. With no bars there is no meaningful market price yet.
+        const price = inData && pane && this.coords.barCount > 0 ? this.coords.yToPrice(magnetY ?? y, pane.scale, pane.bounds) : null;
         const values = new Map<string, number>();
         if (onBar) {
             for (const model of this.scene.indicators.values()) {
@@ -2951,7 +3240,15 @@ export class NativeRenderer implements IChartRenderer {
             ? { time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close, volume: bar.volume }
             : null;
         this.hoverLogical = onBar ? logical : null;
-        const event: CrosshairEvent = { time, price, paneKind: inData && pane ? pane.kind : null, values, ohlc };
+        const event: CrosshairEvent = { time, price, paneKind: price !== null && pane ? pane.kind : null, values, ohlc };
+        this.publishCrosshair(event, refreshing);
+    }
+
+    /** Repeated stationary frames should not push unchanged OHLC/indicator values into
+     *  status lines or synced charts. Keep our own snapshot so listeners cannot mutate it. */
+    private publishCrosshair(event: CrosshairEvent, onlyIfChanged = false): void {
+        if (onlyIfChanged && sameCrosshairEvent(this.lastCrosshairEvent, event)) return;
+        this.lastCrosshairEvent = { ...event, ohlc: event.ohlc ? { ...event.ohlc } : null, values: new Map(event.values) };
         for (const cb of this.crosshairCbs) cb(event);
     }
 
@@ -2968,12 +3265,15 @@ export class NativeRenderer implements IChartRenderer {
         const bar = logical >= 0 && logical < this.coords.barCount ? this.bars[logical] : undefined;
         if (!bar) return null;
         const pane = this.paneNodeAtY(y);
-        if (!pane) return null;
+        // Candle OHLC belongs to the price pane, not an indicator's independent scale.
+        if (!pane || pane.kind !== 'price') return null;
         const candidates = mode === 'close' ? [bar.close] : [bar.open, bar.high, bar.low, bar.close];
         let best: number | null = null;
         let bestDy = Infinity;
         for (const price of candidates) {
             const py = this.coords.priceToY(price, pane.scale, pane.bounds);
+            // An offscreen candidate would move the whole crosshair outside the plot.
+            if (py < Math.max(0, pane.bounds.top) || py > Math.min(this.coords.height, pane.bounds.top + pane.bounds.height)) continue;
             const dy = Math.abs(py - y);
             if (dy < bestDy) {
                 bestDy = dy;
@@ -3398,17 +3698,70 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     // ── data window ──
-    /** The data-window readout (port seam) — the hovered bar's date/time and OHLCV plus every
-     *  indicator's value there, or the latest bar when the cursor is off the plot. Values are
-     *  pre-formatted on the scale of the pane they belong to, so a host panel renders them as-is. */
+    /** The local bar, a synced ghost's bar, or the latest bar when neither is on data.
+     *  Values are pre-formatted on their pane's scale; a host renders them as-is. */
     getDataWindowReadout(): DataWindowReadout {
         const n = this.bars.length;
         if (n === 0) return { date: '', time: '', ohlc: null, groups: [] };
-        const idx = this.hoverLogical != null ? this.hoverLogical : n - 1;
+        // A history trim or market replacement can invalidate a former logical index.
+        // Never label an out-of-bounds read as a crosshair bar or return an empty OHLC.
+        const local = this.hoverLogical != null && this.hoverLogical >= 0 && this.hoverLogical < n ? this.hoverLogical : null;
+        // The ghost uses the bar CONTAINING its time, not the nearest open. The helper
+        // also rejects times beyond the forming bar; its result is one of `this.bars`.
+        const syncedBar = local == null && this.externalCross ? this.barAt(this.externalCross.time) : null;
+        // Resolve by the bar's exact open time (binary search), not an O(n) indexOf on
+        // every synced pointer move through a potentially deep history.
+        const synced = syncedBar ? Math.round(this.coords.timeToLogical(syncedBar.time)) : -1;
+        const idx = local ?? (synced >= 0 ? synced : n - 1);
+        const source: NonNullable<DataWindowReadout['source']> = local != null ? 'crosshair' : synced >= 0 ? 'synced' : 'latest';
         const bar = this.bars[idx];
         const pricePane = this.dataWindowPricePane();
         const parts = bar ? formatStampParts(bar.time, this.scene.timezone) : { date: '', time: '' };
-        return { date: parts.date, time: parts.time, ohlc: this.dataWindowOHLC(bar, pricePane), groups: this.dataWindowGroups(idx, pricePane) };
+        return { date: parts.date, time: parts.time, ohlc: this.dataWindowOHLC(bar, pricePane), groups: this.dataWindowGroups(idx, pricePane), source };
+    }
+
+    /** Only materialize the requested rows; the chart's bar array is already replay-bounded. */
+    getDataWindowTable(offset: number, count: number): DataWindowTableSlice {
+        const total = this.bars.length;
+        const start = Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0;
+        const size = Number.isFinite(count) ? Math.max(0, Math.min(500, Math.floor(count))) : 0;
+        const pricePane = this.dataWindowPricePane();
+        const plots = [...this.scene.indicators.values()].flatMap((model) => {
+            const pane = (model.paneId ? this.scene.panes.get(model.paneId) : null) ?? pricePane;
+            const anchor = this.scene.offsetOf(model.id);
+            return model.series.flatMap((series, index) => {
+                if (!seriesShownOn(series, 'dataWindow') || (!isLineLikeSeries(series) && series.kind !== 'candle' && series.kind !== 'bar')) return [];
+                const title = series.title || model.title;
+                return [{
+                    id: JSON.stringify([model.id, series.id, index]),
+                    label: title === model.title ? title : `${model.title} · ${title}`,
+                    series,
+                    pane,
+                    anchor,
+                }];
+            });
+        });
+        const rows: DataWindowTableSlice['rows'] = [];
+        for (let i = start; i < Math.min(total, start + size); i += 1) {
+            const idx = total - 1 - i;
+            const bar = this.bars[idx]!;
+            const stamp = formatTableStampParts(bar.time, this.scene.timezone);
+            const values = plots.map(({ series, pane, anchor }) => {
+                const value = isLineLikeSeries(series) ? series.points[idx - anchor]?.value
+                    : series.kind === 'candle' || series.kind === 'bar' ? series.bars[idx - anchor]?.close : null;
+                return value != null && Number.isFinite(value) ? this.readoutFmt(value, pane, false) : null;
+            });
+            rows.push({
+                timestamp: bar.time,
+                ...stamp,
+                // A spreadsheet must not silently round away provider/derived candle
+                // precision just because a zoomed-out axis happens to show fewer digits.
+                ohlc: { o: String(bar.open), h: String(bar.high), l: String(bar.low), c: String(bar.close), up: bar.close >= bar.open },
+                volume: bar.volume != null && Number.isFinite(bar.volume) ? String(bar.volume) : null,
+                values,
+            });
+        }
+        return { total, columns: plots.map(({ id, label }) => ({ id, label })), rows };
     }
 
     private dataWindowPricePane(): PaneNode | null {
@@ -3416,8 +3769,9 @@ export class NativeRenderer implements IChartRenderer {
     }
 
     /** A plot readout on ITS pane's scale — percent/indexed panes read as the axis reads,
-     *  so a compare line sharing a +% axis cannot print a raw price beside it. */
-    private readoutFmt(v: number, pane: PaneNode | null): string {
+     *  so a compare line sharing a +% axis cannot print a raw price beside it. The Data
+     *  Window has its own wrapping space; only the compact chart legend abbreviates prices. */
+    private readoutFmt(v: number, pane: PaneNode | null, compact = this.axisLabelsCompact): string {
         if (!pane) return String(v);
         return formatAxisValue(
             pane.scale,
@@ -3426,12 +3780,12 @@ export class NativeRenderer implements IChartRenderer {
             percentScaleFor(this.scene, pane),
             this.scene.priceMintick,
             pane.axisFormat,
-            this.axisLabelsCompact,
+            compact,
         );
     }
 
     private dataWindowFmt(v: number, pane: PaneNode | null): string {
-        return pane ? formatPriceLabel(pane.scale, pane.bounds.height, v, this.scene.priceMintick, this.axisLabelsCompact) : String(v);
+        return pane ? formatPriceLabel(pane.scale, pane.bounds.height, v, this.scene.priceMintick, false) : String(v);
     }
 
     private dataWindowOHLC(bar: OHLCV | undefined, pricePane: PaneNode | null): DataWindowOHLC | null {
@@ -3480,7 +3834,7 @@ export class NativeRenderer implements IChartRenderer {
                 continue; // markers carry no scalar readout
             }
             if (value == null || !Number.isFinite(value)) continue;
-            rows.push({ label: s.title || model.title, value: this.readoutFmt(value, pane), color });
+            rows.push({ label: s.title || model.title, value: this.readoutFmt(value, pane, surface === 'dataWindow' ? false : this.axisLabelsCompact), color });
         }
         return rows;
     }
@@ -3529,6 +3883,7 @@ export class NativeRenderer implements IChartRenderer {
         if (repaintsData(level)) {
             this.computeScales();
             this.paintData();
+            this.refreshTrackingCrosshair();
         } else if (repaintsChrome(level) && this.paintedData) {
             // Chrome-only tier (the countdown's wall-clock tick): neither data nor viewport
             // changed, so repaint just the chrome canvas over the frame's existing scales —
@@ -3545,6 +3900,7 @@ export class NativeRenderer implements IChartRenderer {
         // Legend values follow the same tiers (hover moves the read bar, data changes the
         // value); the push diffs per row, so an unchanged frame touches no DOM.
         this.updateLegendValues();
+        if (repaintsData(level)) this.notifyDataWindowFrameChange();
     }
 
     // ── cursor type + pointer ink ──
@@ -3626,7 +3982,7 @@ export class NativeRenderer implements IChartRenderer {
 
     /** Repaint the L2 crosshair canvas and keep the `.vela-shade-right` element on the veil it painted. */
     private renderCrosshairLayer(): void {
-        this.crosshairLayer.render(this.scene, this.coords, this.theme, this.hoverSeparatorY, this.externalCrossPx());
+        this.crosshairLayer.render(this.scene, this.coords, this.theme, this.hoverSeparatorY, this.externalCrossPx(), this.input?.isTracking ?? false);
         this.syncShadeRight();
     }
 
@@ -3713,6 +4069,7 @@ export class NativeRenderer implements IChartRenderer {
         // every path that can move them (a z write, a restored config, a mount/remove, a
         // pane move) is covered without its own call site. No-op when unchanged.
         this.syncLayerCanvasOrder();
+        this.candleLocator?.update();
         this.stampScaleInvert(); // flip axes (if inverted) before any layer reads pane.scale
         this.backend.modelAlpha = this.modelAlpha;
         this.backend.candleBodyAlpha = this.candleBodyAlpha;
@@ -3853,6 +4210,9 @@ export class NativeRenderer implements IChartRenderer {
         if (next && prev && prev.time === next.time && prev.price === next.price) return; // idempotent — 60Hz streams stay cheap
         this.externalCross = next;
         this.scheduler.invalidate(InvalidateLevel.Cursor);
+        // A follower's Data Window reads its own containing bar. This separate signal
+        // never goes through onCrosshairMove, so it cannot echo to the other charts.
+        this.notifyDataWindowChange();
     }
 
     /** Resolve the ghost to pixels for THIS frame (null when off-window or dataless).
@@ -4681,14 +5041,10 @@ export class NativeRenderer implements IChartRenderer {
         // Reserve strips for the price axis (right) + time axis (bottom); the
         // data area drives the coordinate transform so series sit clear of them.
         this.coords.setSize(Math.max(1, pw - this.rightAxisW), Math.max(1, ph - TIME_AXIS_H), dpr);
-        // Geometry changed — the retained crosshair {x,y} now points at the wrong
-        // bar/price, so drop it (LWC hides the crosshair until the next move). The one
-        // exception is touch tracking: the finger is off the glass, so nothing will
-        // "move next" and the crosshair would silently vanish — re-issue the last point.
-        this.scene.crosshair = null;
-        if (this.input?.isTracking && this.lastPointer) {
-            this.handlePointerMove(this.lastPointer.x, this.lastPointer.y);
-        }
+        // Geometry changed: mouse hover will be recomputed on its next move. A resting
+        // touch has no next move, so retain it until the data frame has laid out panes
+        // and scales, then re-resolve/clamp it in refreshTrackingCrosshair().
+        if (!this.input?.isTracking) this.scene.crosshair = null;
         this.layoutPanes();
         this.userDrawings?.onResize(); // dismiss the settings popup on a resize
         if (!this.didInitialFit && this.coords.barCount > 0) {
@@ -4703,7 +5059,10 @@ export class NativeRenderer implements IChartRenderer {
             // animating chart, live-bar easing included). Paint synchronously instead.
             this.computeScales();
             this.paintData();
+            this.refreshTrackingCrosshair();
             this.renderCrosshairLayer();
+            this.updateLegendValues();
+            this.notifyDataWindowFrameChange();
         } else {
             this.scheduler.flushNow(InvalidateLevel.Full);
         }
@@ -4712,6 +5071,17 @@ export class NativeRenderer implements IChartRenderer {
     private applyBackground(): void {
         this.wrapper.style.background = this.theme.background;
     }
+}
+
+function sameCrosshairEvent(a: CrosshairEvent | null, b: CrosshairEvent): boolean {
+    if (!a || a.time !== b.time || !Object.is(a.price, b.price) || a.paneKind !== b.paneKind || a.values.size !== b.values.size) return false;
+    for (const [id, value] of a.values) {
+        if (!b.values.has(id) || !Object.is(value, b.values.get(id))) return false;
+    }
+    const x = a.ohlc;
+    const y = b.ohlc;
+    if (!x || !y) return x === y;
+    return x.time === y.time && x.open === y.open && x.high === y.high && x.low === y.low && x.close === y.close && x.volume === y.volume;
 }
 
 /**
@@ -4773,6 +5143,19 @@ function formatStampParts(ms: number, timeZone: string): { date: string; time: s
     return {
         date: `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`,
         time: `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`,
+    };
+}
+
+/** Candle tables retain seconds and subsecond timestamps instead of collapsing distinct bars. */
+function formatTableStampParts(ms: number, timeZone: string): { date: string; time: string } {
+    // tzOffsetMs works at second precision; keep the original fractional second separately.
+    const wholeSecond = Math.floor(ms / 1000) * 1000;
+    const d = zonedDate(wholeSecond, timeZone);
+    const p = (n: number): string => String(n).padStart(2, '0');
+    const fraction = ms - wholeSecond;
+    return {
+        date: `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`,
+        time: `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}${fraction ? `.${String(fraction).padStart(3, '0')}` : ''}`,
     };
 }
 

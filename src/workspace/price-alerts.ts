@@ -44,6 +44,8 @@ export interface PriceAlert {
     fires: number;
     /** The id of the horizontal line drawn at the level ('' = none drawn). */
     lineId: string;
+    /** True only for a line created/owned by price alerts; legacy matched lines are protected. */
+    lineOwned?: boolean;
     /**
      * When set, the level is not `value` but the DRAWING's price at the bar being evaluated —
      * the alert follows the line as it slopes. `value` then holds the last resolved level, so
@@ -57,6 +59,8 @@ export interface AlertTick {
     prev: number | null;
     /** The price now. */
     now: number;
+    /** Actual tick time in epoch milliseconds when available (never the price). */
+    time?: number;
 }
 
 export const CONDITION_LABELS: Readonly<Record<AlertCondition, string>> = {
@@ -154,13 +158,20 @@ export function alertFires(alert: Pick<PriceAlert, 'condition' | 'value'>, tick:
 export function advanceAlert(alert: PriceAlert, tick: AlertTick): { alert: PriceAlert; fired: boolean } {
     if (alert.state !== 'active') return { alert, fired: false };
     const fired = alertFires(alert, tick);
-    if (!fired) return { alert: { ...alert, anchorPrice: alert.anchorPrice ?? tick.now }, fired: false };
+    if (!fired) {
+        // Keep the last *side* through an exact touch so 99 → 100 → 101 still
+        // crosses. Otherwise update on every tick: a repeating greater/less alert
+        // must re-arm after price returns to the other side.
+        const anchorPrice = Number.isFinite(tick.now) && tick.now !== alert.value
+            ? tick.now : alert.anchorPrice ?? (Number.isFinite(tick.now) ? tick.now : null);
+        return { alert: { ...alert, anchorPrice }, fired: false };
+    }
     return {
         alert: {
             ...alert,
             state: alert.frequency === 'once' ? 'fired' : 'active',
             anchorPrice: tick.now,
-            firedAt: tick.now,
+            firedAt: tick.time ?? alert.firedAt,
             fires: alert.fires + 1,
         },
         fired: true,

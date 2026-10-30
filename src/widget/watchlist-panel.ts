@@ -9,11 +9,18 @@ import type { OHLCV } from '../core/model/ohlcv';
 import { injectStyles } from '../ui/styles';
 import { iconEl } from '../ui/icons';
 import { quoteOf, QuoteTracker, type Quote, type QuoteSourceFactory } from './quotes';
-import { SidePanel } from './side-panel';
+import { MIN_FLOAT_PANEL_WIDTH, SidePanel } from './side-panel';
 
 const STYLE_ID = 'vela-watchlist';
 const CSS = `
 .vela-wl { --vela-wl-row: 42px; }
+.vela-wl-row[hidden], .vela-wl-list[hidden], .vela-wl-empty[hidden], .vela-wl-more[hidden] { display: none !important; }
+.vela-wl-kebab {
+    all: unset; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+    flex: none; width: 26px; height: 26px; border-radius: 4px; color: var(--vela-fg-muted); cursor: pointer;
+}
+.vela-wl-kebab:hover, .vela-wl-kebab:focus-visible { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-wl-kebab:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: -2px; }
 .vela-wl-bar { display: flex; align-items: center; gap: 6px; padding: 8px 8px 6px; }
 .vela-wl-search {
     flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 8px 0 26px;
@@ -136,13 +143,15 @@ export class WatchlistPanel extends SidePanel {
     private readonly rows = new Map<string, { el: HTMLElement; last: HTMLElement; change: HTMLElement; symbol: string }>();
     private readonly unsubs = new Map<string, () => void>();
     private readonly sortMenu: HTMLElement;
+    private readonly sortButton: HTMLButtonElement;
+    private sortDismiss: (() => void) | null = null;
     private sort: Sort = 'manual';
     private filter = '';
     private active: string | null = null;
     private rendered: string[] = [];
 
     constructor(host: HTMLElement, opts: WatchlistPanelOptions) {
-        super(host, 'Watchlist', 'vela-wl', { resizable: true, width: 252, minWidth: 208, maxWidth: 420, maximizable: true });
+        super(host, 'Watchlist', 'vela-wl', { resizable: true, width: 252, minWidth: MIN_FLOAT_PANEL_WIDTH, maxWidth: 420, maximizable: true });
         this.opts = opts;
         injectStyles(STYLE_ID, CSS, host.ownerDocument);
         this.tracker = new QuoteTracker(opts.quote);
@@ -151,23 +160,39 @@ export class WatchlistPanel extends SidePanel {
         // ── the header's kebab: sorting and the destructive-clearing pair ──
         const kebab = doc.createElement('button');
         kebab.type = 'button';
+        this.sortButton = kebab;
         kebab.className = 'vela-panel-btn vela-wl-kebab';
         kebab.setAttribute('aria-label', 'Watchlist options');
+        kebab.title = 'Watchlist options';
         kebab.setAttribute('aria-haspopup', 'menu');
+        kebab.setAttribute('aria-expanded', 'false');
         kebab.appendChild(iconEl('kebab', doc));
         this.sortMenu = doc.createElement('div');
         this.sortMenu.className = 'vela-wl-sortmenu';
         this.sortMenu.hidden = true;
         kebab.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.sortMenu.hidden = !this.sortMenu.hidden;
+            if (!this.sortMenu.hidden) { this.closeSortMenu(); return; }
+            const panel = this.el.getBoundingClientRect();
+            const body = this.body.getBoundingClientRect();
+            this.sortMenu.style.setProperty('--vela-wl-menu-top', `${Math.max(2, body.top - panel.top)}px`);
+            this.sortMenu.hidden = false;
+            kebab.setAttribute('aria-expanded', 'true');
         });
-        doc.addEventListener('pointerdown', (e) => {
+        const escape = (e: KeyboardEvent): void => {
+            if (e.key !== 'Escape' || this.sortMenu.hidden) return;
+            e.preventDefault(); e.stopPropagation(); this.closeSortMenu(); kebab.focus();
+        };
+        kebab.addEventListener('keydown', escape);
+        this.sortMenu.addEventListener('keydown', escape);
+        const outside = (e: PointerEvent): void => {
             if (this.sortMenu.hidden) return;
             const target = e.target as Node;
             if (this.sortMenu.contains(target) || kebab.contains(target)) return;
-            this.sortMenu.hidden = true;
-        });
+            this.closeSortMenu();
+        };
+        doc.addEventListener('pointerdown', outside);
+        this.sortDismiss = () => doc.removeEventListener('pointerdown', outside);
         this.headerSlot.append(kebab);
 
         // ── search + add ──
@@ -219,6 +244,11 @@ export class WatchlistPanel extends SidePanel {
         this.refresh();
     }
 
+    private closeSortMenu(): void {
+        this.sortMenu.hidden = true;
+        this.sortButton.setAttribute('aria-expanded', 'false');
+    }
+
     /** Re-read the shell's list (add/remove/reorder) and repaint every row. */
     refresh(): void {
         const symbols = [...this.opts.symbols()];
@@ -253,6 +283,8 @@ export class WatchlistPanel extends SidePanel {
     }
 
     override destroy(): void {
+        this.sortDismiss?.();
+        this.sortDismiss = null;
         for (const un of this.unsubs.values()) un();
         this.unsubs.clear();
         this.tracker.destroy();
@@ -425,7 +457,7 @@ export class WatchlistPanel extends SidePanel {
             item.append(check, text);
             item.addEventListener('click', () => {
                 this.sort = id;
-                this.sortMenu.hidden = true;
+                this.closeSortMenu();
                 this.renderSortMenu();
                 this.applySort();
             });
@@ -441,7 +473,7 @@ export class WatchlistPanel extends SidePanel {
             clear.setAttribute('role', 'menuitem');
             clear.textContent = 'Clear the watchlist';
             clear.addEventListener('click', () => {
-                this.sortMenu.hidden = true;
+                this.closeSortMenu();
                 this.opts.onClear?.();
             });
             this.sortMenu.appendChild(clear);
@@ -454,9 +486,11 @@ injectStyles(
     `${STYLE_ID}-sort`,
     `
 .vela-wl-sortmenu {
-    position: absolute; z-index: 20; right: 8px; top: 40px; min-width: 190px; padding: 5px;
+    position: absolute; z-index: 20; right: 4px; top: var(--vela-wl-menu-top, 40px);
+    box-sizing: border-box; width: min(190px, calc(100% - 8px));
+    max-height: max(0px, calc(100% - var(--vela-wl-menu-top, 40px) - 4px)); overflow: auto; padding: 5px;
     background: var(--vela-surface-elev, var(--vela-bg)); color: var(--vela-fg);
-    border: 1px solid var(--vela-border-strong); border-radius: 10px;
+    border: 1px solid var(--vela-border-strong); border-radius: 0;
     box-shadow: var(--vela-shadow-dialog, 0 10px 30px rgba(0,0,0,0.35)); font-size: 12.5px;
 }
 .vela-wl-sortmenu[hidden] { display: none !important; }
@@ -467,7 +501,7 @@ injectStyles(
 }
 .vela-wl-sortrow:hover { background: var(--vela-hover); }
 .vela-wl-sortrow[aria-checked='true'] { color: var(--vela-fg-bright); font-weight: 600; }
-.vela-wl-sortcheck { flex: none; width: 13px; height: 13px; display: grid; place-items: center; color: var(--vela-accent); }
+.vela-wl-sortcheck { flex: none; width: 13px; height: 13px; display: grid; place-items: center; color: var(--vela-accent-ink, var(--vela-accent)); }
 .vela-wl-sortcheck .vela-icon { width: 13px; height: 13px; }
 .vela-wl-sortsep { height: 1px; margin: 4px 6px; background: var(--vela-border); }
 .vela-wl-sortrow--danger { color: var(--vela-danger, #f23645); } /* palette-exempt: var() fallback for a panel portalled outside the token scope */

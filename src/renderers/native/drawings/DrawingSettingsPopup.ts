@@ -24,8 +24,10 @@ import { applyChromeTokens } from '../../shared/theme-tokens';
 import { contrastColor } from '../../shared/drawing-geometry';
 import { NumberInput } from '../../../ui/components/number-input';
 import { TextArea } from '../../../ui/components/text-area';
-import { buildColorPicker } from '../../../ui/components/color-picker';
+import { buildColorPicker, rememberRecentColor } from '../../../ui/components/color-picker';
 import { Popover, closeOpenPopovers } from '../../../ui/components/popover';
+import { Tooltip } from '../../../ui/components/tooltip';
+import { enableCompactHorizontalStrip } from '../../../ui/scrolling';
 import { DrawingSettingsPanel, type DrawingPanelEnv } from './DrawingSettingsPanel';
 
 /** A `{ path: value }` patch emitted as the user edits a control. */
@@ -106,7 +108,7 @@ export interface PopupAnchor {
 const BTN = 30; // icon-button side (px)
 const ICON = 21; // icon glyph side (px)
 const STYLE_ID = 'vela-drawing-popup-styles';
-const STYLE_REV = '7';
+const STYLE_REV = '10';
 
 /** Inject the scoped styles that inline cssText can't reach (`:focus`, scrollbar
  *  pseudo-elements). Idempotent — one shared sheet for all popups. */
@@ -126,12 +128,16 @@ function ensureStyles(): void {
 .vela-dpop-item{background:transparent;transition:background var(--vela-dur-fast) ease;}
 .vela-dpop-item:hover{background:var(--vela-hover-strong);}
 .vela-dpop-item[data-active='1']{background:var(--vela-active);}
+.vela-dpop-more { box-sizing:border-box; width:max-content; min-width:min(176px,calc(100vw - 16px)); max-width:min(236px,calc(100vw - 16px)); max-height:min(320px,calc(100vh - 12px)); overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; touch-action:pan-y; }
+.vela-dpop-more .vela-dpop-item { min-height: 36px; border-radius: 0 !important; }
+.vela-dpop-more .vela-dpop-item:focus-visible { outline: 2px solid var(--vela-focus); outline-offset: -2px; }
+.vela-dpop-more-content { max-height: min(310px, calc(100vh - 24px)); overflow-y: auto; overscroll-behavior: contain; }
+.vela-dpop-more-sep { height: 1px; margin: 4px 6px; background: var(--vela-border); flex: none; }
+@media (pointer: coarse) { .vela-dpop-more .vela-dpop-item { min-height: 44px; } }
 /* A finger needs a wider grab zone than a cursor — grow the move handle on touch-first
    devices (the glyph stays centered; only the hit target widens). */
 @media (pointer: coarse){.vela-dpop-grip{width:${BTN + 14}px !important;}}
-/* Narrow host (a phone cell beside another chart): tighten the buttons so the whole bar
-   stays two rows. The value text on the width/style triggers is the first thing to go —
-   the glyph + menu still say everything, and a three-row bar eats a quarter of a chart. */
+/* Narrow cells tighten the controls; the glyph + overflow menu retain each action. */
 .vela-dpop[data-compact] .vela-dpop-btn{width:26px !important;min-width:0 !important;height:26px !important;padding:0 2px !important;}
 .vela-dpop[data-compact] .vela-dpop-btn .vela-dpop-val{display:none;}
 .vela-dpop[data-compact] .vela-dpop-grip{width:26px !important;height:26px !important;}
@@ -150,7 +156,7 @@ function ensureStyles(): void {
  */
 export class DrawingSettingsPopup {
     private el: HTMLDivElement | null = null;
-    private tipEl: HTMLDivElement | null = null; // floating hover-label (above/below the toolbar)
+    private readonly tooltips: Tooltip[] = [];
     private textPanel: HTMLDivElement | null = null;
     private readonly panel: DrawingSettingsPanel;
     /** The single drawing the bar is open on (a multi-selection has no settings panel). */
@@ -159,6 +165,11 @@ export class DrawingSettingsPopup {
     private colorOwner: HTMLElement | null = null;
     private menuPop: Popover | null = null;
     private menuOwner: HTMLElement | null = null;
+    private bar: HTMLElement | null = null;
+    private overflowButton: HTMLButtonElement | null = null;
+    private overflowed: HTMLElement[] = [];
+    private pinnedControl: HTMLElement | null = null;
+    private barObserver: ResizeObserver | null = null;
     private theme: VelaTheme;
     private onClose: ((e?: PointerEvent) => void) | null = null;
 
@@ -200,7 +211,6 @@ export class DrawingSettingsPopup {
     openPanel(): boolean {
         const cur = this.current;
         if (!cur) return false;
-        this.hideTip();
         this.closeColorPopover();
         this.closeMenu();
         this.panel.open(cur.drawing, cur.actions, cur.anchor);
@@ -258,9 +268,9 @@ export class DrawingSettingsPopup {
         });
 
         const bar = document.createElement('div');
-        // Wrap instead of clip: on a phone-sized cell the bar's controls do not fit on one
-        // line, and a toolbar cut off at the cell edge is worse than a second row.
-        bar.style.cssText = 'display:flex;align-items:center;flex-wrap:wrap;gap:2px;padding:4px;max-width:100%;box-sizing:border-box;';
+        // Keep one line; controls that cannot fit move into the existing More menu.
+        bar.className = 'vela-dpop-bar';
+        bar.style.cssText = 'display:flex;align-items:center;flex-wrap:nowrap;gap:2px;padding:4px;max-width:100%;box-sizing:border-box;';
 
         // Leading move handle — drag the whole toolbar anywhere on the chart.
         bar.appendChild(this.dragHandle());
@@ -423,23 +433,38 @@ export class DrawingSettingsPopup {
         if (!multi && actions.addAlert && drawings.every((d) => canAlertOn(d.type))) {
             bar.appendChild(this.iconBtn('Alert on this line', CLOCK_ICON, () => actions.addAlert?.()));
         }
-        if (!multi) bar.appendChild(this.iconBtn('Settings', GEAR_ICON, () => this.openPanel()));
+        if (!multi) {
+            const settings = this.iconBtn('Settings', GEAR_ICON, () => { this.openPanel(); });
+            // This action opens a second surface over the chart. Keep its pointer/click
+            // from reaching chart selection handlers, which can immediately dismiss the
+            // newly opened panel on devices with synthesized click events.
+            settings.addEventListener('pointerdown', (event) => event.stopPropagation());
+            settings.addEventListener('click', (event) => event.stopPropagation());
+            bar.appendChild(settings);
+        }
         bar.appendChild(this.toggle('Lock', LOCK_ICON, common((d) => d.locked), (v) => actions.setLocked(v), UNLOCK_ICON));
         const del = this.iconBtn('Delete', TRASH_ICON, () => actions.remove());
         del.style.color = 'var(--vela-danger)';
         bar.appendChild(del);
-        bar.appendChild(this.kebabButton(actions));
+        const overflowButton = this.kebabButton(actions);
+        bar.appendChild(overflowButton);
 
         el.append(bar);
         this.host.appendChild(el);
         this.el = el;
-        // Hover-label: a floating tooltip that flips above/below the toolbar based on where it sits.
-        el.addEventListener('mouseover', (e) => {
-            const target = (e.target as HTMLElement).closest('[data-tip]') as HTMLElement | null;
-            if (target) this.showTip(target);
-            else this.hideTip();
-        });
-        el.addEventListener('mouseleave', () => this.hideTip());
+        this.bar = bar;
+        this.overflowButton = overflowButton;
+        this.layoutOverflow();
+        if (typeof ResizeObserver !== 'undefined') {
+            this.barObserver = new ResizeObserver(() => { this.layoutOverflow(); this.reposition(); });
+            this.barObserver.observe(this.host);
+        }
+        // Use the workspace's one themed tooltip, including on keyboard focus. This
+        // avoids a second inverted-color tooltip over the same drawing button.
+        const tipHost = (this.host.closest('.vela-workspace') as HTMLElement | null) ?? this.host;
+        for (const target of el.querySelectorAll<HTMLElement>('[data-tip]')) {
+            this.tooltips.push(new Tooltip(target, { content: target.dataset.tip ?? '', host: tipHost }));
+        }
         this.position(anchor);
         // Bubble phase (not capture): the chart canvas's pointerdown handler runs FIRST, so it can
         // claim a press on an off-body handle (e.g. an ellipse corner) before this dismiss deselects.
@@ -450,10 +475,17 @@ export class DrawingSettingsPopup {
         document.removeEventListener('pointerdown', this.onOutside);
         this.closeColorPopover();
         this.closeMenu();
-        this.hideTip();
+        for (const tooltip of this.tooltips) tooltip.destroy();
+        this.tooltips.length = 0;
         if (!keepPanel) this.panel.close();
+        this.barObserver?.disconnect();
+        this.barObserver = null;
         this.el?.remove();
         this.el = null;
+        this.bar = null;
+        this.overflowButton = null;
+        this.overflowed = [];
+        this.pinnedControl = null;
         this.textPanel = null;
         this.onClose = null;
         this.current = null;
@@ -514,7 +546,8 @@ export class DrawingSettingsPopup {
                 this.reposition();
             },
         });
-        ta.el.style.minWidth = '220px';
+        ta.el.style.minWidth = '0';
+        ta.el.style.width = 'min(220px, 100%)';
         ta.input.addEventListener('input', () => {
             actions.patch({ 'text.value': ta.input.value });
             this.reposition();
@@ -548,6 +581,56 @@ export class DrawingSettingsPopup {
         this.textPanel = panel;
         this.reposition();
         ta.input.focus();
+    }
+
+    // Keep one line. Overflow entries proxy the ORIGINAL controls, so schema-specific
+    // swatches, numeric fields, dropdowns and callbacks retain their full behavior.
+    private layoutOverflow(): void {
+        const el = this.el, bar = this.bar, more = this.overflowButton;
+        if (!el || !bar || !more) return;
+        const width = Math.max(1, this.host.getBoundingClientRect().width - 8);
+        this.markCompact(width + 8);
+        el.style.maxWidth = `${width}px`;
+        const children = [...bar.children] as HTMLElement[];
+        for (const child of children) {
+            if (!child.hasAttribute('data-dpop-display')) child.dataset.dpopDisplay = child.style.display;
+            child.style.display = child.dataset.dpopDisplay ?? '';
+            child.style.flexShrink = '0';
+            if (child.hasAttribute('data-dpop-numeric')) child.style.removeProperty('max-width');
+            delete child.dataset.overflowed;
+        }
+        const grip = children[0];
+        const divider = children.find((child) => child.hasAttribute('data-dpop-divider'));
+        const controls = children.filter((child) => child !== grip && child !== more && child !== divider);
+        const size = (): number => children.filter((child) => child.style.display !== 'none').reduce((sum, child) => {
+            const style = getComputedStyle(child);
+            return sum + child.getBoundingClientRect().width + (parseFloat(style.marginLeft) || 0) + (parseFloat(style.marginRight) || 0);
+        }, 0) + Math.max(0, children.filter((child) => child.style.display !== 'none').length - 1) * 2 + 10;
+        if (size() > width && divider) divider.style.display = 'none';
+        // Keep the most useful single-drawing actions near the ellipsis where possible.
+        const essential = (child: HTMLElement): boolean => ['Line color', 'Settings', 'Delete'].includes(child.dataset.tip ?? '');
+        const candidates = [...controls].reverse().filter((child) => child !== this.pinnedControl);
+        for (const child of [...candidates.filter((child) => !essential(child)), ...candidates.filter(essential)]) {
+            if (size() <= width) break;
+            child.style.display = 'none'; child.dataset.overflowed = '1';
+        }
+        if (size() > width && grip) grip.style.display = 'none';
+        // A pinned numeric field can be wider than the entire tiny chart cell. Shrink
+        // just that field so the existing ellipsis remains completely reachable.
+        if (size() > width && this.pinnedControl?.hasAttribute('data-dpop-numeric')) {
+            const control = this.pinnedControl;
+            control.style.maxWidth = `${Math.max(0, control.getBoundingClientRect().width - (size() - width))}px`;
+        }
+        this.overflowed = controls.filter((child) => child.dataset.overflowed === '1');
+        more.setAttribute('aria-label', this.overflowed.length ? `More drawing actions, ${this.overflowed.length} hidden` : 'More');
+    }
+
+    private activateOverflow(control: HTMLElement): void {
+        this.pinnedControl = control;
+        this.layoutOverflow();
+        this.reposition();
+        if (control instanceof HTMLButtonElement) control.click();
+        else control.querySelector<HTMLElement>('input, button, select, textarea')?.focus({ preventScroll: true });
     }
 
     // ── positioning ──
@@ -596,7 +679,7 @@ export class DrawingSettingsPopup {
     private base(tip: string): HTMLButtonElement {
         const b = document.createElement('button');
         b.type = 'button';
-        b.dataset.tip = tip; // the custom tip strip reads this (no native `title` — that tooltip is noisy)
+        b.dataset.tip = tip; // registered with the shared tooltip after the bar mounts
         // The tip is the only NAME these icon-only buttons had: a screen reader announced
         // "button, button, button" down the whole bar. `aria-label` is the same string, so
         // the visible and spoken names cannot drift apart.
@@ -619,6 +702,7 @@ export class DrawingSettingsPopup {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'vela-dpop-grip';
+        b.setAttribute('data-vela-no-tip', '');
         b.setAttribute('aria-label', 'Move toolbar');
         b.tabIndex = -1; // a drag handle is not a keyboard stop; the bar ships its own keys
         // touch-action:none — the handle owns its touches: without it the browser claims
@@ -631,7 +715,6 @@ export class DrawingSettingsPopup {
             if (!el || (e as PointerEvent).button !== 0) return;
             e.preventDefault();
             e.stopPropagation(); // don't let the bar's pointerdown close popovers, and don't dismiss
-            this.hideTip();
             this.closeColorPopover();
             this.closeMenu();
             const host = this.host.getBoundingClientRect();
@@ -825,7 +908,14 @@ export class DrawingSettingsPopup {
                 this.closeMenu();
                 return;
             }
+            const overflow = this.overflowed.map((control) => ({
+                // Reuse the exact visible glyph from the toolbar control. Previously these
+                // promoted actions were text-only because their icon field was empty.
+                icon: control.innerHTML, label: control.dataset.tip ?? control.getAttribute('aria-label') ?? 'Drawing control',
+                onClick: () => this.activateOverflow(control), overflow: true,
+            }));
             this.openActionMenu(b, [
+                ...overflow,
                 { icon: CLONE_ICON, label: 'Duplicate', onClick: () => actions.duplicate() },
                 { icon: STYLE_COPY_ICON, label: 'Copy style', onClick: () => actions.copyStyle?.() },
                 // Only offered once something has been copied: an always-present row that
@@ -841,21 +931,24 @@ export class DrawingSettingsPopup {
         return b;
     }
 
-    /** Host-anchored floating shell (stays inside the chart). Content is filled after
-     *  construction so `fill` can close over the live `Popover` without hitting TDZ. */
-    private hostFloat(anchor: HTMLElement, opts: { align?: 'start' | 'end'; zIndex: number; padding: string; onClose?: () => void; fill: (el: HTMLElement, pop: Popover) => void }): Popover {
+    /** A chart-contained or viewport-floated shell. Content is filled after construction
+     *  so `fill` can close over the live `Popover` without hitting TDZ. */
+    private hostFloat(anchor: HTMLElement, opts: { align?: 'start' | 'end'; zIndex: number; padding: string; square?: boolean; escape?: boolean; onClose?: () => void; fill: (el: HTMLElement, pop: Popover) => void }): Popover {
         const t = this.theme;
+        const floatHost = opts.escape ? (this.host.closest<HTMLElement>('.vela-workspace') ?? this.host.closest<HTMLElement>('.vela-ui') ?? this.host.ownerDocument.body) : this.host;
         const pop = new Popover({
             trigger: anchor,
-            host: this.host,
+            host: floatHost,
             theme: t,
-            position: 'absolute',
-            boundary: this.host,
+            position: opts.escape ? 'fixed' : 'absolute',
+            boundary: opts.escape ? 'viewport' : this.host,
             boundaryInset: 4,
-            viewportInset: 0,
+            viewportInset: opts.escape ? 6 : 0,
+            fitWithinBoundary: opts.square === true || opts.escape === true,
+            restoreFocusOnEscape: opts.square === true || opts.escape === true,
             gap: 6,
             align: opts.align ?? 'start',
-            zIndex: opts.zIndex,
+            zIndex: opts.escape ? 6000 : opts.zIndex,
             onClose: () => {
                 if (this.menuPop === pop) { this.menuPop = null; this.menuOwner = null; }
                 if (this.colorPop === pop) { this.colorPop = null; this.colorOwner = null; }
@@ -863,15 +956,23 @@ export class DrawingSettingsPopup {
             },
         });
         const el = pop.el;
-        el.style.background = t.background;
+        el.style.background = opts.square ? 'var(--vela-surface-overlay, var(--vela-surface))' : t.background;
         el.style.border = '1px solid var(--vela-border)';
-        el.style.borderRadius = 'var(--vela-radius-lg)';
+        el.style.borderRadius = opts.square || opts.escape ? '0' : 'var(--vela-radius-lg)';
         el.style.boxShadow = 'var(--vela-shadow)';
         el.style.padding = opts.padding;
+        if (opts.square) {
+            // The in-use row can contain many distinct colors; scroll it rather than
+            // allowing its intrinsic width to make the color panel unnecessarily wide.
+            el.style.width = '250px';
+            el.style.maxHeight = 'min(calc(100vh - 12px), calc(100% - 8px))';
+            el.style.overflowY = 'auto';
+            el.style.overscrollBehavior = 'contain';
+        }
         el.style.display = 'flex';
         el.style.flexDirection = 'column';
         el.style.gap = '1px';
-        el.style.color = t.textColor;
+        el.style.color = opts.square ? 'var(--vela-fg)' : t.textColor;
         el.style.font = `var(--vela-font-size-md) ${t.fontFamily}`;
         el.style.pointerEvents = 'auto';
         opts.fill(el, pop);
@@ -926,20 +1027,46 @@ export class DrawingSettingsPopup {
     }
 
     /** A floating list of one-shot actions (icon + label rows) opened by the kebab. */
-    private openActionMenu(anchor: HTMLElement, rows: readonly { icon: string; label: string; onClick: () => void }[]): void {
+    private openActionMenu(anchor: HTMLElement, rows: readonly { icon: string; label: string; onClick: () => void; overflow?: boolean }[]): void {
         this.menuPop = this.hostFloat(anchor, {
             align: 'end',
             zIndex: 26,
             padding: '4px',
+            escape: true,
+            onClose: () => anchor.setAttribute('aria-expanded', 'false'),
             fill: (menu, pop) => {
+                menu.classList.add('vela-dpop-more');
+                menu.setAttribute('role', 'menu');
+                menu.setAttribute('aria-label', 'Drawing actions');
+                const list = document.createElement('div');
+                list.className = 'vela-dpop-more-content';
+                menu.appendChild(list);
+                list.addEventListener('keydown', (event) => {
+                    const items = [...list.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+                    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+                    const next = event.key === 'ArrowDown' ? (index + 1) % items.length
+                        : event.key === 'ArrowUp' ? (index + items.length - 1) % items.length
+                            : event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : -1;
+                    if (next >= 0 && items.length) { event.preventDefault(); items[next]?.focus(); }
+                });
+                let afterOverflow = false;
                 for (const row of rows) {
+                    if (!row.overflow && afterOverflow) {
+                        const sep = document.createElement('div'); sep.className = 'vela-dpop-more-sep'; list.appendChild(sep);
+                        afterOverflow = false;
+                    }
+                    if (row.overflow) afterOverflow = true;
                     const item = document.createElement('button');
                     item.type = 'button';
                     item.className = 'vela-dpop-item';
-                    item.style.cssText = 'display:flex;align-items:center;gap:9px;min-width:150px;padding:6px 9px;border:none;border-radius:5px;color:inherit;cursor:pointer;text-align:left;font:inherit;';
+                    item.setAttribute('role', 'menuitem');
+                    item.setAttribute('aria-label', row.label);
+                    item.dataset.menuLabel = row.label;
+                    if (row.overflow) item.dataset.overflow = '1';
+                    item.style.cssText = 'box-sizing:border-box;display:flex;align-items:center;gap:9px;width:100%;min-width:0;min-height:36px;padding:6px 9px;border:none;border-radius:0;color:inherit;cursor:pointer;text-align:left;font:inherit;';
                     const ic = document.createElement('span');
-                    ic.style.cssText = 'display:flex;flex:none;width:20px;justify-content:center;';
-                    ic.innerHTML = sized(row.icon, 18);
+                    ic.style.cssText = 'display:flex;flex:none;width:20px;height:20px;align-items:center;justify-content:center;';
+                    ic.innerHTML = row.icon;
                     const tx = document.createElement('span');
                     tx.textContent = row.label;
                     tx.style.cssText = 'flex:1;';
@@ -949,47 +1076,14 @@ export class DrawingSettingsPopup {
                         pop.hide();
                         row.onClick();
                     });
-                    menu.appendChild(item);
+                    list.appendChild(item);
                 }
             },
         });
         this.menuOwner = anchor;
-    }
-
-    /** The floating hover-label. Sits just above or below the toolbar depending on where it floats,
-     *  and tracks the hovered control horizontally — a styled replacement for the native `title`. */
-    private showTip(target: HTMLElement): void {
-        const text = target.dataset.tip;
-        if (!text) {
-            this.hideTip();
-            return;
-        }
-        const t = this.theme;
-        if (!this.tipEl) {
-            const tp = document.createElement('div');
-            tp.style.cssText = `position:absolute;z-index:27;pointer-events:none;white-space:nowrap;background:${t.textColor};color:${t.background};padding:3px 7px;border-radius:5px;font:var(--vela-font-size-sm) ${t.fontFamily};box-shadow:var(--vela-shadow);`;
-            this.host.appendChild(tp);
-            this.tipEl = tp;
-        }
-        const tip = this.tipEl;
-        tip.textContent = text;
-        const hr = this.host.getBoundingClientRect();
-        const br = target.getBoundingClientRect();
-        const tw = tip.offsetWidth;
-        const th = tip.offsetHeight;
-        const gap = 6;
-        let left = br.left - hr.left + br.width / 2 - tw / 2;
-        left = Math.max(4, Math.min(left, hr.width - tw - 4));
-        // Hug the hovered control — just above it, dropping below only when there's no room above.
-        const aboveTop = br.top - hr.top - th - gap;
-        const top = aboveTop >= 4 ? aboveTop : br.bottom - hr.top + gap;
-        tip.style.left = `${Math.round(left)}px`;
-        tip.style.top = `${Math.round(top)}px`;
-    }
-
-    private hideTip(): void {
-        this.tipEl?.remove();
-        this.tipEl = null;
+        anchor.setAttribute('aria-haspopup', 'menu');
+        anchor.setAttribute('aria-expanded', 'true');
+        this.menuPop.el.querySelector<HTMLElement>('button')?.focus({ preventScroll: true });
     }
 
     /** An on/off button. A mixed state (the selected drawings disagree) reads as half-lit and
@@ -1026,7 +1120,6 @@ export class DrawingSettingsPopup {
             fill: false,
             compact: true,
             commit: 'blur',
-            title: tip,
             onChange,
         });
         if (value === MIXED) {
@@ -1034,6 +1127,8 @@ export class DrawingSettingsPopup {
             ni.input.placeholder = '—';
         }
         ni.el.dataset.tip = tip;
+        ni.el.setAttribute('data-dpop-numeric', '');
+        ni.input.setAttribute('aria-label', tip);
         trapChartKeys(ni.el);
         return ni.el;
     }
@@ -1164,6 +1259,8 @@ export class DrawingSettingsPopup {
         b.type = 'button';
         b.dataset.tip = tip;
         b.setAttribute('aria-label', `${tip}, color`); // swatches were nameless to a screen reader too
+        b.setAttribute('aria-haspopup', 'dialog');
+        b.setAttribute('aria-expanded', 'false');
         b.className = 'vela-dpop-btn';
         b.style.cssText = `position:relative;width:${BTN}px;height:${BTN}px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;border-radius:5px;border:none;color:inherit;padding:0;`;
         const ic = document.createElement('span');
@@ -1184,43 +1281,53 @@ export class DrawingSettingsPopup {
                 cur = v;
                 bar.style.background = v;
                 onChange(v);
-            });
+            }, e.detail === 0);
         });
         return b;
     }
 
     /** Open the color popover for `anchor`, or close it if it's already this anchor's (toggle). */
-    private toggleColorPopover(anchor: HTMLElement, color: string, used: readonly string[], onChange: (v: string) => void): void {
+    private toggleColorPopover(anchor: HTMLElement, color: string, used: readonly string[], onChange: (v: string) => void, fromKeyboard: boolean): void {
         if (this.colorOwner === anchor) {
             this.closeColorPopover();
             return;
         }
-        this.openColorPopover(anchor, color, used, onChange);
+        this.openColorPopover(anchor, color, used, onChange, fromKeyboard);
     }
 
     /** A floating RGB picker + opacity slider anchored to a color swatch — emits `#RRGGBB(AA)`.
      *  `used` (a mixed swatch's colors) leads the picker as one-click unify shortcuts. */
-    private openColorPopover(anchor: HTMLElement, color: string, used: readonly string[], onChange: (v: string) => void): void {
+    private openColorPopover(anchor: HTMLElement, color: string, used: readonly string[], onChange: (v: string) => void, fromKeyboard: boolean): void {
         const t = this.theme;
         this.colorPop = this.hostFloat(anchor, {
             zIndex: 25,
-            padding: '10px',
+            padding: '6px',
+            square: true,
+            escape: true,
+            onClose: () => anchor.setAttribute('aria-expanded', 'false'),
             fill: (el, pop) => {
+                el.setAttribute('role', 'dialog');
+                el.setAttribute('aria-label', 'Color picker');
                 if (used.length > 1) {
                     const row = document.createElement('div');
-                    row.style.cssText = 'display:flex;align-items:center;gap:6px;padding-bottom:9px;border-bottom:1px solid var(--vela-border);';
+                    row.className = 'vela-color-recents';
+                    row.setAttribute('role', 'group');
+                    row.setAttribute('aria-label', 'Colors in use');
+                    row.style.cssText = 'display:flex;align-items:center;gap:4px;min-width:0;max-width:100%;overflow-x:auto;scrollbar-width:thin;padding:2px 2px 6px;border-bottom:1px solid var(--vela-border);';
+                    enableCompactHorizontalStrip(row);
                     const lbl = document.createElement('span');
                     lbl.textContent = 'In use';
-                    lbl.style.cssText = 'font:var(--vela-font-size-sm) inherit;opacity:0.7;margin-right:2px;';
+                    lbl.style.cssText = 'flex:none;font:var(--vela-font-size-sm) inherit;opacity:0.7;margin-right:2px;';
                     row.appendChild(lbl);
                     for (const c of used) {
                         const sw = document.createElement('button');
                         sw.type = 'button';
                         sw.dataset.tip = c;
                         sw.setAttribute('aria-label', `Color ${c}`);
-                        sw.style.cssText = `width:18px;height:18px;border-radius:4px;border:1px solid var(--vela-border-strong);cursor:pointer;background:${c};padding:0;`;
+                        sw.style.cssText = `width:20px;height:20px;flex:none;border-radius:0;border:1px solid var(--vela-border-strong);cursor:pointer;background:${c};padding:0;`;
                         sw.addEventListener('click', (e) => {
                             e.stopPropagation();
+                            rememberRecentColor(c);
                             pop.hide();
                             onChange(c);
                         });
@@ -1232,6 +1339,13 @@ export class DrawingSettingsPopup {
             },
         });
         this.colorOwner = anchor;
+        anchor.setAttribute('aria-expanded', 'true');
+        if (fromKeyboard) {
+            const selected = this.colorPop.el.querySelector<HTMLButtonElement>('.vela-color-palette button[aria-pressed="true"]')
+                ?? this.colorPop.el.querySelector<HTMLButtonElement>('.vela-color-palette button');
+            selected?.focus({ preventScroll: true });
+            this.colorPop.reposition();
+        }
     }
 
     private closeColorPopover(): void {
@@ -1240,6 +1354,8 @@ export class DrawingSettingsPopup {
 
     private divider(): HTMLElement {
         const d = document.createElement('div');
+        d.setAttribute('data-dpop-divider', '');
+        d.setAttribute('aria-hidden', 'true');
         d.style.cssText = 'width:1px;height:18px;margin:0 3px;background:var(--vela-border);';
         return d;
     }

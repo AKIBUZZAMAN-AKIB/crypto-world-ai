@@ -8,7 +8,7 @@ export const MENU_CSS = `
     background: var(--vela-surface);
     color: var(--vela-fg);
     border: 1px solid var(--vela-border-strong);
-    border-radius: 6px;
+    border-radius: 0;
     box-shadow: var(--vela-shadow);
     padding: 6px;
     min-width: 180px;
@@ -83,13 +83,13 @@ export const MENU_CSS = `
 .vela-menu-item .vela-menu-badge:empty { background: transparent; border-color: transparent; }
 .vela-menu-item .vela-menu-badge .vela-icon { color: inherit; }
 .vela-menu-item[data-highlighted] .vela-menu-badge:not(:empty) { color: var(--vela-fg-bright); }
-/* The selected tile inverts: a bright fill under the surface-colored glyph. After the
+/* Selected tiles use the filled accent and its contrasting foreground. After the
    hover rule, so a selected row keeps its tile while highlighted. */
 .vela-menu-item[data-checked] .vela-menu-badge:not(:empty),
 .vela-menu-item[data-checkmark] .vela-menu-badge:not(:empty) {
-    background: color-mix(in srgb, var(--vela-fg-bright) 83%, var(--vela-surface));
-    border-color: color-mix(in srgb, var(--vela-fg-bright) 40%, transparent);
-    color: var(--vela-surface);
+    background: var(--vela-accent);
+    border-color: var(--vela-accent);
+    color: var(--vela-fg-on-fill);
 }
 /* Switch rows (boolean settings in a dropdown): a right-aligned toggle pill — the
    same control language as the settings dialog's toggles. */
@@ -116,8 +116,8 @@ export const MENU_CSS = `
     background: var(--vela-fg-muted);
     transition: transform 0.16s ease, background 0.16s ease;
 }
-.vela-menu-switch.on { background: var(--vela-accent-bright, var(--vela-accent)); border-color: var(--vela-accent-bright, var(--vela-accent)); }
-.vela-menu-switch.on::after { transform: translateX(16px); background: var(--vela-bg); }
+.vela-menu-switch.on { background: var(--vela-accent); border-color: var(--vela-accent); }
+.vela-menu-switch.on::after { transform: translateX(16px); background: var(--vela-fg-on-fill); }
 /* Favorite star (rows carrying \`favorite\`): reserved space always — it fades in on row
    hover instead of shifting the layout — and a starred row keeps its filled star visible.
    Same control language as the drawing toolbar's flyout stars. */
@@ -133,7 +133,7 @@ export const MENU_CSS = `
 }
 .vela-menu-item[data-highlighted] .vela-menu-star { opacity: 0.55; }
 .vela-menu-item .vela-menu-star:hover { opacity: 1; background: var(--vela-hover-strong); }
-.vela-menu-item .vela-menu-star.vela-fav { opacity: 0.95; color: var(--vela-highlight); }
+.vela-menu-item .vela-menu-star.vela-fav { opacity: 1; color: var(--vela-star, var(--vela-highlight)); }
 .vela-menu-sep { height: 1px; margin: 4px 6px; background: var(--vela-border); }
 /* Submenu trigger row: a right-aligned chevron, and it stays highlighted while its own
    list is open so the path you came down remains readable. */

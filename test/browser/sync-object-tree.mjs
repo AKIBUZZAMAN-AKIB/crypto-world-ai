@@ -141,9 +141,12 @@ const menuItems = await page.evaluate(() =>
 assert(menuItems.some((t) => /^Source code/.test(t)), "the indicator menu offers Source code", menuItems);
 await page.locator('.vela-menu-item:visible', { hasText: 'Source code' }).first().click({ timeout: 5000 });
 await page.waitForTimeout(1500);
+await page.locator('.vela-pe .monaco-editor').waitFor({ timeout: 60000 });
 const source = await page.evaluate(() => {
-    const ta = document.querySelector('.vela-pe-input');
-    return { text: (ta?.value || '').slice(0, 120), readOnly: ta?.readOnly ?? null, banner: !!document.querySelector('.vela-pe-builtin:not([hidden])') };
+    const view = document.querySelector('.vela-pe .view-lines');
+    return { text: (view?.textContent || '').replace(/\u00a0/g, ' ').slice(0, 160),
+        readOnly: document.querySelector('.vela-pe-monaco')?.getAttribute('data-readonly') === 'true',
+        banner: !!document.querySelector('.vela-pe-builtin:not([hidden])') };
 });
 assert(/indicator\(\s*"Bollinger Bands"/.test(source.text), "Source code opens the built-in's own Pine text", source.text.slice(0, 80));
 assert(source.readOnly === true, 'a built-in opens read-only', source.readOnly);
@@ -168,8 +171,9 @@ const editorRow = moreRows.find((r) => /^Pine Editor/.test(r));
 assert(editorRow !== undefined, 'the More sheet has a Pine Editor row on a phone', moreRows.slice(0, 12));
 await p.evaluate(() => [...document.querySelectorAll('.vela-md-row')].find((r) => /^Pine Editor/.test(r.textContent || ''))?.click());
 await p.waitForTimeout(1200);
-const editorOpen = await p.evaluate(() => !!document.querySelector('.vela-pe-input'));
-assert(editorOpen, 'the More sheet row opens the editor', editorOpen);
+await p.locator('.vela-pe .monaco-editor').waitFor({ timeout: 60000 });
+const editorOpen = await p.evaluate(() => !!document.querySelector('.vela-pe .monaco-editor'));
+assert(editorOpen, 'the More sheet row opens the Monaco editor', editorOpen);
 assert(
     (await p.evaluate(() => document.documentElement.scrollWidth)) <= 412,
     'the phone never scrolls sideways',

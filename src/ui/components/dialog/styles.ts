@@ -1,6 +1,6 @@
 import { overlayScrollbarCss } from '../../styles';
 
-export const DIALOG_STYLE_ID = 'vela-ui-dialog-5';
+export const DIALOG_STYLE_ID = 'vela-ui-dialog-6';
 
 export const DIALOG_CSS = `
 .vela-dialog-backdrop {
@@ -22,6 +22,8 @@ export const DIALOG_CSS = `
 }
 .vela-dialog-backdrop[data-contained],
 .vela-dialog-positioner[data-contained] { position: absolute; }
+/* Keep a dragged card from increasing page overflow, but do not clip its visible body. */
+[data-layout='desktop'] .vela-dialog-positioner { contain: layout; }
 .vela-dialog-positioner[data-align='center'] {
     align-items: center;
     padding-top: 0;
@@ -32,6 +34,7 @@ export const DIALOG_CSS = `
     border: 1px solid var(--vela-border-strong);
     border-radius: 10px;
     box-shadow: var(--vela-shadow-dialog);
+    box-sizing: border-box;
     font-size: 13px;
     min-width: 300px;
     max-width: min(92vw, 560px);
@@ -49,13 +52,17 @@ export const DIALOG_CSS = `
 .vela-dialog-header {
     display: flex;
     align-items: center;
-    padding: 9px 9px 9px 16px;
+    padding: 4px 8px 4px 10px;
+    min-height: 40px;
+    box-sizing: border-box;
     border-bottom: 1px solid var(--vela-border);
     user-select: none;
 }
+.vela-dialog-header:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: -2px; }
+.vela-dialog[data-dragging='1'] .vela-dialog-header { cursor: grabbing !important; }
 .vela-dialog-titlewrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .vela-dialog-kicker { font-size: 9.5px; font-weight: 750; letter-spacing: 0.14em; text-transform: uppercase; color: var(--vela-fg-muted); }
-.vela-dialog-title { font-size: 17px; font-weight: 600; letter-spacing: 0.2px; color: var(--vela-fg-bright); }
+.vela-dialog-title { font-size: 14px; font-weight: 600; letter-spacing: 0.1px; color: var(--vela-fg-bright); }
 .vela-dialog-close {
     all: unset;
     cursor: pointer;
@@ -70,6 +77,14 @@ export const DIALOG_CSS = `
     font-size: 15px;
 }
 .vela-dialog-close:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-dialog-corner-resize {
+    all: unset; box-sizing: border-box; display: inline-flex; flex: none; width: 26px; height: 26px;
+    align-items: center; justify-content: center; border-radius: 4px; color: var(--vela-fg-muted);
+    cursor: nesw-resize; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.vela-dialog-corner-resize .vela-icon { width: 16px; height: 16px; }
+.vela-dialog-corner-resize:hover { background: var(--vela-hover); color: var(--vela-fg-bright); }
+.vela-dialog-corner-resize:focus-visible { outline: 2px solid var(--vela-fg-bright); outline-offset: -2px; }
 .vela-dialog-body { padding: var(--vela-space-4); overflow: auto; min-height: 0; flex: 1 1 auto; }
 .vela-dialog-body[data-flush] { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .vela-dialog-footer { flex: 0 0 auto; }
@@ -90,8 +105,8 @@ export const DIALOG_CSS = `
 }
 /* Form dialogs (indicator inputs, drawing settings): the tab strip / body owns the
    line under the header, and the footer carries its own top delimiter. */
-.vela-dialog--form .vela-dialog-header { align-items: flex-start; padding: 16px 20px 20px; border-bottom: none; }
-.vela-dialog--form .vela-dialog-title { font-size: 20px; line-height: 28px; }
+.vela-dialog--form .vela-dialog-header { align-items: center; padding: 4px 10px; border-bottom: 1px solid var(--vela-border); }
+.vela-dialog--form .vela-dialog-title { font-size: 14px; line-height: 20px; }
 .vela-dialog--form .vela-dialog-footer {
     padding: 16px 20px;
     display: flex;
@@ -114,7 +129,7 @@ export const DIALOG_CSS = `
 }
 .vela-dialog-btn:hover { background: var(--vela-hover); color: var(--vela-fg-bright); border-color: var(--vela-fg-muted); }
 .vela-dialog-btn-primary { border-color: var(--vela-selected-bg); background: var(--vela-selected-bg); color: var(--vela-selected-fg); }
-.vela-dialog-btn-primary:hover { background: var(--vela-selected-bg); color: var(--vela-selected-fg); opacity: 0.85; border-color: var(--vela-selected-bg); }
+.vela-dialog-btn-primary:hover { background: color-mix(in srgb, var(--vela-selected-bg) 92%, #000); color: var(--vela-selected-fg); opacity: 1; border-color: var(--vela-selected-bg); }
 /* Touch: a dialog's footer actions are the last thing a thumb reaches for, and 34px is
    under the 44px every platform's guidance asks for. The chip grows, it does not move. */
 @media (pointer: coarse) {
@@ -125,26 +140,24 @@ ${overlayScrollbarCss('.vela-dialog-body')}
    overlay bars — the two-class selectors below stay overridable by more specific
    per-dialog sheets. */
 ${overlayScrollbarCss('.vela-dialog *')}
-/* ── mobile chrome: dialogs fill the shell ─────────────────────────────────────────
-   Inside a shell in the mobile size class ([data-layout='mobile'] on the widget root,
-   which is position:relative) every kit dialog presents fullscreen: desktop cards are
-   unusable at phone widths, and the shell's bounds — not the viewport — are the honest
-   "screen" for an embedded chart. */
+/* On phones use a bounded card rather than forcing every dialog fullscreen. The
+   card can move by its header; the body keeps its own scroll and the chart remains
+   visible around it. Percentages are relative to the embedded workspace, not just
+   the physical viewport. */
 [data-layout='mobile'] .vela-dialog-backdrop { position: absolute; }
 [data-layout='mobile'] .vela-dialog-positioner {
     position: absolute;
-    padding: 0;
-    align-items: stretch;
+    padding: 8px;
+    align-items: center;
 }
 [data-layout='mobile'] .vela-dialog {
-    width: 100%;
+    width: min(480px, 100%);
     min-width: 0;
-    max-width: none;
-    max-height: none;
-    flex: 1 1 auto;
-    border: none;
-    border-radius: 0;
-    transform: none !important; /* a desktop drag offset must not survive the flip */
+    max-width: 100%;
+    max-height: calc(100% - 16px);
+    flex: 0 1 auto;
+    border: 1px solid var(--vela-border-strong);
+    border-radius: 12px;
 }
 [data-layout='mobile'] .vela-dialog-close { width: 40px; height: 40px; }
 [data-layout='mobile'] .vela-dialog-body { padding-bottom: calc(var(--vela-space-4) + env(safe-area-inset-bottom, 0px)); }

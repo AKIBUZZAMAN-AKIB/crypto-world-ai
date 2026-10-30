@@ -9,6 +9,7 @@ import { DIALOG_CSS, DIALOG_STYLE_ID } from './styles';
 import * as zagDialog from '@zag-js/dialog';
 import { announceSurface } from '../../surface-events';
 import { holdForExit, type SurfaceExit } from '../../surface-exit';
+import { linkPanelResizeGrip, makePanelDraggable, panelResizeGrip, type PanelDrag } from '../../panel-drag';
 
 export interface DialogOptions extends DialogControllerOptions {
     title?: string;
@@ -18,8 +19,16 @@ export interface DialogOptions extends DialogControllerOptions {
     headerIcon?: string;
     content?: Node | ((body: HTMLElement) => void);
     host?: HTMLElement;
-    /** Drag the dialog by its header (the reference dialogs move; search stays fixed). */
+    /** Drag by the header. Defaults to true; pass false for a deliberately fixed dialog. */
     draggable?: boolean;
+    /** Reveal focused controls in the visual viewport while the card is moved. */
+    revealFocus?: boolean;
+    /** Keep the full card inside its boundary while dragging or resizing. */
+    keepWithinBounds?: boolean;
+    /** Show the separate height grip on a draggable dialog (default true). */
+    resizable?: boolean;
+    /** Add a direct two-axis resize button immediately after Close. */
+    cornerResizable?: boolean;
     /** Darken the page behind the dialog (default false — the chart stays readable while
      *  dialogs edit live content). Pass true for a dimming scrim; the backdrop still
      *  catches interact-outside dismissal either way. */
@@ -50,6 +59,7 @@ export class Dialog {
     readonly footer: HTMLElement | null;
     private readonly handle: HandleOf<typeof zagDialog.machine>;
     private readonly ctrl: ReturnType<typeof dialogController>;
+    private readonly drag: PanelDrag | null;
 
     constructor(opts: DialogOptions = {}) {
         const doc = (opts.host ?? document.body).ownerDocument;
@@ -80,23 +90,34 @@ export class Dialog {
 
         const header = doc.createElement('div');
         header.className = 'vela-dialog-header';
-        if (opts.draggable) {
-            header.style.cursor = 'move';
-            let sx = 0, sy = 0, ox = 0, oy = 0, dragging = false;
-            header.addEventListener('pointerdown', (e) => {
-                if ((e.target as HTMLElement).closest('.vela-dialog-close')) return;
-                dragging = true;
-                sx = e.clientX - ox;
-                sy = e.clientY - oy;
-                header.setPointerCapture(e.pointerId);
+        // Movement and resizing are independent; callers can retain header dragging
+        // without exposing a height control on a particular dialog.
+        const resizeGrip = opts.draggable !== false && opts.resizable !== false ? panelResizeGrip(doc, opts.title ?? 'dialog') : null;
+        const cornerResize = opts.draggable !== false && opts.cornerResizable ? doc.createElement('button') : null;
+        if (cornerResize) {
+            cornerResize.type = 'button';
+            cornerResize.className = 'vela-dialog-corner-resize';
+            cornerResize.setAttribute('aria-label', `Resize ${opts.title ?? 'dialog'} panel`);
+            cornerResize.setAttribute('aria-description', 'Drag to resize; use arrow keys to adjust size.');
+            cornerResize.title = 'Drag to resize · use arrow keys';
+            cornerResize.appendChild(iconEl('pane-expand', doc));
+            linkPanelResizeGrip(cornerResize, this.panel);
+        }
+        if (opts.draggable !== false) {
+            header.style.cursor = 'grab';
+            header.style.touchAction = 'none';
+            header.tabIndex = 0;
+            header.setAttribute('aria-label', `Move ${opts.title ?? 'dialog'}`);
+            this.drag = makePanelDraggable(this.panel, {
+                handle: '.vela-dialog-header',
+                resizeHandle: resizeGrip ? '.vela-size-grip' : undefined,
+                cornerResizeHandle: cornerResize ? '.vela-dialog-corner-resize' : undefined,
+                boundary: () => this.positioner.getBoundingClientRect(),
+                keepWithinBounds: opts.keepWithinBounds,
+                revealFocus: () => opts.revealFocus ?? !!this.positioner.closest('[data-layout="desktop"]'),
             });
-            header.addEventListener('pointermove', (e) => {
-                if (!dragging) return;
-                ox = e.clientX - sx;
-                oy = e.clientY - sy;
-                this.panel.style.transform = `translate(${ox}px, ${oy}px)`;
-            });
-            header.addEventListener('pointerup', () => (dragging = false));
+        } else {
+            this.drag = null;
         }
         if (opts.headerStart) header.appendChild(opts.headerStart);
         // R87: an accent icon tile + eyebrow + title = one premium header vocabulary
@@ -121,9 +142,11 @@ export class Dialog {
         this.titleEl = title;
         titleWrap.appendChild(title);
         const close = doc.createElement('button');
+        close.type = 'button';
         close.className = 'vela-dialog-close';
+        close.setAttribute('aria-label', 'Close');
         close.appendChild(iconEl('close', doc));
-        header.append(titleWrap, close);
+        header.append(titleWrap, ...(resizeGrip ? [resizeGrip] : []), close, ...(cornerResize ? [cornerResize] : []));
 
         this.body = doc.createElement('div');
         this.body.className = 'vela-dialog-body';
@@ -178,12 +201,17 @@ export class Dialog {
             const api = this.ctrl.connect(service);
             // Close announces while the panel still shows (before the close props land), open once it does.
             const closing = this.wasOpen && !api.open;
-            if (closing) this.announce(false);
+            if (closing) {
+                this.announce(false);
+            }
             spreadProps(this.backdrop, api.getBackdropProps(), mid);
             spreadProps(this.positioner, api.getPositionerProps(), mid);
             spreadProps(this.panel, api.getContentProps(), mid);
+            if (cornerResize) linkPanelResizeGrip(cornerResize, this.panel);
             spreadProps(title, api.getTitleProps(), mid);
             spreadProps(close, api.getCloseTriggerProps(), mid);
+            // Zag's close-trigger props do not name the icon-only button.
+            close.setAttribute('aria-label', 'Close');
             // Zag dialogs expect CONDITIONAL rendering (their `hidden` reaches the panel and
             // backdrop only, and the panel's authored display beats it) — the view toggles
             // visibility from `api.open` itself, once the exit animation of a close has run.
@@ -263,6 +291,7 @@ export class Dialog {
     }
 
     show(): void {
+        if (!this.open) this.drag?.reset();
         if (!this.mounted) {
             this.mounted = true;
             this.hostEl.append(this.backdrop, this.positioner);
@@ -275,6 +304,9 @@ export class Dialog {
         this.ctrl.connect(this.handle.service).setOpen(false);
     }
 
+    /** Re-clamp a moved dialog after a caller changes its viewport constraints. */
+    reflow(): void { this.drag?.reflow(); }
+
     contains(node: Node | null): boolean {
         if (node == null) return false;
         if (this.panel.contains(node) || this.backdrop.contains(node) || this.positioner.contains(node)) return true;
@@ -284,6 +316,7 @@ export class Dialog {
     }
 
     destroy(): void {
+        this.drag?.destroy();
         // Closed but not projected yet — an owner disposing of the dialog as it reports
         // closing: project the close now, so it animates out like any other close and
         // leaves the DOM when its exit ends. A teardown while open leaves at once.

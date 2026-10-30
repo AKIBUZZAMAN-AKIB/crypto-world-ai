@@ -154,25 +154,67 @@ if (url) { const a = document.createElement('a'); a.href = url; a.download = 'ch
 
 ## Data-window readout
 
-`chart.renderer.dataWindowReadout()` returns the bar under the crosshair — or the latest bar
-when the cursor is off the plot — as a **ready-to-display** snapshot: the timestamp split into
-`date` and `time`, the `ohlc` block (with `vol` when the bar carries volume, and `up` telling
-you which way to tint it), and one `groups` entry per indicator holding a row per plot with its
-own color. Every number is already formatted on the scale of the pane it belongs to, so a panel
-built on it does no formatting of its own.
+`chart.renderer.dataWindowReadout()` returns a **ready-to-display** snapshot: the timestamp
+split into `date` and `time`, the `ohlc` block (with `vol` when the bar carries volume, and
+`up` telling you which way to tint it), and one `groups` entry per indicator holding a row per
+plot with its own color. Numbers are already formatted for display. Native price and price-valued
+plots retain full (non-`K`/`M`) notation even when the chart axis is compact; volume remains
+abbreviated. The native renderer resolves the local crosshair first, then a synced ghost's
+containing bar, and finally the latest bar. Its optional `source` is `crosshair`, `synced`, or
+`latest`; a third-party renderer may omit it.
 
-Pair it with `onCrosshairMove` to keep your own readout in step; it returns `null` on a renderer
-that doesn't provide one. This is what the [workspace's data window](./workspace.md#the-chrome) is
-built from.
+Pull again on `onCrosshairMove`, on chart data/indicator events, and on
+`onDataWindowChange` for readout-only changes such as a ghost, timezone, precision, or a
+completed study value patch. The latter signal never emits a local crosshair event. Both the
+readout and the extra signal are optional renderer seams: the readout returns `null` and the
+subscription is a silent no-op when unsupported. This is what the [workspace's data
+window](./workspace.md#the-chrome) is built from.
 
 ```js
-chart.renderer.onCrosshairMove(() => {
+const refresh = () => {
     const readout = chart.renderer.dataWindowReadout();
     if (!readout) return;
-    console.log(readout.date, readout.time, readout.ohlc?.c);
+    console.log(readout.source, readout.date, readout.time, readout.ohlc?.c);
     for (const group of readout.groups) console.log(group.name, group.rows);
-});
+};
+const offCrosshair = chart.renderer.onCrosshairMove(refresh);
+const offReadout = chart.renderer.onDataWindowChange(refresh);
+const offBar = chart.on('bar', refresh);
+// When the host panel is removed: offCrosshair(); offReadout(); offBar();
 ```
+
+### Candle history table
+
+`chart.renderer.dataWindowTable(offset, count)` returns a bounded newest-first slice of
+currently **loaded, displayed** bars, or `null` when the renderer does not implement the
+optional seam. `offset = 0` starts at the newest bar; native slices cap `count` at 500.
+The result has `total`, `columns` and `rows`. Each row contains an epoch-millisecond
+`timestamp`, formatted `date` and `time` (including seconds and nonzero milliseconds),
+`ohlc`, unabbreviated `volume` or `null`, and `values` aligned with `columns`. A `null`
+plot value means unavailable, not zero. Replay exposes only revealed bars. Native columns
+include visible numeric plots that opt into the Data Window, with their actual anchor and
+offset; drawings, hidden plots and unavailable points are not invented. OHLC and volume
+retain the loaded values rather than rounding to the axis; plot text uses chart display
+precision. This is loaded history, not an exchange-wide download.
+
+```js
+const page = chart.renderer.dataWindowTable(0, 100);
+if (page) {
+    console.log(page.total, page.columns.map(column => column.label));
+    for (const row of page.rows) console.log(row.timestamp, row.ohlc.c, row.volume, row.values);
+}
+```
+
+The workspace virtualizes the visible rows and refreshes on data, indicator, replay,
+configuration and readout changes. When a renderer omits the history seam, it falls back
+to that renderer's available bars and leaves study columns out. It never fabricates
+historical indicator values. Renderers may additionally implement
+`revealTableCandle(timestamp, newestOffset)`: the workspace exposes it through a row click
+and an accessible date/time button. The offset is a newest-first hint that must be checked
+against the timestamp after live changes; return `false` if the displayed candle no longer
+exists. `chart.renderer.supportsCandleNavigation` feature-detects the seam. The native
+implementation pans at constant zoom and uses a temporary, noninteractive background marker
+without overwriting host highlight bands; it snaps and shows a static marker for reduced motion.
 
 ## Rich config (templates / persistence)
 

@@ -79,7 +79,16 @@ async function openRowMenu(target) {
     );
 }
 
+async function openVisualOrder() {
+    await page.locator('.vela-menu-item:visible', { hasText: /^Visual order$/ }).first().hover();
+    await page.waitForTimeout(250);
+    return page.evaluate(() => [...document.querySelectorAll('.vela-menu-item')]
+        .filter((i) => i.offsetParent !== null)
+        .map((i) => (i.textContent || '').trim()));
+}
+
 async function choose(label) {
+    await openVisualOrder();
     const item = page.locator('.vela-menu-item:visible', { hasText: new RegExp(`^${label}$`) }).first();
     await item.click({ timeout: 5000 });
     await page.waitForTimeout(450);
@@ -91,8 +100,11 @@ assert(initialRows.filter((r) => r.kind === 'drawing').map((r) => r.id).join(','
 assert(initialPaint.green > 1000 && initialPaint.red === 0, 'the new green drawing paints above the red one', initialPaint);
 
 const menuItems = await openRowMenu({ id: 'dw-2' });
+assert(menuItems.includes('Visual order'), 'the drawing menu groups the four order commands', menuItems);
+assert(!menuItems.includes('Bring to front'), 'order commands do not clutter the root menu', menuItems);
+const drawingOrder = await openVisualOrder();
 for (const label of ['Bring to front', 'Bring forward', 'Send backward', 'Send to back']) {
-    assert(menuItems.includes(label), `the drawing menu offers ${label}`, menuItems);
+    assert(drawingOrder.includes(label), `the submenu offers ${label}`, drawingOrder);
 }
 await choose('Send to back');
 const backRows = await rows();
@@ -161,8 +173,10 @@ const grouped = await rows();
 assert(grouped.some((r) => r.kind === 'group'), 'the two drawings form a group row', grouped);
 
 const groupMenu = await openRowMenu({ kind: 'group' });
+assert(groupMenu.includes('Visual order'), 'the group has a compact Visual order submenu', groupMenu);
+const groupOrder = await openVisualOrder();
 for (const label of ['Bring all to front', 'Bring all forward', 'Send all backward', 'Send all to back']) {
-    assert(groupMenu.includes(label), `the group menu offers ${label}`, groupMenu);
+    assert(groupOrder.includes(label), `the group submenu offers ${label}`, groupOrder);
 }
 await choose('Bring all to front');
 const groupFront = await rows();
@@ -194,5 +208,5 @@ report('object-tree-visual-order', {
     priceFront: priceFront[0],
     priceBack: priceBack.at(-1),
     group: { first: groupFront[0], backIndex: groupIndex, z: groupZ },
-    menu: menuItems.filter((x) => /Bring|Send/.test(x)),
+    menu: drawingOrder.filter((x) => /Bring|Send/.test(x)),
 });

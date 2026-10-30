@@ -16,8 +16,8 @@ export interface InputsUIChange {
     indicatorId: string;
     key: string;
     value: InputValue;
-    /** What was edited: a script input (default) or a declaration prop (the "Properties" tab). */
-    kind?: 'input' | 'prop';
+    /** What was edited: script input, declaration prop, generated plot style, or interval visibility. */
+    kind?: 'input' | 'prop' | 'style' | 'visibility';
 }
 
 /** The slice of a legend row the settings dialog needs. */
@@ -30,6 +30,13 @@ export interface IndicatorDialogRow {
     /** Declaration-props schema + values — rendered on the "Properties" tab. */
     props: InputSchema[];
     propValues: Record<string, InputValue>;
+    /** Generated controls for plot visuals; these never enter Pine's declared input bag. */
+    styleInputs?: InputSchema[];
+    styleValues?: Record<string, InputValue>;
+    styleNote?: string;
+    /** Interval-family visibility controls for this indicator instance. */
+    visibilityInputs?: InputSchema[];
+    visibilityValues?: Record<string, InputValue>;
     /** The NATIVE indicator's registered type id (`'rsi'`) — what a saved default is
      *  keyed by and what "apply to all" matches. Absent for a script indicator. */
     indicatorType?: string;
@@ -42,11 +49,14 @@ export const PROPS_TAB = 'Properties';
 
 /** An input decl as the dialog renders it — `prop` marks a declaration-prop entry:
  *  reads/writes route to `row.propValues` and its commits carry `kind: 'prop'`. */
-type DialogDecl = InputSchema & { prop?: boolean };
+type DialogDecl = InputSchema & { prop?: boolean; style?: boolean; visibility?: boolean };
 
 /** The value bag a decl reads from / writes to (inputs vs declaration props). */
 function bagOf(row: IndicatorDialogRow, decl: DialogDecl): Record<string, InputValue> {
-    return decl.prop ? row.propValues : row.values;
+    if (decl.prop) return row.propValues;
+    if (decl.style) return (row.styleValues ??= {});
+    if (decl.visibility) return (row.visibilityValues ??= {});
+    return row.values;
 }
 
 /**
@@ -92,6 +102,8 @@ export class IndicatorInputsDialog {
     private row: IndicatorDialogRow | null = null;
     private snapshot: Record<string, InputValue> | null = null;
     private propSnapshot: Record<string, InputValue> | null = null;
+    private styleSnapshot: Record<string, InputValue> | null = null;
+    private visibilitySnapshot: Record<string, InputValue> | null = null;
     private dialogTips: Array<() => void> = [];
     /** Re-applies every `when` gate against current values; set while the dialog is open. */
     private refreshVisibility: (() => void) | null = null;
@@ -127,11 +139,13 @@ export class IndicatorInputsDialog {
 
     open(row: IndicatorDialogRow): void {
         this.close();
-        if (row.inputs.length === 0 && row.props.length === 0) return;
+        if (row.inputs.length === 0 && row.props.length === 0 && !row.styleInputs?.length && !row.visibilityInputs?.length) return;
         this.row = row;
         this.openId = row.id;
         this.snapshot = { ...row.values };
         this.propSnapshot = { ...row.propValues };
+        this.styleSnapshot = { ...(row.styleValues ?? {}) };
+        this.visibilitySnapshot = { ...(row.visibilityValues ?? {}) };
         ensureDialogStyles();
         const t = this.host.theme();
         const border = 'var(--vela-border)';
@@ -146,7 +160,7 @@ export class IndicatorInputsDialog {
             modal: false,
             contained: true,
             align: 'center',
-            draggable: !this.host.mobile(),
+            draggable: true,
             flush: true,
             className: 'vela-dialog--form vela-ind-dialog',
             closeOnEscape: false,
@@ -171,6 +185,15 @@ export class IndicatorInputsDialog {
         }));
 
         const tabDefs = tabInputs(row.inputs);
+        if (!tabDefs.some((tab) => tab.name === DEFAULT_INPUT_TAB)) tabDefs.unshift({ name: DEFAULT_INPUT_TAB, inputs: [] });
+        const mergeTab = (name: string, decls: DialogDecl[], allowEmpty = false): void => {
+            if (decls.length === 0 && !allowEmpty) return;
+            const existing = tabDefs.find((tab) => tab.name === name);
+            if (existing) existing.inputs.push(...decls);
+            else tabDefs.push({ name, inputs: decls });
+        };
+        mergeTab('Style', (row.styleInputs ?? []).map((input) => ({ ...input, style: true })), true);
+        mergeTab('Visibility', (row.visibilityInputs ?? []).map((input) => ({ ...input, visibility: true })));
         if (row.props.length > 0) {
             // Props always render on the trailing "Properties" tab — an engine schema
             // carries no `tab=`, and a script input that DECLARES tab='Properties'
@@ -185,7 +208,9 @@ export class IndicatorInputsDialog {
             else tabDefs.push({ name: PROPS_TAB, inputs: propDecls });
         }
         const tabs = document.createElement('div');
-        tabs.style.cssText = `display:flex;gap:12px;padding:0 20px;border-bottom:1px solid ${border};flex:0 0 auto;`;
+        tabs.setAttribute('role', 'tablist');
+        tabs.setAttribute('aria-label', 'Indicator settings');
+        tabs.style.cssText = `display:flex;gap:20px;padding:0 20px;border-bottom:1px solid ${border};flex:0 0 auto;overflow-x:auto;scrollbar-width:none;`;
         const tabEls: HTMLElement[] = [];
         const bodies: HTMLElement[] = [];
         const gates: VisibilityGate[] = [];
@@ -198,18 +223,45 @@ export class IndicatorInputsDialog {
                 el.style.borderBottomColor = on ? fg : 'transparent';
                 el.style.color = on ? 'inherit' : 'var(--vela-fg-muted)';
                 el.classList.toggle('vela-ind-tab-active', on);
+                el.setAttribute('aria-selected', String(on));
+                el.tabIndex = on ? 0 : -1;
+                el.setAttribute('aria-controls', bodies[i]!.id);
                 bodies[i]!.style.display = on ? 'grid' : 'none';
             }
         };
         for (const [idx, def] of tabDefs.entries()) {
-            const tab = document.createElement('div');
+            const tab = document.createElement('button');
+            tab.type = 'button';
             tab.textContent = def.name;
             tab.className = 'vela-ind-tab';
-            tab.style.cssText = `padding:0 0 8px;margin-bottom:-1px;border-bottom:2px solid transparent;${tabDefs.length > 1 ? 'cursor:pointer;' : ''}`;
+            tab.id = `vela-ind-tab-${row.id}-${idx}`;
+            tab.setAttribute('role', 'tab');
+            tab.setAttribute('aria-selected', 'false');
+            tab.tabIndex = -1;
+            tab.style.cssText = `flex:none;padding:11px 0 9px;margin-bottom:-1px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--vela-fg-muted);font:inherit;cursor:pointer;`;
             tab.addEventListener('click', () => activate(idx));
+            tab.addEventListener('keydown', (event) => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                event.preventDefault();
+                const delta = event.key === 'ArrowRight' ? 1 : -1;
+                const next = (idx + delta + tabDefs.length) % tabDefs.length;
+                activate(next);
+                tabEls[next]?.focus();
+            });
             tabs.appendChild(tab);
             tabEls.push(tab);
-            bodies.push(this.buildTabBody(def.inputs, row, gates));
+            const note = def.name === 'Style'
+                ? row.styleNote
+                : def.name === 'Visibility'
+                    ? 'Choose which chart interval families should display this indicator.'
+                    : def.name === DEFAULT_INPUT_TAB && def.inputs.length === 0
+                        ? 'This indicator does not declare any configurable inputs.'
+                        : undefined;
+            const body = this.buildTabBody(def.inputs, row, gates, note);
+            body.id = `vela-ind-panel-${row.id}-${idx}`;
+            body.setAttribute('role', 'tabpanel');
+            body.setAttribute('aria-labelledby', tab.id);
+            bodies.push(body);
             // The strip label leaves only when every input on the tab is gated out —
             // possible only when all of them carry a `when`.
             if (def.inputs.every((d) => d.when)) {
@@ -253,7 +305,7 @@ export class IndicatorInputsDialog {
 
     /** One tab's scrollable body — one shared grid so every group's controls share a
      *  left edge (a 100px number field lines up with a wider session/time pair). */
-    private buildTabBody(inputs: InputSchema[], row: IndicatorDialogRow, gates: VisibilityGate[]): HTMLElement {
+    private buildTabBody(inputs: InputSchema[], row: IndicatorDialogRow, gates: VisibilityGate[], note?: string): HTMLElement {
         const body = document.createElement('div');
         // `display:contents` on each group lets headers + rows participate in this
         // one grid; per-section grids would each pick their own control-column width.
@@ -265,6 +317,12 @@ export class IndicatorInputsDialog {
         // popover (color picker, select list) is swapped in one gesture, jumping this scroller
         // to its max — content here only scrolls when the user scrolls it.
         body.style.cssText = inputDialogBodyStyle(this.host.mobile());
+        if (note) {
+            const noteEl = document.createElement('p');
+            noteEl.className = 'vela-ind-settings-note';
+            noteEl.textContent = note;
+            body.appendChild(noteEl);
+        }
         for (const group of groupInputs(inputs)) {
             const section = document.createElement('div');
             section.style.cssText = 'display:contents;';
@@ -307,6 +365,8 @@ export class IndicatorInputsDialog {
         this.row = null;
         this.snapshot = null;
         this.propSnapshot = null;
+        this.styleSnapshot = null;
+        this.visibilitySnapshot = null;
         ui?.destroy();
     }
 
@@ -333,6 +393,18 @@ export class IndicatorInputsDialog {
                     row.propValues[p.key] = before;
                     this.host.onChange?.({ indicatorId: row.id, key: p.key, value: before, kind: 'prop' });
                 }
+            }
+        }
+        if (row && this.styleSnapshot) {
+            for (const input of row.styleInputs ?? []) {
+                const before = this.styleSnapshot[input.key] ?? input.defval;
+                if (row.styleValues?.[input.key] !== before) this.commit(row, { ...input, style: true }, before);
+            }
+        }
+        if (row && this.visibilitySnapshot) {
+            for (const input of row.visibilityInputs ?? []) {
+                const before = this.visibilitySnapshot[input.key] ?? input.defval;
+                if (row.visibilityValues?.[input.key] !== before) this.commit(row, { ...input, visibility: true }, before);
             }
         }
         this.close();
@@ -542,9 +614,13 @@ export class IndicatorInputsDialog {
     private rebuild(row: IndicatorDialogRow): void {
         const snap = this.snapshot;
         const propSnap = this.propSnapshot;
+        const styleSnap = this.styleSnapshot;
+        const visibilitySnap = this.visibilitySnapshot;
         this.open(row);
         if (snap) this.snapshot = snap;
         if (propSnap) this.propSnapshot = propSnap;
+        if (styleSnap) this.styleSnapshot = styleSnap;
+        if (visibilitySnap) this.visibilitySnapshot = visibilitySnap;
     }
 
     /** Restore every input to its declared default (re-running the indicator), then
@@ -556,6 +632,8 @@ export class IndicatorInputsDialog {
         if (!row) return;
         const snap = this.snapshot;
         const propSnap = this.propSnapshot;
+        const styleSnap = this.styleSnapshot;
+        const visibilitySnap = this.visibilitySnapshot;
         for (const inp of row.inputs) {
             if (row.values[inp.key] !== inp.defval) {
                 row.values[inp.key] = inp.defval;
@@ -570,15 +648,24 @@ export class IndicatorInputsDialog {
                 this.host.onChange?.({ indicatorId: row.id, key: p.key, value: p.defval, kind: 'prop' });
             }
         }
+        for (const input of row.styleInputs ?? []) {
+            if (row.styleValues?.[input.key] !== input.defval) this.commit(row, { ...input, style: true }, input.defval);
+        }
+        for (const input of row.visibilityInputs ?? []) {
+            if (row.visibilityValues?.[input.key] !== input.defval) this.commit(row, { ...input, visibility: true }, input.defval);
+        }
         this.open(row);
         if (snap) this.snapshot = snap;
         if (propSnap) this.propSnapshot = propSnap;
+        if (styleSnap) this.styleSnapshot = styleSnap;
+        if (visibilitySnap) this.visibilitySnapshot = visibilitySnap;
     }
 
     /** Write one edit through: store it, notify the host, and re-apply the `when` gates. */
     private commit(row: IndicatorDialogRow, decl: DialogDecl, value: InputValue): void {
         bagOf(row, decl)[decl.key] = value;
-        this.host.onChange?.({ indicatorId: row.id, key: decl.key, value, ...(decl.prop ? { kind: 'prop' as const } : {}) });
+        const kind = decl.prop ? 'prop' : decl.style ? 'style' : decl.visibility ? 'visibility' : 'input';
+        this.host.onChange?.({ indicatorId: row.id, key: decl.key, value, ...(kind !== 'input' ? { kind } : {}) });
         this.refreshVisibility?.();
     }
 
@@ -1087,7 +1174,7 @@ const CLOCK_SVG = iconAt('clock', 14);
 
 const DIALOG_STYLE_ID = 'vela-ind-dialog-styles';
 /** Bump when the injected sheet's rules change so an already-mounted page refreshes them. */
-const DIALOG_STYLE_REV = '31';
+const DIALOG_STYLE_REV = '32';
 const LEGEND_ICON_PX = 16;
 
 /** Inject the scoped styles inline cssText can't reach (color-swatch, focus ring, scrollbar). */
@@ -1106,8 +1193,12 @@ export function ensureDialogStyles(): void {
 .vela-ind-combo-chevron:hover{opacity:0.9;}
 .vela-ind-cal{background:var(--vela-bg);color:var(--vela-fg);border:none;border-radius:6px;box-shadow:var(--vela-shadow);font:14px var(--vela-font);padding:10px 12px;user-select:none;}
 ${overlayScrollbarCss('.vela-dialog.vela-ind-dialog *', 9)}
-.vela-ind-tab{font-weight:600;font-size:13px;line-height:20px;transition:color var(--vela-dur-fast) ease,border-color var(--vela-dur-fast) ease;}
+.vela-ind-tab{font-weight:600;font-size:13px;line-height:20px;white-space:nowrap;transition:color var(--vela-dur-fast) ease,border-color var(--vela-dur-fast) ease;}
 .vela-ind-tab:not(.vela-ind-tab-active):hover{color:var(--vela-fg-bright);}
+.vela-ind-tab:focus-visible{outline:2px solid var(--vela-accent);outline-offset:2px;border-radius:3px;}
+.vela-ind-dialog [role='tablist']::-webkit-scrollbar{display:none;}
+.vela-ind-dialog [role='tabpanel']{min-width:0;}
+.vela-ind-dialog .vela-ind-settings-note{grid-column:1/-1;margin:0 0 10px;color:var(--vela-fg-muted);font-size:12px;line-height:1.45;}
 .vela-ind-ctl,.vela-ind-close{background-color:transparent;color:inherit;transition:color var(--vela-dur-fast) ease,background-color var(--vela-dur-fast) ease;}
 .vela-ind-ctl svg,.vela-ind-close svg{width:${LEGEND_ICON_PX}px;height:${LEGEND_ICON_PX}px;display:block;flex:none;stroke-width:1;}
 .vela-ind-ctl:hover{background-color:var(--vela-hover-strong);}

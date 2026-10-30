@@ -149,9 +149,9 @@ describe('the tab-link picker says what is selected', () => {
         const ws = mount(memoryStorage());
         ws.setLinkGroup('green');
         ws.root.querySelector<HTMLElement>('button[aria-label^="Layout"]')!.click();
-        const group = ws.root.querySelector<HTMLElement>('.vela-lp-links');
+        const group = ws.root.querySelector<HTMLElement>('.vela-ls-linkbar');
         expect(group?.getAttribute('role')).toBe('radiogroup');
-        const dots = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-linkdot')];
+        const dots = [...ws.root.querySelectorAll<HTMLElement>('.vela-ls-linktag')];
         expect(dots).toHaveLength(5);
         expect(dots.map((d) => d.getAttribute('role'))).toEqual(Array(5).fill('radio'));
         expect(dots.filter((d) => d.getAttribute('aria-checked') === 'true')).toHaveLength(1);
@@ -165,9 +165,9 @@ describe('the presets are one tab stop', () => {
     it('is a radiogroup with a roving stop, and the arrows walk it', () => {
         const ws = mount(memoryStorage());
         ws.root.querySelector<HTMLElement>('button[aria-label^="Layout"]')!.click();
-        const group = ws.root.querySelector<HTMLElement>('.vela-lp-presets');
+        const group = ws.root.querySelector<HTMLElement>('.vela-ls-presets');
         expect(group?.getAttribute('role')).toBe('radiogroup');
-        const presets = [...ws.root.querySelectorAll<HTMLElement>('.vela-lp-preset')];
+        const presets = [...ws.root.querySelectorAll<HTMLElement>('.vela-ls-preset')];
         expect(presets.length).toBeGreaterThan(4);
         expect(presets.every((p) => p.getAttribute('role') === 'radio')).toBe(true);
         expect(presets.filter((p) => p.tabIndex === 0)).toHaveLength(1);
@@ -176,7 +176,7 @@ describe('the presets are one tab stop', () => {
         first.focus();
         first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
         expect(document.activeElement).not.toBe(first);
-        expect([...ws.root.querySelectorAll<HTMLElement>('.vela-lp-preset')].filter((p) => p.tabIndex === 0)).toHaveLength(1);
+        expect([...ws.root.querySelectorAll<HTMLElement>('.vela-ls-preset')].filter((p) => p.tabIndex === 0)).toHaveLength(1);
     });
 });
 
@@ -186,17 +186,19 @@ describe('the layout canvas is one control', () => {
         const trigger = ws.root.querySelector<HTMLElement>('button[aria-label^="Layout"]')!;
         trigger.focus();
         trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
-        // The canvas is the first control; it owns the arrow keys for all 16 squares.
+        // Keyboard opening lands on the selected tab; the grid remains one control.
+        const tab = ws.root.querySelector<HTMLElement>('.vela-ls-tab[aria-selected="true"]');
         const grid = ws.root.querySelector<HTMLElement>('.vela-lp-grid');
         expect(grid).not.toBeNull();
-        expect(document.activeElement).toBe(grid);
+        expect(document.activeElement).toBe(tab);
         expect(grid?.getAttribute('role')).toBe('group');
         expect(grid?.tabIndex).toBe(0);
         // …and no square is a tab stop.
         expect([...ws.root.querySelectorAll<HTMLElement>('.vela-lp-sq')].every((s) => s.tabIndex === -1)).toBe(true);
 
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        tab!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
         expect(document.activeElement).toBe(trigger);
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
     });
 
     it('arrows move the cursor, Enter applies that size', () => {

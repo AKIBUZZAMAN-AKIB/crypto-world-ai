@@ -49,6 +49,7 @@ describe('CrosshairRenderer.shadeRightArea', () => {
             dpr: 1,
             width: 380,
             height: 280,
+            barCount: 100,
             barInterval: 3_600_000,
             xToLogical: (x: number) => x / 10,
             logicalToX: (l: number) => l * 10,

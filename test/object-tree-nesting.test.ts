@@ -102,6 +102,6 @@ describe('group membership stays exclusive', () => {
         const groups = [g('a', ['d1']), g('b', [], 'a')];
         const moved = assignToGroup(groups, 'b', ['d1']);
         expect(groupOf(moved, 'd1')?.id).toBe('b');
-        expect(groupById(moved, 'a')).toBeNull();
+        expect(groupById(moved, 'a')?.id).toBe('a'); // parent still owns the child branch
     });
 });

@@ -103,15 +103,19 @@ function openEntryMenu(ws: VelaWorkspace): void {
 }
 
 describe('the topbar replay slot', () => {
-    it('renders beside the bell and is not lit until a session runs', async () => {
+    it('renders replay and the reachable bell without lighting replay before a session', async () => {
         const ws = mountWorkspace();
         await flush();
         const btn = replayButton(ws);
         expect(btn).not.toBeNull();
         expect(btn!.getAttribute('aria-label')).toBe('Bar replay');
         expect(btn!.hasAttribute('data-active')).toBe(false);
-        // Same right-hand cluster as the alerts bell.
-        expect(btn!.parentElement!.contains(ws.root.querySelector('.vela-widget-alerts'))).toBe(true);
+        // The default bell leads the scrolling strip so it remains reachable in
+        // landscape; replay remains in its original right-hand cluster.
+        const bell = ws.root.querySelector('.vela-widget-alerts')!;
+        expect(bell).not.toBeNull();
+        expect(ws.root.querySelector('.vela-widget-topbar')!.contains(bell)).toBe(true);
+        expect(btn!.parentElement!.contains(bell)).toBe(false);
     });
 
     it('the composition can place it (or hide it) like any other built-in entry', async () => {

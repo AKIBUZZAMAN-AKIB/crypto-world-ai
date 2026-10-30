@@ -86,8 +86,8 @@
   "author": "LuxAlgo",
   "sideEffects": false,
   "scripts": {
-    "build": "tsup",
-    "prepare": "tsup",
+    "build": "node tools/build-package.mjs",
+    "prepare": "node tools/build-package.mjs",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -114,6 +114,7 @@
     "@zag-js/menu": "^1.42.0",
     "@zag-js/tooltip": "^1.42.0",
     "@zag-js/types": "^1.42.0",
-    "@zag-js/vanilla": "^1.42.0"
+    "@zag-js/vanilla": "^1.42.0",
+    "monaco-editor": "0.45.0"
   }
 }

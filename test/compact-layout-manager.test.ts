@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// R86 Task 5 — a phone-sized, SEPARATE Manage layouts panel: autosave, copy, rename,
-// sharing link on/off, link and open link. It never renders the chart-grid setup.
+// Manage layouts is an anchored action menu, with forms in the same floating surface.
+// It retains autosave, copy, rename and sharing without rendering the chart-grid setup.
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 
 (globalThis as { CSS?: unknown }).CSS ??= { escape: (v: string) => v };
@@ -19,7 +19,9 @@ beforeAll(() => {
 });
 
 const live: VelaWorkspace[] = [];
+const managers: LayoutManagerPanel[] = [];
 afterEach(() => {
+    for (const manager of managers.splice(0)) manager.destroy();
     for (const ws of live.splice(0)) ws.destroy();
     document.body.replaceChildren();
 });
@@ -32,37 +34,57 @@ function mount(): VelaWorkspace {
     return ws;
 }
 
-describe('compact Manage layouts panel', () => {
-    it('renders only the management verbs in a narrow overflow-safe card', () => {
+describe('floating Manage layouts menu', () => {
+    it('uses a menu rather than a dialog and retains its actions in the same surface', async () => {
         const host = document.createElement('div');
+        const trigger = document.createElement('button');
+        host.append(trigger);
         document.body.append(host);
+        let autosave = false, sharing = false;
         const panel = new LayoutManagerPanel({
             host,
             activeName: () => 'Scalp ETH',
-            autosave: () => false,
-            onToggleAutosave: () => {},
+            autosave: () => autosave,
+            onToggleAutosave: (on) => { autosave = on; },
             onMakeCopy: () => 'Scalp ETH copy',
             onRename: () => true,
-            sharing: () => false,
-            onToggleSharing: () => {},
+            sharing: () => sharing,
+            onToggleSharing: (on) => { sharing = on; },
             shareUrl: async () => 'https://example.test/#s1=abc',
             onCopyLink: async () => null,
-            onOpenLink: async () => true,
+            onOpenLink: async () => false,
         });
-        panel.open();
-        const dialog = document.querySelector('.vela-lm-dialog')!;
-        const text = dialog.textContent ?? '';
-        expect(dialog).not.toBeNull();
-        expect(text).toContain('Manage layouts');
-        expect(text).toContain('Scalp ETH');
-        for (const label of ['Autosave', 'Make a copy', 'Rename', 'Sharing link', 'Copy link', 'Open link']) {
-            expect(text).toContain(label);
-        }
-        expect(text).not.toContain('Layout setup');
-        expect(text).not.toContain('1 × 1');
-        expect(document.querySelector('.vela-lm')?.classList.contains('vela-lm')).toBe(true);
-        expect(dialog.querySelectorAll('.vela-lm-switch')).toHaveLength(2);
-        expect(dialog.querySelectorAll('input')).toHaveLength(3);
+        managers.push(panel);
+        panel.open(trigger);
+        const menu = document.querySelector<HTMLElement>('.vela-lmp')!;
+        expect(menu.closest('.vela-popover')).not.toBeNull();
+        expect(menu.getAttribute('role')).toBe('menu');
+        expect(document.querySelector('.vela-lmp-dialog')).toBeNull();
+        expect(menu.textContent).toContain('Scalp ETH');
+        expect(menu.textContent).toContain('Autosave');
+        expect(menu.textContent).toContain('Make a copy');
+        expect(menu.textContent).toContain('Rename');
+        expect(menu.textContent).not.toContain('Layout setup');
+        expect(menu.querySelectorAll('input')).toHaveLength(0);
+        menu.querySelector<HTMLButtonElement>('[data-action="autosave"]')!.click();
+        expect(autosave).toBe(true);
+        expect(menu.querySelector('[data-action="autosave"]')?.getAttribute('aria-checked')).toBe('true');
+        menu.querySelector<HTMLButtonElement>('[data-action="sharing"]')!.click();
+        menu.querySelector<HTMLButtonElement>('[data-action="sharing-toggle"]')!.click();
+        expect(sharing).toBe(true);
+        menu.querySelector<HTMLButtonElement>('[data-action="share-copy"]')!.click();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(menu.dataset.page).toBe('show-link');
+        expect(menu.querySelector<HTMLInputElement>('[aria-label="Workspace sharing link"]')?.value).toBe('https://example.test/#s1=abc');
+        expect(menu.querySelector('[role="status"]')?.textContent).toContain('Clipboard refused');
+        menu.querySelector<HTMLButtonElement>('[data-action="back"]')!.click();
+        menu.querySelector<HTMLButtonElement>('[data-action="open-link"]')!.click();
+        const input = menu.querySelector<HTMLInputElement>('[aria-label="Shared link to open"]')!;
+        input.value = 'bad-link';
+        input.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        await Promise.resolve();
+        expect(menu.querySelector('[role="status"]')?.textContent).toContain('could not be opened');
     });
 
     it('keeps sharing state in the workspace document, separate from layout setup', () => {

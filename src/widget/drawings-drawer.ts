@@ -21,6 +21,28 @@ import type { DrawingTypeKey } from '../core/drawings/Drawing';
 const STYLE_ID = 'vela-widget-drawings-drawer';
 const CSS = `
 /* Search + tabs stay pinned while the tool list scrolls underneath. */
+.vela-drawer.vela-drawings-panel {
+    box-sizing:border-box;
+    width:100%; height:clamp(min(216px,100%),44%,100%); max-height:100%; margin:0;
+    border:0; border-top:1px solid var(--vela-border-strong); border-radius:0; box-shadow:none;
+}
+@media (min-width:720px) {
+    .vela-drawer.vela-drawings-panel { width:100%; max-height:100%; margin:0; border-radius:0; }
+}
+html.vela-premium .vela-drawer.vela-drawings-panel,
+html.vela-premium .vela-drawer.vela-drawings-panel[data-grip-row] {
+    border-radius:0; border:0; border-top:1px solid var(--vela-border-strong); box-shadow:none;
+}
+.vela-drawer.vela-drawings-panel[data-maximized='1'] { height:100% !important; max-height:100% !important; }
+.vela-drawings-panel .vela-drawer-top { min-height:40px; padding:0 8px 0 12px; gap:8px; border-bottom:1px solid var(--vela-border); }
+.vela-drawings-panel .vela-drawer-title { font-size:14px; font-weight:650; letter-spacing:0; }
+.vela-dd-head-action {
+    all:unset; box-sizing:border-box; flex:none; width:36px; height:36px; display:inline-flex;
+    align-items:center; justify-content:center; border-radius:4px; color:var(--vela-fg-muted); cursor:pointer;
+}
+.vela-dd-head-action .vela-icon { width:16px; height:16px; }
+.vela-dd-head-action:hover { background:var(--vela-hover); color:var(--vela-fg-bright); }
+.vela-dd-head-action:focus-visible { outline:2px solid var(--vela-fg-bright); outline-offset:-2px; }
 .vela-dd-sticky {
     position: sticky;
     top: 0;
@@ -101,7 +123,7 @@ const CSS = `
 }
 .vela-dd-row:active { background: var(--vela-hover); }
 .vela-dd-row[data-active='1'] { background: var(--vela-hover); }
-.vela-dd-row[data-active='1'] .vela-dd-label { color: var(--vela-accent); }
+.vela-dd-row[data-active='1'] .vela-dd-label { color: var(--vela-accent-ink, var(--vela-accent)); }
 .vela-dd-glyph { flex: none; width: 24px; height: 24px; color: var(--vela-fg); }
 .vela-dd-glyph svg { width: 24px; height: 24px; }
 .vela-dd-label { flex: 1 1 auto; min-width: 0; font-size: 14px; color: var(--vela-fg-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -159,6 +181,40 @@ export class DrawingsDrawer {
             // Swiping across the tool list pages through the group tabs.
             onSwipe: (dir) => this.stepGroup(dir === 'left' ? 1 : -1),
         });
+        const panel = this.drawer.body.closest<HTMLElement>('.vela-drawer');
+        const header = panel?.querySelector<HTMLElement>('.vela-drawer-top');
+        if (panel && header) {
+            panel.classList.add('vela-drawings-panel');
+            const max = doc.createElement('button');
+            max.type = 'button';
+            max.className = 'vela-dd-head-action vela-dd-max';
+            max.setAttribute('aria-label', 'Maximize Drawings panel');
+            max.setAttribute('aria-pressed', 'false');
+            max.title = 'Maximize';
+            max.appendChild(iconEl('maximize', doc));
+            let savedHeight = '';
+            max.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const expanded = panel.getAttribute('data-maximized') !== '1';
+                if (expanded) savedHeight = panel.style.height;
+                panel.dataset.maximized = expanded ? '1' : '0';
+                if (!expanded) panel.removeAttribute('data-maximized');
+                panel.style.height = expanded ? '100%' : savedHeight;
+                panel.style.maxHeight = expanded ? '100%' : '';
+                max.setAttribute('aria-pressed', String(expanded));
+                max.setAttribute('aria-label', expanded ? 'Restore Drawings panel' : 'Maximize Drawings panel');
+                max.title = expanded ? 'Restore' : 'Maximize';
+                max.replaceChildren(iconEl(expanded ? 'restore' : 'maximize', doc));
+            });
+            const close = doc.createElement('button');
+            close.type = 'button';
+            close.className = 'vela-dd-head-action vela-dd-close';
+            close.setAttribute('aria-label', 'Close Drawings panel');
+            close.title = 'Close';
+            close.appendChild(iconEl('close', doc));
+            close.addEventListener('click', (event) => { event.stopPropagation(); this.drawer.hide(); });
+            header.append(max, close);
+        }
 
         const sticky = doc.createElement('div');
         sticky.className = 'vela-dd-sticky';

@@ -24,6 +24,15 @@ page.on('pageerror', (e) => errors.push(String(e)));
 await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => window.__ws?.cells().length >= 1, null, { timeout: 90000 });
 await page.waitForTimeout(2000);
+// A deterministic full-page index keeps this a meaningful 100-row stress test when
+// the network-free fixture has only six symbols (or the live venue is unavailable).
+await page.evaluate(() => {
+    const picker = window.__ws.symbolPicker;
+    const symbols = Array.from({ length: 150 }, (_, i) => ({ ticker: `TEST${String(i).padStart(3, '0')}`,
+        description: `Synthetic symbol ${i}`, type: 'crypto', provider: 'offline' }));
+    picker.setSource(() => symbols);
+    picker.opts.iconFor = () => 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/%3E';
+});
 
 const facts = {};
 
@@ -56,8 +65,8 @@ await timeOne('timeframe', '.vela-widget-tf-caret', '.vela-menu');
 await timeOne('chart style', '.vela-widget-style', '.vela-menu');
 await timeOne('replay', '.vela-widget-replay', '.vela-menu');
 await timeOne('templates', '.vela-widget-tplcaret', '.vela-tm');
-await timeOne('layout', '.vela-widget-layoutname', '.vela-lm');
-await timeOne('indicators', '.vela-widget-indicators', '.vela-pop, .vela-dialog');
+await timeOne('layout', '.vela-widget-layoutname', '.vela-lmp');
+await timeOne('indicators', '.vela-widget-indicators', '.vela-indicator-panel');
 await page.keyboard.press('Escape');
 await page.waitForTimeout(420);
 

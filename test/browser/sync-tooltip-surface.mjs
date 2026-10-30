@@ -54,9 +54,12 @@ assert(
 );
 assert(Math.abs(first.rect.top - (tf.y + tf.height) - 8) <= 1.5, '…8px off its side (flipped below the bar)', { tip: first.rect.top, triggerBottom: tf.y + tf.height });
 
-// ── 3: leaving clears it, and the surface keeps its single node ────────────────────────
+// ── 3: the pointer can cross onto the tooltip; leaving then clears it ──────────────────
+await page.mouse.move(first.rect.left + first.rect.width / 2, first.rect.top + first.rect.height / 2, { steps: 8 });
+await page.waitForTimeout(400);
+assert(await page.locator('.vela-tooltip').isVisible(), 'moving onto the tooltip keeps its description visible');
 await page.mouse.move(700, 520);
-await page.waitForTimeout(160);
+await page.waitForTimeout(350);
 const after = await page.evaluate(() => {
     const t = document.querySelector('.vela-tooltip');
     return { hidden: t.hidden, state: t.dataset.state, text: t.childNodes.length, described: document.querySelector('#vela-topbar-tf').getAttribute('aria-describedby'), tips: document.querySelectorAll('.vela-tooltip').length };
@@ -111,17 +114,18 @@ assert(focused.hidden === false && focused.text === 'Chart style', 'keyboard foc
 // ── 7: a rich (node) tip leaves nothing behind ─────────────────────────────────────────
 await page.mouse.move(700, 520);
 await page.keyboard.press('Escape');
-// The status line's sync badge opens the layout picker (its info badge carries a rich tip).
+// The status-line badge opens the shared pane; Layout retains the rich grid help tip.
 await page.locator('.vela-sl-marks').first().click();
-await page.waitForSelector('.vela-lp', { timeout: 5000 });
-await page.locator('.vela-lp-badge').hover();
+await page.waitForSelector('.vela-layout-setup', { timeout: 5000 });
+await page.locator('.vela-layout-setup').getByRole('tab', { name: 'Layout', exact: true }).click();
+await page.locator('.vela-ls-help').hover();
 await page.waitForTimeout(180);
 const rich = await page.evaluate(() => {
     const t = document.querySelector('.vela-tooltip');
     return { kids: t.childNodes.length, nodes: t.querySelectorAll('*').length, text: (t.textContent ?? '').slice(0, 40), hidden: t.hidden };
 });
 facts.rich = rich;
-assert(rich.hidden === false && rich.kids > 0, 'the layout picker’s rich tip renders its node', rich);
+assert(rich.hidden === false && rich.kids > 0, 'the Layout Setup rich help tip renders its node', rich);
 await page.mouse.move(700, 520);
 await page.keyboard.press('Escape');
 await page.waitForTimeout(200);

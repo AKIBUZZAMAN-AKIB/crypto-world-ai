@@ -23,7 +23,6 @@ import { timeframeMs } from '../widget/timeframe';
 import { Watermark } from '../widget/watermark';
 import { CellControls } from '../widget/cell-controls';
 import { ChartContextMenu } from '../widget/context-menu';
-import { ChartMenuDrawer } from '../widget/chart-menu-drawer';
 import { WidgetHistory } from '../widget/history';
 import type { RangePreset } from '../widget/bottombar';
 import { indicatorLedger, ledgerEntryName, ledgerNativeType, type LedgerManifestEntry, type LedgerNativeEntry, type ResolvedIndicator } from '../widget/indicators';
@@ -246,21 +245,30 @@ interface CellInstance {
      *  whatever a host keyed on it (a document, an editor tab) keeps pointing at it. */
     id?: string;
     external?: boolean;
+    standalone?: boolean;
     values?: { inputs?: Record<string, InputValue>; props?: Record<string, InputValue> };
 }
 
 /** A native handle's ledger entry: the bare type, or type + input deltas + hidden flag. */
 function nativeLedgerEntry(handle: IndicatorHandle): LedgerNativeEntry {
-    const inputs = inputDeltas(handle.inputs, handle.inputValues());
+    const values = handle.inputValues();
+    const inputs = handle.inputs.length ? inputDeltas(handle.inputs, values) : (Object.keys(values).length ? values : undefined);
+    const props = handle.propValues();
     const hidden = !handle.visible;
-    return inputs || hidden ? { type: handle.nativeType!, ...(inputs ? { inputs } : {}), ...(hidden ? { hidden: true } : {}) } : handle.nativeType!;
+    return inputs || Object.keys(props).length > 0 || hidden
+        ? { type: handle.nativeType!, ...(inputs ? { inputs } : {}), ...(Object.keys(props).length > 0 ? { props } : {}), ...(hidden ? { hidden: true } : {}) }
+        : handle.nativeType!;
 }
 
 /** The handle's current input/prop DELTAS against declaration defaults (see `inputDeltas`). */
 function instanceDeltas(handle: IndicatorHandle | null): { inputs?: Record<string, InputValue>; props?: Record<string, InputValue> } | undefined {
     if (!handle) return undefined;
-    const inputs = inputDeltas(handle.inputs, handle.inputValues());
-    const props = inputDeltas(handle.props, handle.propValues());
+    const inputValues = handle.inputValues();
+    const propValues = handle.propValues();
+    // Before async preparation there is no schema to diff against. Keep the pending
+    // overrides verbatim rather than losing a quick edit or an immediate workspace save.
+    const inputs = handle.inputs.length ? inputDeltas(handle.inputs, inputValues) : (Object.keys(inputValues).length ? inputValues : undefined);
+    const props = handle.props.length ? inputDeltas(handle.props, propValues) : (Object.keys(propValues).length ? propValues : undefined);
     return inputs || props ? { ...(inputs ? { inputs } : {}), ...(props ? { props } : {}) } : undefined;
 }
 
@@ -298,6 +306,8 @@ export class ChartCell {
      *  plot-overlay tokens re-derive from). */
     private appTheme: VelaTheme;
     private readonly statusline: Statusline | null;
+    /** The leader's exact instant, even when this follower has not loaded its bar yet. */
+    private syncedCrosshairTime: number | null = null;
     /** Keeps this cell's market badge on the symbol's real calendar (see {@link MarketStatusTracker}). */
     private readonly marketStatus: MarketStatusTracker | null;
     /** Keeps the session shading on the symbol's real calendar (see {@link SessionShadingTracker}). */
@@ -306,9 +316,6 @@ export class ChartCell {
     /** Bottom-center hover cluster, pinned to the price plot: drag handle, zoom in/out, maximize/restore, reset view. */
     private readonly cellControls: CellControls;
     private readonly contextMenu: ChartContextMenu;
-    /** The chart-body menu as a bottom sheet — opened from the phone's More drawer
-     *  ("Chart actions…"): a long-press on the plot stays the crosshair. */
-    private chartMenu: ChartMenuDrawer | null = null;
     private readonly offMarket: () => void;
     /** The cell's durable market state — the seed vocabulary plus the venue mirror the
      *  persisted document carries (`provider` = the symbol's parsed prefix). */
@@ -518,6 +525,13 @@ export class ChartCell {
         this.statusline = deps.statusline ? new Statusline(this.host, symbol ?? '', (sym) => this.inner?.data.symbolIcon(sym)) : null;
         this.statusline?.setMeta(seed.timeframe ?? '60', this.state.provider ?? '');
         this.statusline?.onChart(this.inner);
+        // A synced follower reads its OWN bar at the leader's instant. The leader may
+        // not move again when this cell loads or receives a live/replay update, so keep
+        // that readout current on this cell's own data events as well.
+        this.inner.on('bar', () => this.refreshSyncedCrosshair());
+        this.inner.on('load:end', () => this.refreshSyncedCrosshair());
+        this.inner.on('replay:start', () => this.refreshSyncedCrosshair());
+        this.inner.on('replay:end', () => this.refreshSyncedCrosshair());
         // The status line's right-click menu: part toggles route through the cell so the
         // style link mirrors them; the chart toggle is the object tree's same eye seam.
         this.statusline?.attachMenu({
@@ -723,9 +737,20 @@ export class ChartCell {
         return this.inner?.renderer.barAt(time) ?? null;
     }
 
-    /** Show (or clear) the bar another chart's crosshair points at — status-line readout. */
+    /** Show (or clear) a resolved synced bar — retained for existing host callers. */
     setSyncedCrosshair(bar: OHLCV | null): void {
+        this.syncedCrosshairTime = bar?.time ?? null;
         this.statusline?.setSyncedCrosshair(bar);
+    }
+
+    /** Follow the leader's exact time, including before this cell's bars have loaded. */
+    setSyncedCrosshairAt(time: number | null): void {
+        this.syncedCrosshairTime = time;
+        this.statusline?.setSyncedCrosshair(time == null ? null : this.barAt(time));
+    }
+
+    private refreshSyncedCrosshair(): void {
+        if (this.syncedCrosshairTime != null) this.statusline?.setSyncedCrosshair(this.barAt(this.syncedCrosshairTime));
     }
 
     /** The sync-group emoji for this chart (the workspace projects the links here). */
@@ -1248,18 +1273,20 @@ export class ChartCell {
         }
     }
 
-    /** Open the chart-body menu sheet — the phone's door to the desktop right-click menu
-     *  (More drawer → "Chart actions…"). A long-press on the plot stays the crosshair. */
-    openChartMenu(): void {
-        this.chartMenu ??= new ChartMenuDrawer({
-            host: this.deps.dialogHost,
-            chart: () => this.inner,
-            resetView: () => this.resetView(),
-            ...(this.deps.applySettingsToAll ? { applySettingsToAll: () => this.deps.applySettingsToAll?.(this.id) } : {}),
-            ...(this.deps.openSyncGesture ? { chartSyncing: () => this.deps.openSyncGesture?.(this.id) } : {}),
-            getContext: () => this.deps.context(),
-        });
-        this.chartMenu.open();
+    /** Phone More → Chart actions: the same chart-body actions as a desktop right-click,
+     *  anchored to the visible More button. A long-press on the plot stays the crosshair. */
+    openChartMenu(anchor?: HTMLElement): void {
+        const trigger = anchor ?? this.deps.dialogHost.querySelector<HTMLElement>('.vela-mb-more') ?? this.host;
+        this.contextMenu.openBody(trigger);
+    }
+
+    /** Long-press the price axis: plot-local coordinates target this cell and pane. */
+    openPriceScaleMenu(x: number, y: number): void {
+        // All renderer layers share the data canvas's origin; it can differ from the
+        // cell in embedded hosts or if a renderer places a gutter inside the cell.
+        const canvas = this.host.querySelector<HTMLCanvasElement>('canvas');
+        const rect = (canvas ?? this.host).getBoundingClientRect();
+        this.contextMenu.openPriceScale(rect.left + x, rect.top + y, y);
     }
 
     /** Reset this cell's view: re-enable auto scale and frame the full history —
@@ -1311,17 +1338,30 @@ export class ChartCell {
     setManifest(list: readonly ResolvedIndicator[], seedEnabled: boolean): void {
         this.manifest = list;
         if (this.pendingManifestNames) {
-            if (list.length === 0) return; // the manifest hasn't resolved yet — keep waiting
+            const unresolved: LedgerManifestEntry[] = [];
             for (const led of this.pendingManifestNames) {
-                const entry = list.find((e) => e.name === ledgerEntryName(led));
-                if (entry) this.addManifestInstance(entry, { record: false, ...(typeof led === 'object' ? { inputs: led.inputs, props: led.props, hidden: led.hidden } : {}) });
+                const entry = this.resolveLedgerEntry(led);
+                if (entry) this.addManifestInstance(entry, {
+                    record: false,
+                    ...(typeof led === 'object' ? { inputs: led.inputs, props: led.props, hidden: led.hidden, standalone: !!led.source } : {}),
+                });
+                else unresolved.push(led);
             }
-            this.pendingManifestNames = null;
+            this.pendingManifestNames = unresolved.length > 0 && !this.deps.manifestSettled() ? unresolved : null;
             return;
         }
-        if (seedEnabled) {
-            for (const entry of list) if (entry.enabled) this.addManifestInstance(entry, { record: false });
+        if (seedEnabled) for (const entry of list) {
+            // A host (or the user) may have added this exact manifest study while the
+            // async manifest was loading. Its eventual auto-seed must not duplicate it.
+            if (entry.enabled && !this.instances.some((it) => it.entry.name === entry.name && it.entry.script === entry.script && it.entry.language === entry.language)) {
+                this.addManifestInstance(entry, { record: false });
+            }
         }
+    }
+
+    private resolveLedgerEntry(led: LedgerManifestEntry): ResolvedIndicator | undefined {
+        if (typeof led === 'object' && led.source) return { name: led.name, script: led.source, enabled: true, ...(led.language ? { language: led.language } : {}) };
+        return this.manifest.find((e) => e.name === ledgerEntryName(led));
     }
 
     /**
@@ -1337,11 +1377,10 @@ export class ChartCell {
      * documented contract: drawings are not part of a template, so they stay exactly as
      * they are on the chart.
      */
-    applyIndicatorTemplate(template: { indicators: ReadonlyArray<LedgerNativeEntry | string | { type: string; inputs?: Record<string, unknown>; hidden?: boolean }> }): void {
-        const natives = template.indicators.map((e) =>
-            typeof e === 'string' ? e : ({ ...e, inputs: (e.inputs ?? {}) as Record<string, never> } as unknown as LedgerNativeEntry),
-        );
-        this.rehydrate({ indicators: { manifest: [], natives } } as CellState);
+    applyIndicatorTemplate(template: { indicators: ReadonlyArray<LedgerNativeEntry | string | { type: string; inputs?: Record<string, unknown>; hidden?: boolean }>; scripts?: ReadonlyArray<{ name: string; source: string; inputs?: Record<string, unknown>; props?: Record<string, unknown>; hidden?: boolean; language?: string }> }): void {
+        const natives = template.indicators.map((e) => typeof e === 'string' ? e : ({ ...e, inputs: (e.inputs ?? {}) as Record<string, never> } as unknown as LedgerNativeEntry));
+        const manifest = (template.scripts ?? []).map((e) => ({ ...e, inputs: e.inputs as Record<string, InputValue> | undefined, props: e.props as Record<string, InputValue> | undefined }));
+        this.rehydrate({ indicators: { manifest, natives } } as CellState);
     }
 
     private applyIndicatorLedger(led: { manifest: LedgerManifestEntry[]; natives: LedgerNativeEntry[] }): void {
@@ -1372,21 +1411,16 @@ export class ChartCell {
                 }
             }
             for (const it of [...this.instances]) this.dropInstance(it);
-            if (this.manifest.length > 0) {
-                for (const item of led.manifest) {
-                    const entry = this.manifest.find((e) => e.name === ledgerEntryName(item));
-                    if (entry)
-                        this.addManifestInstance(entry, {
-                            record: false,
-                            ...(typeof item === 'object' ? { inputs: item.inputs, props: item.props, hidden: item.hidden } : {}),
-                        });
-                }
-                this.pendingManifestNames = null;
-            } else if (!this.deps.manifestSettled()) {
-                this.pendingManifestNames = [...led.manifest]; // consumed by setManifest on resolution
-            } else {
-                this.pendingManifestNames = null; // no manifest will ever resolve — never park names
+            const unresolved: LedgerManifestEntry[] = [];
+            for (const item of led.manifest) {
+                const entry = this.resolveLedgerEntry(item);
+                if (entry) this.addManifestInstance(entry, {
+                    record: false,
+                    ...(typeof item === 'object' ? { inputs: item.inputs, props: item.props, hidden: item.hidden, standalone: !!item.source } : {}),
+                });
+                else unresolved.push(item);
             }
+            this.pendingManifestNames = unresolved.length > 0 && !this.deps.manifestSettled() ? unresolved : null;
         });
         this.syncPresentNatives();
         this.refreshNativeCatalog();
@@ -1468,22 +1502,22 @@ export class ChartCell {
     /** Add ONE instance of a manifest entry (repeatable — duplicates are legitimate). */
     addManifestInstance(
         entry: ResolvedIndicator,
-        opts: { record?: boolean; external?: boolean; id?: string; inputs?: Record<string, InputValue>; props?: Record<string, InputValue>; hidden?: boolean } = {},
-    ): void {
-        if (this.destroyed) return;
+        opts: { record?: boolean; external?: boolean; standalone?: boolean; id?: string; inputs?: Record<string, InputValue>; props?: Record<string, InputValue>; hidden?: boolean } = {},
+    ): IndicatorHandle | null {
+        if (this.destroyed) return null;
         const values = opts.inputs || opts.props ? { inputs: opts.inputs, props: opts.props } : undefined;
         const handle = this.addToChart(entry, values, opts.id);
         // The chart refused the add (a host id already live on it): no instance, no
         // history entry — a ghost row with nothing behind it would be worse than nothing.
-        if (!handle) return;
-        const it: CellInstance = { entry, handle, id: handle.id, ...(opts.external ? { external: true } : {}), ...(values ? { values } : {}) };
+        if (!handle) return null;
+        const it: CellInstance = { entry, handle, id: handle.id, ...(opts.external ? { external: true } : {}), ...(opts.standalone ? { standalone: true } : {}), ...(values ? { values } : {}) };
         // A restored `hidden` applies right after the add — the handle is usable
         // synchronously, and hiding suspends the engine session before it spends
         // anything on an indicator the user had tucked away.
         if (opts.hidden) it.handle?.setVisible(false);
         this.instances.push(it);
         this.deps.onIndicatorsChanged(this.id);
-        if (opts.record === false) return;
+        if (opts.record === false) return handle;
         const snapshot = it;
         this.history.push({
             undo: () => this.dropInstance(snapshot),
@@ -1493,6 +1527,7 @@ export class ChartCell {
                 this.deps.onIndicatorsChanged(this.id);
             },
         });
+        return handle;
     }
 
     private removeInstance(index: number): void {
@@ -1551,6 +1586,8 @@ export class ChartCell {
             // Schema not exposed (nothing to diff against) — apply the stored values verbatim.
             handle.setInputs(wanted);
         }
+        const wantedProps = typeof entry === 'string' ? undefined : entry.props;
+        if (wantedProps && JSON.stringify(wantedProps) !== JSON.stringify(handle.propValues())) handle.setProps(wantedProps);
         const visible = !(typeof entry === 'object' && entry.hidden);
         if (handle.visible !== visible) handle.setVisible(visible);
     }
@@ -1619,6 +1656,7 @@ export class ChartCell {
             return (
                 this.inner?.addIndicator(entry.script, {
                     ...(id !== undefined ? { id } : {}),
+                    title: entry.name,
                     ...(entry.language !== undefined ? { language: entry.language } : {}),
                     ...(values?.inputs ? { inputs: values.inputs } : {}),
                     ...(values?.props ? { props: values.props } : {}),
@@ -1830,7 +1868,7 @@ export class ChartCell {
                     // keeps whatever values it was restored with.
                     const d = it.handle ? instanceDeltas(it.handle) : it.values;
                     const hidden = it.handle ? !it.handle.visible : false;
-                    return d || hidden ? { name: it.entry.name, ...(d ?? {}), ...(hidden ? { hidden: true } : {}) } : it.entry.name;
+                    return d || hidden || it.standalone ? { name: it.entry.name, ...(d ?? {}), ...(hidden ? { hidden: true } : {}), ...(it.standalone ? { source: it.handle?.source ?? it.entry.script, ...(it.entry.language ? { language: it.entry.language } : {}) } : {}) } : it.entry.name;
                 }),
             pendingManifest: this.pendingManifestNames,
             manifestSettled: this.deps.manifestSettled(),
@@ -1843,8 +1881,6 @@ export class ChartCell {
         this.offMarket();
         this.cellControls.destroy();
         this.contextMenu.destroy();
-        this.chartMenu?.destroy();
-        this.chartMenu = null;
         this.history.destroy();
         this.marketStatus?.stop();
         this.sessionShading.stop();

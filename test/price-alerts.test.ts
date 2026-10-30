@@ -90,6 +90,29 @@ describe('price alert — lifecycle', () => {
         expect(advanceAlert(each.alert, { prev: 101, now: 99 }).fired).toBe(true);
     });
 
+    it('re-arms repeating state alerts after returning to the other side and timestamps fires', () => {
+        const start = alert({ condition: 'gt', value: 100, frequency: 'each', anchorPrice: 99 });
+        const first = advanceAlert(start, { prev: 99, now: 101, time: 1700000000000 });
+        expect(first.fired).toBe(true);
+        expect(first.alert.firedAt).toBe(1700000000000);
+        const retreat = advanceAlert(first.alert, { prev: first.alert.anchorPrice, now: 99, time: 1700000001000 });
+        expect(retreat.fired).toBe(false);
+        expect(retreat.alert.anchorPrice).toBe(99);
+        const second = advanceAlert(retreat.alert, { prev: retreat.alert.anchorPrice, now: 101, time: 1700000002000 });
+        expect(second.fired).toBe(true);
+        expect(second.alert.fires).toBe(2);
+        expect(second.alert.firedAt).toBe(1700000002000);
+    });
+
+    it('keeps the previous side across an exact touch, without using price as a timestamp', () => {
+        const first = advanceAlert(alert({ condition: 'cross-up', value: 100, anchorPrice: 99 }), { prev: 99, now: 100 });
+        expect(first.fired).toBe(false);
+        expect(first.alert.anchorPrice).toBe(99);
+        const cross = advanceAlert(first.alert, { prev: first.alert.anchorPrice, now: 101 });
+        expect(cross.fired).toBe(true);
+        expect(cross.alert.firedAt).toBe(0);
+    });
+
     it('a paused alert is inert', () => {
         expect(advanceAlert(alert({ state: 'paused' }), { prev: 99, now: 101 }).fired).toBe(false);
     });

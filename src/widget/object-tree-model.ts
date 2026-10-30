@@ -15,6 +15,11 @@ export interface DrawGroup {
     id: string;
     name: string;
     ids: string[];
+    /** Indicator instances held directly in this folder. Drawings remain in `ids` for
+     * backward compatibility with saved workspaces. Membership is exclusive per kind. */
+    indicators?: string[];
+    /** Portable references let indicator membership survive regenerated runtime ids. */
+    indicatorRefs?: Array<{ id: string; key: string; ordinal: number }>;
     parent?: string;
 }
 
@@ -143,7 +148,12 @@ export function sameToken(a: StackToken, b: StackToken): boolean {
 
 function unitTokens(u: DrawUnit): StackToken[] {
     if (u.kind === 'draw') return [{ kind: 'drawing', id: u.drawing.id }];
-    return u.members.map((m) => ({ kind: 'drawing' as const, id: m.id }));
+    const members = (unit: DrawUnit): SerializedDrawing[] => unit.kind === 'draw'
+        ? [unit.drawing]
+        : [...unit.members, ...unit.children.flatMap(members)];
+    // Nested descendants are real stack tokens too; dropping them would otherwise
+    // rewrite an incomplete z-stack on the next visual-order operation.
+    return members(u).sort((a, b) => b.zIndex - a.zIndex).map((m) => ({ kind: 'drawing' as const, id: m.id }));
 }
 
 function itemTokens(item: TreeItem): StackToken[] {
@@ -170,7 +180,7 @@ export function groupTokenIndex(pane: TreePane, groupId: string, memberSlot: num
     let at = 0;
     for (const item of pane.items) {
         if (item.kind === 'unit' && item.unit.kind === 'group' && item.unit.group.id === groupId) {
-            return at + Math.min(memberSlot, item.unit.members.length);
+            return at + Math.min(memberSlot, unitTokens(item.unit).length);
         }
         at += itemTokens(item).length;
     }
@@ -280,6 +290,34 @@ export function paneDrawings(drawings: readonly SerializedDrawing[], paneId: str
 /** The group a drawing belongs to, or null. */
 export function groupOf(groups: readonly DrawGroup[], drawingId: string): DrawGroup | null {
     return groups.find((g) => g.ids.includes(drawingId)) ?? null;
+}
+
+/** An indicator can belong to one folder, independently of drawing ids. */
+export function indicatorGroupOf(groups: readonly DrawGroup[], indicatorId: string): DrawGroup | null {
+    return groups.find((g) => g.indicators?.includes(indicatorId)) ?? null;
+}
+
+/** Every indicator in a folder's nested branch. */
+export function groupIndicatorIds(groups: readonly DrawGroup[], id: string): string[] {
+    return subtreeGroupIds(groups, id).flatMap((gid) => groupById(groups, gid)?.indicators ?? []);
+}
+
+/** File indicator instances without moving their chart pane or changing their z-order. */
+export function assignIndicatorsToGroup(groups: readonly DrawGroup[], groupId: string, ids: readonly string[]): DrawGroup[] {
+    if (!groups.some((g) => g.id === groupId)) return [...groups];
+    const moving = new Set(ids);
+    const next = groups.map((g) => {
+        const kept = (g.indicators ?? []).filter((id) => !moving.has(id));
+        const indicators = g.id === groupId ? [...kept, ...ids.filter((id) => !kept.includes(id))] : kept;
+        return { ...g, indicators };
+    });
+    return pruneGroups(next, new Set(next.flatMap((g) => g.ids)), new Set(next.flatMap((g) => g.indicators ?? [])));
+}
+
+export function removeIndicatorsFromGroups(groups: readonly DrawGroup[], ids: readonly string[]): DrawGroup[] {
+    const drop = new Set(ids);
+    const next = groups.map((g) => ({ ...g, indicators: (g.indicators ?? []).filter((id) => !drop.has(id)) }));
+    return pruneGroups(next, new Set(next.flatMap((g) => g.ids)), new Set(next.flatMap((g) => g.indicators ?? [])));
 }
 
 /** A group by id, or null. */
@@ -393,23 +431,28 @@ export function nextGroupName(groups: readonly DrawGroup[]): string {
 /** Rebuild a group list with only the members that pass `keep`. A group left with nobody in
  *  it disappears rather than lingering as an empty row. */
 function withMembers(groups: readonly DrawGroup[], keep: (id: string) => boolean): DrawGroup[] {
-    return groups.map((g) => ({ ...g, ids: g.ids.filter(keep) })).filter((g) => g.ids.length > 0);
+    const next = groups.map((g) => ({ ...g, ids: g.ids.filter(keep) }));
+    return pruneGroups(next, new Set(next.flatMap((g) => g.ids)));
 }
 
 /** Drop members that no longer exist, then any group left with neither a drawing nor a nested
  *  group — an empty group is not a container you can find again, so it disappears (the rule
  *  TradingView's object tree follows), and a branch that lost its last leaf goes with it. */
-export function pruneGroups(groups: readonly DrawGroup[], live: ReadonlySet<string>): DrawGroup[] {
-    // Members first, but WITHOUT the empty-group sweep `withMembers` does: a group that only
-    // holds nested groups is empty of drawings and still very much alive.
-    const kept = groups.map((g) => ({ ...g, ids: g.ids.filter((id) => live.has(id)) }));
+export function pruneGroups(groups: readonly DrawGroup[], live: ReadonlySet<string>, liveIndicators?: ReadonlySet<string>): DrawGroup[] {
+    // A drawing-only caller does not know which indicators exist; preserve them unless
+    // it explicitly supplies the live set. An empty set means none are alive.
+    const kept = groups.map((g) => ({
+        ...g,
+        ids: g.ids.filter((id) => live.has(id)),
+        ...(g.indicators ? { indicators: liveIndicators ? g.indicators.filter((id) => liveIndicators.has(id)) : [...g.indicators] } : {}),
+    }));
     // A parent that no longer exists reads as top level rather than orphaning the branch.
     const ids = new Set(kept.map((g) => g.id));
     const rooted: DrawGroup[] = kept.map((g) => (g.parent !== undefined && !ids.has(g.parent) ? (({ parent: _d, ...rest }) => rest)(g) : g));
     let current = rooted;
     for (let guard = 0; guard <= rooted.length; guard += 1) {
         const hasChild = new Set(current.map((g) => g.parent).filter((x): x is string => x !== undefined));
-        const next = current.filter((g) => g.ids.length > 0 || hasChild.has(g.id));
+        const next = current.filter((g) => g.ids.length > 0 || (g.indicators?.length ?? 0) > 0 || hasChild.has(g.id));
         if (next.length === current.length) break;
         current = next;
     }
@@ -430,7 +473,7 @@ export function assignToGroup(groups: readonly DrawGroup[], groupId: string, ids
         const kept = g.ids.filter((id) => !moving.has(id));
         return { ...g, ids: g.id === groupId ? [...kept, ...ids] : kept };
     });
-    return next.filter((g) => g.ids.length > 0);
+    return pruneGroups(next, new Set(next.flatMap((g) => g.ids)));
 }
 
 /**

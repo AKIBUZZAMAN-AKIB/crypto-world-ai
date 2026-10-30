@@ -753,13 +753,22 @@ export class Statusline {
                 this.lastBar = b;
                 if (!this.hoverBar) this.render();
             }),
+            // Identity switches blank the renderer after load:start. Do not display
+            // the previous market's OHLC while the new series is still unavailable.
+            chart.on('load:start', () => {
+                this.lastBar = null;
+                this.hoverBar = null;
+                this.syncedBar = null;
+                this.render();
+            }),
             // A STATIC series (host `data`, a restored snapshot) never emits `bar`, so the
             // readout would stay empty until the first hover. Seed the last bar off the
             // renderer when a load settles — live streams overwrite it on the next tick.
             chart.on('load:end', ({ bars }: { bars: number }) => {
                 if (bars <= 0 || this.lastBar) return;
                 const range = chart.getVisibleRange();
-                const last = range ? chart.renderer.barAt(range.to - 1) : null;
+                // `to` is the inclusive time of the rightmost visible bar.
+                const last = range ? chart.renderer.barAt(range.to) : null;
                 if (!last) return;
                 this.lastBar = last;
                 if (!this.hoverBar) this.render();

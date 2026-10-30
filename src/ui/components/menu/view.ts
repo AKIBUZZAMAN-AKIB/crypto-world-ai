@@ -22,6 +22,8 @@ export interface MenuOptions extends MenuControllerOptions {
      *  compact lists like the timeframe dropdown pass something snug). Submenus keep the
      *  default. */
     minWidth?: string;
+    /** Name a programmatically opened menu without claiming another control's trigger. */
+    ariaLabel?: string;
     /** Star-toggle reports from items carrying `favorite` (the menu stays open — starring
      *  is a side action on a row, never a selection). */
     onFavorite?: (id: string, on: boolean) => void;
@@ -39,6 +41,9 @@ export interface MenuOptions extends MenuControllerOptions {
      *  labels align; a level with no icon keeps its natural left edge. With `checkmarks`,
      *  the mark column leads and the badge follows. Submenus inherit the mode. */
     iconBadges?: boolean;
+    /** Optional boundary and appearance for nested lists in a constrained host. */
+    submenuPositioning?: Partial<zagMenu.PositioningOptions>;
+    submenuClassName?: string;
 }
 
 /** Nested lists on a phone cannot rely on a bare right-flip: a 180px branch next to a
@@ -65,9 +70,13 @@ interface SurfaceOptions {
     triggerId?: string;
     id?: string;
     minWidth?: string;
+    ariaLabel?: string;
     onFavorite?: (id: string, on: boolean) => void;
     checkmarks?: boolean;
     iconBadges?: boolean;
+    className?: string;
+    submenuPositioning?: Partial<zagMenu.PositioningOptions>;
+    submenuClassName?: string;
 }
 
 /**
@@ -90,6 +99,8 @@ class Surface {
     private readonly onFavorite?: (id: string, on: boolean) => void;
     private readonly checkmarks: boolean;
     private readonly iconBadges: boolean;
+    private readonly submenuPositioning: Partial<zagMenu.PositioningOptions>;
+    private readonly submenuClassName?: string;
     private items: readonly MenuItemDescriptor[] = [];
     /** Have this level's ROWS been built? A closed menu is a machine and an empty list —
      *  the twelve menus a workspace constructs at boot used to carry 372 rows between
@@ -119,11 +130,14 @@ class Surface {
         this.onFavorite = opts.onFavorite;
         this.checkmarks = opts.checkmarks === true;
         this.iconBadges = opts.iconBadges === true;
+        this.submenuPositioning = opts.submenuPositioning ?? SUBMENU_POSITIONING;
+        this.submenuClassName = opts.submenuClassName;
 
         // The list is created here (rows still wait for the first open) but stays DETACHED
         // until a level opens: a menu nobody has opened has no nodes in the page at all.
         this.list = doc.createElement('ul');
         this.list.className = 'vela-menu';
+        if (opts.className) this.list.classList.add(opts.className);
         if (opts.minWidth) this.list.style.minWidth = opts.minWidth;
 
         const trigger = opts.trigger;
@@ -163,6 +177,12 @@ class Surface {
             if (api.open) this.ensureMounted(api);
             if (this.positioner) spreadProps(this.positioner, api.getPositionerProps(), this.mid);
             spreadProps(this.list, api.getContentProps(), this.mid);
+            if (opts.ariaLabel) {
+                // Without a machine-owned trigger Zag's default labelledby points to an
+                // element that does not exist. Keep the menu's explicit name instead.
+                this.list.removeAttribute('aria-labelledby');
+                this.list.setAttribute('aria-label', opts.ariaLabel);
+            }
             // First open builds the rows synchronously, before anything is projected onto
             // them — a closed menu holds no rows at all.
             if (api.open) this.warm();
@@ -286,12 +306,27 @@ class Surface {
             if (!id) continue;
             const sub = this.subs.get(id);
             if (sub) {
-                spreadProps(li as HTMLElement, api.getTriggerItemProps(sub.api), this.mid);
+                const props = api.getTriggerItemProps(sub.api);
+                const pointerDown = props.onPointerDown;
+                // Zag's submenu trigger prevents every pointerdown. On iOS/WebKit that
+                // suppresses the subsequent touch click, so Labels/Levels never open.
+                // Preserve its mouse/pen behavior, but let a touch generate the normal
+                // click (and keep native scrolling/drag cancellation) for the machine.
+                spreadProps(li as HTMLElement, {
+                    ...props,
+                    onPointerDown: (event: PointerEvent) => {
+                        if (event.pointerType !== 'touch') pointerDown?.(event);
+                    },
+                }, this.mid);
                 continue;
             }
             const item = this.byId(id);
             // Switch rows keep the menu OPEN on selection — flip, see, flip again.
             spreadProps(li as HTMLElement, api.getItemProps({ value: id, disabled: item?.disabled, closeOnSelect: item?.toggle ? false : undefined }), this.mid);
+            if (item?.checkRole && item.checked !== undefined) {
+                li.setAttribute('role', item.checkRole);
+                li.setAttribute('aria-checked', String(item.checked));
+            }
         }
     }
 
@@ -396,7 +431,10 @@ class Surface {
                 const sub = new Surface(doc, {
                     host: this.host,
                     placement: 'right-start',
-                    positioning: SUBMENU_POSITIONING,
+                    positioning: this.submenuPositioning,
+                    submenuPositioning: this.submenuPositioning,
+                    submenuClassName: this.submenuClassName,
+                    className: this.submenuClassName,
                     opener: li,
                     onSelect: this.onSelect,
                     onFavorite: this.onFavorite,
@@ -406,6 +444,43 @@ class Surface {
                 });
                 sub.setItems(item.submenu ?? []);
                 this.subs.set(item.id, sub);
+                // WebKit can suppress click entirely on a touched, non-native <li>
+                // submenu trigger (even with role=menuitem). Let the ordinary click win;
+                // if none arrives, synthesize one only for a stationary completed touch.
+                // A later native click for that same touch is swallowed, but a NEW tap
+                // resets the guard, so fast deliberate repeat taps still work.
+                type TouchContact = { id: number; x: number; y: number; moved: boolean; clicked: boolean };
+                let contact: TouchContact | null = null;
+                let pending: TouchContact | null = null;
+                let ignoreLateClick = false;
+                li.addEventListener('pointerdown', (event) => {
+                    if (event.pointerType !== 'touch') return;
+                    ignoreLateClick = false;
+                    contact = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false, clicked: false };
+                });
+                li.addEventListener('pointermove', (event) => {
+                    if (contact?.id === event.pointerId && Math.hypot(event.clientX - contact.x, event.clientY - contact.y) > 10) contact.moved = true;
+                });
+                li.addEventListener('pointercancel', (event) => { if (contact?.id === event.pointerId) contact = null; });
+                li.addEventListener('click', (event) => {
+                    if (ignoreLateClick && event.isTrusted) {
+                        event.preventDefault(); event.stopImmediatePropagation(); ignoreLateClick = false;
+                    } else if (pending) pending.clicked = true;
+                }, true);
+                li.addEventListener('pointerup', (event) => {
+                    if (!contact || contact.id !== event.pointerId) return;
+                    const touch = contact;
+                    contact = null;
+                    if (touch.moved) return;
+                    pending = touch;
+                    this.doc.defaultView?.setTimeout(() => {
+                        if (pending === touch) pending = null;
+                        if (touch.clicked || !li.isConnected || !this.openState) return;
+                        ignoreLateClick = true;
+                        li.click();
+                        this.doc.defaultView?.setTimeout(() => { ignoreLateClick = false; }, 500);
+                    }, 48);
+                });
             }
             this.list.appendChild(li);
         }
@@ -430,15 +505,23 @@ export class Menu {
             triggerId: opts.triggerId,
             id: opts.id,
             minWidth: opts.minWidth,
+            ariaLabel: opts.ariaLabel,
             onFavorite: opts.onFavorite,
             checkmarks: opts.checkmarks,
             iconBadges: opts.iconBadges,
+            submenuPositioning: opts.submenuPositioning,
+            submenuClassName: opts.submenuClassName,
         });
         this.root.setItems(opts.items);
     }
 
     get api(): zagMenu.Api {
         return this.root.api;
+    }
+
+    /** The root list, for named or size-constrained menus without a dedicated trigger. */
+    get element(): HTMLElement {
+        return this.root.list;
     }
 
     open(): void {
@@ -450,10 +533,15 @@ export class Menu {
 
     /** Open anchored to a viewport point (context menus). */
     openAt(clientX: number, clientY: number): void {
+        this.openAtRect({ x: clientX, y: clientY, width: 0, height: 0 });
+    }
+
+    /** Open against an existing control without assigning its click to this menu. */
+    openAtRect(rect: { x: number; y: number; width: number; height: number }): void {
         this.root.prewarm();
         const api = this.api;
         api.setOpen(true);
-        api.reposition({ getAnchorRect: () => ({ x: clientX, y: clientY, width: 0, height: 0 }) });
+        api.reposition({ getAnchorRect: () => rect });
     }
 
     close(): void {

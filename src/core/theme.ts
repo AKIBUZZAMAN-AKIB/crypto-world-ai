@@ -27,6 +27,38 @@ export const LIGHT_THEME: VelaTheme = {
     fontFamily: 'sans-serif',
 };
 
+/** Monaco's fixed editor-widget contrast colors; the actual editor background still
+ *  follows the active panel surface passed by the host. */
+export const CODE_EDITOR_DARK = {
+    background: '#131722',
+    foreground: '#D1D4DC',
+    lineNumber: '#858B99',
+    activeLineNumber: '#E2E5EB',
+    selection: '#264F78',
+    inactiveSelection: '#31465A',
+    lineHighlight: '#ffffff0a',
+    widgetBackground: '#20242D',
+    widgetForeground: '#E1E4EB',
+    widgetSelected: '#29415F',
+    widgetBorder: '#525968',
+    focusBorder: '#38C0FD',
+} as const;
+
+export const CODE_EDITOR_LIGHT = {
+    background: '#ffffff',
+    foreground: '#25282E',
+    lineNumber: '#707782',
+    activeLineNumber: '#343943',
+    selection: '#BBD8FF',
+    inactiveSelection: '#D6E5F8',
+    lineHighlight: '#00000008',
+    widgetBackground: '#FFFFFF',
+    widgetForeground: '#25282E',
+    widgetSelected: '#DCEAFF',
+    widgetBorder: '#C4C9D0',
+    focusBorder: '#1748BA',
+} as const;
+
 export function resolveTheme(theme?: ThemeName | VelaTheme): VelaTheme {
     if (!theme || theme === 'dark') return DARK_THEME;
     if (theme === 'light') return LIGHT_THEME;

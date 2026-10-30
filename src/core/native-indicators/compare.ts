@@ -115,6 +115,7 @@ class CompareIndicator implements NativeIndicator {
     private inputs: CompareInputs = { symbol: '', display: 'same-percent' };
     private series: OHLCV[] = [];
     private loadedSymbol = '';
+    private loadingSymbol = '';
     private pending = 0;
 
     start(ctx: NativeIndicatorContext, inputs: Record<string, InputValue>): void {
@@ -136,10 +137,14 @@ class CompareIndicator implements NativeIndicator {
 
     setInputs(inputs: Record<string, InputValue>): void {
         const next = readInputs(inputs);
-        const reload = next.symbol !== this.inputs.symbol;
+        const symbol = next.symbol.trim();
+        const reload = symbol !== this.inputs.symbol.trim();
         this.inputs = next;
-        if (reload || next.symbol !== this.loadedSymbol) void this.load();
-        else this.emit(); // a display switch only re-plots what is already fetched
+        if (reload || (symbol !== this.loadedSymbol && symbol !== this.loadingSymbol)) void this.load();
+        else {
+            this.emit(); // a display switch re-plots what is already fetched (or blank)
+            if (this.loadingSymbol) this.ctx?.setStatus('loading');
+        }
     }
 
     suspend(): void {
@@ -151,8 +156,11 @@ class CompareIndicator implements NativeIndicator {
     }
 
     stop(): void {
+        this.pending += 1;
         this.ctx = null;
         this.series = [];
+        this.loadedSymbol = '';
+        this.loadingSymbol = '';
     }
 
     /** Fetch the compare series (idempotent per symbol; a stale reply is dropped by token). */
@@ -160,12 +168,25 @@ class CompareIndicator implements NativeIndicator {
         const ctx = this.ctx;
         if (!ctx) return;
         const symbol = this.inputs.symbol.trim();
+        // Clearing is a new request too: it must invalidate the old fetch, not let its
+        // reply appear beneath an empty or subsequently changed symbol.
+        const token = ++this.pending;
         if (!symbol) {
             this.series = [];
+            this.loadedSymbol = '';
+            this.loadingSymbol = '';
+            ctx.setStatus('idle');
             this.emit();
             return;
         }
-        const token = ++this.pending;
+        this.loadingSymbol = symbol;
+        if (this.loadedSymbol !== symbol) {
+            // Never display the previous instrument's prices while the new one loads.
+            this.series = [];
+            this.loadedSymbol = '';
+            this.emit();
+        }
+        if (token !== this.pending || this.ctx !== ctx) return;
         ctx.setStatus('loading');
         try {
             const bars = ctx.bars();
@@ -175,15 +196,17 @@ class CompareIndicator implements NativeIndicator {
                 ...(bars.length > 0 ? { from: bars[0]!.time } : {}),
                 limit: Math.max(600, bars.length * 2),
             });
-            if (token !== this.pending || !this.ctx) return; // superseded or torn down
+            if (token !== this.pending || this.ctx !== ctx) return; // superseded or torn down
             this.series = fetched;
             this.loadedSymbol = symbol;
+            this.loadingSymbol = '';
             ctx.setStatus('idle');
             this.emit();
         } catch (err) {
-            if (token !== this.pending || !this.ctx) return;
+            if (token !== this.pending || this.ctx !== ctx) return;
             this.series = [];
             this.loadedSymbol = symbol;
+            this.loadingSymbol = '';
             ctx.setStatus('idle');
             this.emit(err instanceof Error ? err.message : 'the compare symbol could not be loaded');
         }

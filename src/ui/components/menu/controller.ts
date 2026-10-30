@@ -16,6 +16,8 @@ export interface MenuItemDescriptor {
      *  highlighted row (brighter surface + bright ink) — or, in a menu built with
      *  `checkmarks`, as a leading ✓ with the row surface left free for hover. */
     checked?: boolean;
+    /** Explicit accessible role for a checkable row (state is still rendered as a checkmark). */
+    checkRole?: 'menuitemcheckbox' | 'menuitemradio';
     /** Render as a SWITCH row (a right-aligned toggle pill reflecting `checked`)
      *  instead of the selected-row highlight, and keep the menu OPEN on selection —
      *  the shape for boolean settings living inside a dropdown. */

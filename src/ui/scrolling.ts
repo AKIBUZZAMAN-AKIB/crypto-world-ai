@@ -67,7 +67,86 @@ ${ALL.map((s) => `${s}::-webkit-scrollbar-button{display:none;width:0;height:0;}
 }
 `;
 
+// Horizontal tab strips are created lazily by many different panels. One delegated
+// recognizer makes mouse-wheel/drag work for all of them; touch keeps native pan-x.
+const HORIZONTAL_TABS = [
+    '.vela-tm-tabs', '.vela-ip-tabs', '.vela-sp-tabs', '.vela-dd-tabs', '.vela-st-tabs', '.vela-ap-tabs', '.vela-dw-tabs',
+    '.vela-sd-itabs', '.vela-sd-mobile .vela-sd-toc', '.vela-ot-mo-segment', '.vela-md-seg',
+    '.vela-panel-header-slot',
+].join(',');
+const wiredDocuments = new WeakSet<Document>();
+
+/** Keep focused children visible in a compact horizontal strip. Wheel users can
+ *  scroll it too; at an edge the gesture is released to the parent scroller. */
+export function enableCompactHorizontalStrip(strip: HTMLElement): void {
+    strip.addEventListener('focusin', (event) => {
+        const item = event.target;
+        if (!(item instanceof HTMLElement) || item === strip) return;
+        // Wait for a pointer click to finish before shifting the target under it.
+        setTimeout(() => {
+            if (!item.isConnected || item.ownerDocument.activeElement !== item) return;
+            const r = item.getBoundingClientRect(), bounds = strip.getBoundingClientRect();
+            if (r.left < bounds.left + 2) strip.scrollLeft -= bounds.left + 2 - r.left;
+            else if (r.right > bounds.right - 2) strip.scrollLeft += r.right - bounds.right + 2;
+        }, 0);
+    });
+    strip.addEventListener('wheel', (event) => {
+        if (event.defaultPrevented || event.ctrlKey || strip.scrollWidth <= strip.clientWidth + 1) return;
+        const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+        const before = strip.scrollLeft;
+        strip.scrollLeft += delta;
+        if (strip.scrollLeft !== before) event.preventDefault();
+    }, { passive: false });
+}
+
 /** Inject once per document (idempotent — safe to call from every entry point). */
 export function installSmoothScrolling(doc: Document = document): void {
     injectStyles(SCROLL_STYLE_ID, SMOOTH_SCROLL_CSS, doc);
+    if (wiredDocuments.has(doc)) return;
+    wiredDocuments.add(doc);
+    const stripOf = (target: EventTarget | null): HTMLElement | null =>
+        target instanceof Element ? target.closest<HTMLElement>(HORIZONTAL_TABS) : null;
+    doc.addEventListener('wheel', (e: WheelEvent) => {
+        if (e.defaultPrevented || e.ctrlKey) return;
+        const strip = stripOf(e.target);
+        if (!strip || strip.scrollWidth <= strip.clientWidth + 1) return;
+        const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        const before = strip.scrollLeft;
+        strip.scrollLeft += delta;
+        // At the edge, release the wheel to the panel's vertical scroller.
+        if (strip.scrollLeft !== before) e.preventDefault();
+    }, { passive: false });
+
+    let drag: { strip: HTMLElement; id: number; x: number; start: number; moved: boolean } | null = null;
+    doc.addEventListener('pointerdown', (e: PointerEvent) => {
+        if (e.pointerType === 'touch' || e.button !== 0 || e.isPrimary === false) return;
+        const strip = stripOf(e.target);
+        if (!strip || strip.scrollWidth <= strip.clientWidth + 1) return;
+        drag = { strip, id: e.pointerId, x: e.clientX, start: strip.scrollLeft, moved: false };
+    });
+    doc.addEventListener('pointermove', (e: PointerEvent) => {
+        if (!drag || drag.id !== e.pointerId) return;
+        const dx = e.clientX - drag.x;
+        if (!drag.moved && Math.abs(dx) < 5) return;
+        if (!drag.moved) {
+            drag.moved = true;
+            try { drag.strip.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
+        }
+        drag.strip.scrollLeft = drag.start - dx;
+        e.preventDefault();
+    });
+    const end = (e: PointerEvent): void => {
+        if (!drag || drag.id !== e.pointerId) return;
+        const finished = drag;
+        drag = null;
+        try { finished.strip.releasePointerCapture(e.pointerId); } catch { /* capture already lost */ }
+        if (!finished.moved) return;
+        // A drag must not also select the tab under the release point.
+        const swallow = (event: Event): void => { event.preventDefault(); event.stopImmediatePropagation(); cleanup(); };
+        const cleanup = (): void => { doc.removeEventListener('click', swallow, true); };
+        doc.addEventListener('click', swallow, true);
+        doc.defaultView?.setTimeout(cleanup, 0);
+    };
+    doc.addEventListener('pointerup', end);
+    doc.addEventListener('pointercancel', end);
 }

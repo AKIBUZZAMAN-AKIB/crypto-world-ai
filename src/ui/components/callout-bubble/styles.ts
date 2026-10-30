@@ -47,5 +47,5 @@ export const CALLOUT_CSS = `
 }
 .vela-callout-btn:hover { background: var(--vela-hover); color: var(--vela-fg-bright); border-color: var(--vela-fg-muted); }
 .vela-callout-btn-primary { border-color: var(--vela-selected-bg); background: var(--vela-selected-bg); color: var(--vela-selected-fg); }
-.vela-callout-btn-primary:hover { background: var(--vela-selected-bg); color: var(--vela-selected-fg); opacity: 0.85; border-color: var(--vela-selected-bg); }
+.vela-callout-btn-primary:hover { background: color-mix(in srgb, var(--vela-selected-bg) 92%, #000); color: var(--vela-selected-fg); opacity: 1; border-color: var(--vela-selected-bg); }
 `;

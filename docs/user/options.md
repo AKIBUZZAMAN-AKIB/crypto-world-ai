@@ -153,7 +153,9 @@ Hiding is **display-only**: hidden values keep being stored, delivered, and appl
 which is exactly what makes "force an option, hide its control" work. The policy is
 instance state, not chart config: it never rides `getConfig()`/`applyConfig()` into
 exported templates. It can also be set at runtime with
-`chart.renderer.setSettingsVisibility({ hidden: [...] })`.
+`chart.renderer.setSettingsVisibility({ hidden: [...] })`. For backward compatibility,
+`crosshair.style.opacity` hides the opacity control inside the crosshair color picker;
+changing its hue with that control hidden preserves the existing alpha and opacity.
 
 Ids are dot-separated paths: `<tab>`, `<tab>.<group>`, `<tab>.<group>.<row>`. Enumerate
 every addressable id of a live chart with `chart.renderer.listSettingsIds()` (plugin
@@ -211,10 +213,21 @@ new VelaWorkspace('#chart', {
       'scales.price-scale.countdown',        //     Countdown to bar close
       'scales.price-scale.axis-labels',      //     Axis labels
       'scales.price-scale.border-color',     //     Scale border color
-      'scales.crosshair',                    //   Crosshair group
-      'scales.crosshair.color',              //     Color
-      'scales.crosshair.width',              //     Width
-      'scales.crosshair.style',              //     Solid/Dashed/Dotted
+
+      // ══ Crosshair tab ═════════════════════════════════════════════
+      'crosshair',                           // the whole tab
+      'crosshair.style',                     //   Shape and line group
+      'crosshair.style.shape',               //     Cross / vertical / horizontal / dot
+      'crosshair.style.color',               //     Line color picker
+      'crosshair.style.opacity',             //     Opacity control inside that picker
+      'crosshair.style.width',               //     Line width
+      'crosshair.style.line-style',          //     Solid/Dashed/Dotted
+      'crosshair.labels',                    //   Labels group
+      'crosshair.labels.price',              //     Price label
+      'crosshair.labels.time',               //     Time label
+      'crosshair.labels.background',         //     Label background color
+      'crosshair.magnet',                    //   Magnet group
+      'crosshair.magnet.snap',               //     Snap mode
 
       // ══ Canvas tab ════════════════════════════════════════════════
       'canvas',                              // the whole tab
